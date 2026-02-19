@@ -1,6 +1,8 @@
 version: "3.9"
 
 networks:
+  edge:
+    driver: bridge
   internal:
     driver: bridge
 
@@ -82,3 +84,70 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+
+  traefik:
+    image: traefik:v2.11
+    container_name: simes-traefik
+    command:
+      - --api.dashboard=true
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+    ports:
+      - "80:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - edge
+    restart: unless-stopped
+
+  frontend-web:
+    image: nginx:alpine
+    container_name: simes-frontend-web
+    volumes:
+      - ./frontend-placeholder:/usr/share/nginx/html:ro
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=edge
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+      - traefik.http.routers.frontend.entrypoints=web
+      - traefik.http.routers.frontend.priority=1
+      - traefik.http.services.frontend.loadbalancer.server.port=80
+    networks:
+      - edge
+    restart: unless-stopped
+
+  api-core:
+    build: ../../apps/api-core
+    container_name: simes-api-core
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=edge
+      - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
+      - traefik.http.routers.api.entrypoints=web
+      - traefik.http.routers.api.priority=100
+      - traefik.http.middlewares.api-strip.stripprefix.prefixes=/api
+      - traefik.http.routers.api.middlewares=api-strip
+      - traefik.http.services.api.loadbalancer.server.port=3000
+    networks:
+      - edge
+      - internal
+    restart: unless-stopped
+
+  ingestion-service:
+    build: ../../apps/ingestion-service
+    container_name: simes-ingestion
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=edge
+      - "traefik.http.routers.ingest.rule=PathPrefix(`/ingest`)"
+      - traefik.http.routers.ingest.entrypoints=web
+      - traefik.http.routers.ingest.priority=100
+      - traefik.http.middlewares.ingest-strip.stripprefix.prefixes=/ingest
+      - traefik.http.routers.ingest.middlewares=ingest-strip
+      - traefik.http.services.ingest.loadbalancer.server.port=3001
+    networks:
+      - edge
+      - internal
+    restart: unless-stopped
+
