@@ -1,0 +1,84 @@
+version: "3.9"
+
+networks:
+  internal:
+    driver: bridge
+
+volumes:
+  core_db_data:
+  telemetry_db_data:
+  redis_data:
+  minio_data:
+
+services:
+  core-db:
+    image: postgres:16
+    container_name: simes-core-db
+    environment:
+      POSTGRES_DB: ${CORE_DB_NAME}
+      POSTGRES_USER: ${CORE_DB_USER}
+      POSTGRES_PASSWORD: ${CORE_DB_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - core_db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CORE_DB_USER} -d ${CORE_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  telemetry-db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: simes-telemetry-db
+    environment:
+      POSTGRES_DB: ${TELEMETRY_DB_NAME}
+      POSTGRES_USER: ${TELEMETRY_DB_USER}
+      POSTGRES_PASSWORD: ${TELEMETRY_DB_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - telemetry_db_data:/var/lib/postgresql/data
+    networks:
+      - internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${TELEMETRY_DB_USER} -d ${TELEMETRY_DB_NAME}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: simes-redis
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    volumes:
+      - redis_data:/data
+    networks:
+      - internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: simes-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      TZ: ${TZ}
+    volumes:
+      - minio_data:/data
+    networks:
+      - internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -qO- http://localhost:9000/minio/health/live >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
