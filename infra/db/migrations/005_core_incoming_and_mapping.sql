@@ -33,7 +33,7 @@ CREATE INDEX IF NOT EXISTS incoming_messages_status_idx ON incoming_messages (st
 -- 2) Gateway registry : 1 Milesight = 1 terrain
 CREATE TABLE IF NOT EXISTS gateway_registry (
   gateway_id TEXT PRIMARY KEY,
-  terrain_id UUID NOT NULL,
+  terrain_id UUID NOT NULL REFERENCES terrains(id) ON DELETE CASCADE,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -42,11 +42,11 @@ CREATE TABLE IF NOT EXISTS gateway_registry (
 -- 3) Device registry : device_key scoped by terrain (modbus addr repeats across terrains)
 CREATE TABLE IF NOT EXISTS device_registry (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  terrain_id UUID NOT NULL,
+  terrain_id UUID NOT NULL REFERENCES terrains(id) ON DELETE CASCADE,
   device_key TEXT NOT NULL,      -- "modbus:1" or "deveui:..."
   modbus_addr INT NULL,
   dev_eui TEXT NULL,
-  point_id UUID NOT NULL,
+  point_id UUID NOT NULL REFERENCES measurement_points(id) ON DELETE CASCADE,
 
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -55,6 +55,6 @@ CREATE TABLE IF NOT EXISTS device_registry (
   UNIQUE (terrain_id, device_key)
 );
 
-CREATE INDEX IF NOT EXISTS gateway_registry_terrain_idx ON gateway_registry (terrain_id);
+CREATE INDEX IF NOT EXISTS gateway_registry_terrain_idx ON gateway_registry (terrain_id);\nCREATE UNIQUE INDEX IF NOT EXISTS gateway_registry_terrain_unique ON gateway_registry (terrain_id);
 CREATE INDEX IF NOT EXISTS device_registry_point_idx ON device_registry (point_id);
 CREATE INDEX IF NOT EXISTS device_registry_last_seen_idx ON device_registry (last_seen_at DESC);

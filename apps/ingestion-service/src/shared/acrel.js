@@ -8,7 +8,7 @@
  *  - lookupPoint()
  *  - buildUpsertSQL()
  *
- * Used by: ingestion.routes, admin.routes
+ * Used by: ingestion routes
  */
 
 const { corePool } = require("../config/db");
@@ -79,7 +79,6 @@ function pickMetrics(metrics = {}) {
 
 /**
  * Canonical device key: "modbus:<int>" or "deveui:<string>".
- * Works with flat args OR an object with common field names.
  */
 function makeDeviceKey(modbusAddrOrObj, devEuiFallback) {
   let modbus, devEui;
@@ -105,7 +104,6 @@ function makeDeviceKey(modbusAddrOrObj, devEuiFallback) {
  * Returns { point_id, measure_category, terrain_id, site_id, org_id } or null.
  */
 async function lookupPoint({ terrainId, modbusAddr, loraDevEui }) {
-  // Priority: modbus_addr
   if (terrainId && Number.isInteger(modbusAddr)) {
     const r = await corePool.query(
       `SELECT mp.id AS point_id, mp.measure_category, mp.terrain_id,
@@ -120,7 +118,6 @@ async function lookupPoint({ terrainId, modbusAddr, loraDevEui }) {
     if (r.rows.length) return r.rows[0];
   }
 
-  // Fallback: lora_dev_eui
   if (terrainId && loraDevEui && typeof loraDevEui === "string") {
     const r = await corePool.query(
       `SELECT mp.id AS point_id, mp.measure_category, mp.terrain_id,
@@ -140,7 +137,6 @@ async function lookupPoint({ terrainId, modbusAddr, loraDevEui }) {
 
 /**
  * Build a dynamic INSERT … ON CONFLICT DO UPDATE for acrel_readings.
- * Returns { sql, values }.
  */
 function buildUpsertSQL({ time, orgId, siteId, terrainId, pointId, metrics, raw }) {
   const fixedCols = ["time", "org_id", "site_id", "terrain_id", "point_id", "raw"];

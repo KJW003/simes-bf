@@ -1,43 +1,41 @@
 const express = require("express");
 const router = express.Router();
 
-const { corePool, telemetryPool } = require("../../config/db");
-const { telemetryQueue } = require("../../jobs/queues");
+const { corePool, telemetryPool } = require("../config/db");
+const { telemetryQueue } = require("../jobs/queues");
 const {
   pickMetrics,
   makeDeviceKey,
   lookupPoint,
   buildUpsertSQL,
   isIsoDateString,
-} = require("../../shared/acrel");
-const { isUG67Batch, normalizeUG67 } = require("./ug67-normalizer");
+} = require("../shared/acrel");
+const { isUG67Batch, normalizeUG67 } = require("../shared/ug67-normalizer");
 
 // ─────────────────────────────────────────────────────────────
-// POST /ingest/milesight
+// POST /milesight
 // Single entry point for ALL Milesight gateways (UG67).
-//
-// • Gateway not mapped  → buffer in incoming_messages
-// • Gateway mapped, device not mapped → buffer (terrain known)
-// • Gateway + device mapped → direct insert into acrel_readings
 // ─────────────────────────────────────────────────────────────
 router.post("/milesight", async (req, res) => {
   try {
-    // ── Auto-detect UG67 native batch format and normalise ──
     let payload = req.body || {};
+    console.log("[INGEST/MILESIGHT] payload received:", JSON.stringify(payload).substring(0, 500));
     if (isUG67Batch(payload)) {
       payload = normalizeUG67(payload);
     }
 
-    const gatewayId = payload.gateway_id;
+    const gatewayId = payload.gateway?.id ?? payload.gateway_id;
+    console.log("[INGEST/MILESIGHT] gatewayId:", gatewayId);
 
     if (!gatewayId) {
-      return res.status(400).json({ ok: false, error: "gateway_id is required" });
+      return res.status(400).json({ ok: false, error: "gateway_id is required (payload.gateway.id)" });
     }
 
     const time = payload.time
       ? new Date(payload.time).toISOString()
       : new Date().toISOString();
     const source = payload.source || {};
+    console.log("[INGEST/MILESIGHT] time:", time, "source:", source);
 
     // ── Normalise to devices array ──
     let devices;
@@ -54,12 +52,15 @@ router.post("/milesight", async (req, res) => {
         },
       ];
     }
+    console.log("[INGEST/MILESIGHT] devices normalized:", devices.length);
 
     // ── 1) Gateway lookup ──
+    console.log("[INGEST/MILESIGHT] querying gateway_registry for:", gatewayId);
     const gw = await corePool.query(
       `SELECT terrain_id FROM gateway_registry WHERE gateway_id = $1`,
       [gatewayId]
     );
+    console.log("[INGEST/MILESIGHT] gateway lookup result:", gw.rows.length);
     const terrainId = gw.rows[0]?.terrain_id || null;
 
     // ── 2) Gateway NOT mapped → buffer everything ──
@@ -124,7 +125,6 @@ router.post("/milesight", async (req, res) => {
       const deviceKey = makeDeviceKey(modbusAddr, devEui);
       const metrics = dev.metrics || {};
 
-      // Per-device time override (UG67 sends radio.time per device)
       const devTime = dev._time
         ? new Date(dev._time).toISOString()
         : time;
@@ -204,18 +204,18 @@ router.post("/milesight", async (req, res) => {
       results,
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    console.error("[INGEST/MILESIGHT] ERROR:", e);
+    res.status(500).json({ ok: false, error: e.message, stack: e.stack });
   }
 });
 
 // ─────────────────────────────────────────────────────────────
-// POST /ingest/acrel
+// POST /acrel
 // Direct injection for already-mapped devices (manual / import).
-// Requires terrain_id + device identifiers already in DB.
 // ─────────────────────────────────────────────────────────────
 router.post("/acrel", async (req, res) => {
   const payload = req.body || {};
-  // --- MODE MULTI-APPAREILS (timestamp commun) ---
+
   if (Array.isArray(payload.devices)) {
     const terrainId = payload.terrain_id;
     if (!terrainId || typeof terrainId !== "string") {
@@ -228,7 +228,6 @@ router.post("/acrel", async (req, res) => {
 
     const time = payload.time ? new Date(payload.time).toISOString() : new Date().toISOString();
     const source = payload.source || {};
-
     const rssi_gateway = source.rssi_gateway ?? null;
     const snr_gateway = source.snr_gateway ?? null;
     const f_cnt = source.f_cnt ?? null;
@@ -308,7 +307,7 @@ router.post("/acrel", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
-// POST /ingest/acrel/batch
+// POST /acrel/batch
 // Batch injection with per-device items (each with its own time).
 // ─────────────────────────────────────────────────────────────
 router.post("/acrel/batch", async (req, res) => {
@@ -326,7 +325,6 @@ router.post("/acrel/batch", async (req, res) => {
     return res.status(400).json({ error: "devices must be a non-empty array" });
   }
 
-  // source meta commun
   const rssi_gateway = source.rssi_gateway ?? null;
   const snr_gateway = source.snr_gateway ?? null;
   const f_cnt = source.f_cnt ?? null;
@@ -368,7 +366,6 @@ router.post("/acrel/batch", async (req, res) => {
       continue;
     }
 
-    // lookup point once per device
     let ref;
     try {
       ref = await lookupPoint({ terrainId, modbusAddr, loraDevEui });

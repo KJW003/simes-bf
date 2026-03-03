@@ -40,6 +40,56 @@ router.get("/orgs", async (req, res) => {
   }
 });
 
+/** ALL SITES (platform view) **/
+router.get("/sites", async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT s.id, s.organization_id, s.name, s.location, s.created_at, o.name AS org_name
+       FROM sites s LEFT JOIN organizations o ON o.id = s.organization_id
+       ORDER BY s.created_at DESC LIMIT 500`
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+/** ALL TERRAINS (platform view) **/
+router.get("/terrains", async (req, res) => {
+  try {
+    const r = await db.query(
+      `SELECT t.id, t.site_id, t.name, t.gateway_model, t.gateway_id, t.created_at,
+              s.name AS site_name, o.name AS org_name, o.id AS org_id
+       FROM terrains t
+       LEFT JOIN sites s ON s.id = t.site_id
+       LEFT JOIN organizations o ON o.id = s.organization_id
+       ORDER BY t.created_at DESC LIMIT 500`
+    );
+    res.json(r.rows);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.put("/orgs/:orgId", async (req, res) => {
+  try {
+    const { orgId } = req.params;
+    const { name } = req.body ?? {};
+    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const r = await db.query(
+      `UPDATE organizations SET name = $2 WHERE id = $1 RETURNING id, name, created_at`,
+      [orgId, name.trim()]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "org not found" });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete("/orgs/:orgId", async (req, res) => {
+  try {
+    const { orgId } = req.params;
+    const r = await db.query(`DELETE FROM organizations WHERE id = $1 RETURNING id`, [orgId]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "org not found" });
+    res.json({ ok: true, deleted: r.rows[0].id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 /** SITES **/
 router.post("/orgs/:orgId/sites", async (req, res) => {
   try {
@@ -74,6 +124,30 @@ router.get("/orgs/:orgId/sites", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+router.put("/sites/:siteId", async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const { name, location } = req.body ?? {};
+    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const r = await db.query(
+      `UPDATE sites SET name = $2, location = $3 WHERE id = $1
+       RETURNING id, organization_id, name, location, created_at`,
+      [siteId, name.trim(), location ?? null]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "site not found" });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete("/sites/:siteId", async (req, res) => {
+  try {
+    const { siteId } = req.params;
+    const r = await db.query(`DELETE FROM sites WHERE id = $1 RETURNING id`, [siteId]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "site not found" });
+    res.json({ ok: true, deleted: r.rows[0].id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 router.get("/sites/:siteId/tree", async (req, res) => {
@@ -185,6 +259,40 @@ router.get("/sites/:siteId/terrains", async (req, res) => {
   }
 });
 
+router.put("/terrains/:terrainId", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const { name, gateway_model, gateway_id } = req.body ?? {};
+    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const r = await db.query(
+      `UPDATE terrains SET name = $2, gateway_model = COALESCE($3, gateway_model), gateway_id = COALESCE($4, gateway_id)
+       WHERE id = $1 RETURNING id, site_id, name, gateway_model, gateway_id, created_at`,
+      [terrainId, name.trim(), gateway_model ?? null, gateway_id ?? null]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "terrain not found" });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete("/terrains/:terrainId", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+
+    // Before deleting: revert incoming_messages whose gateway was mapped to this terrain
+    await db.query(
+      `UPDATE incoming_messages
+       SET status = 'unmapped', mapped_terrain_id = NULL, mapped_point_id = NULL
+       WHERE mapped_terrain_id = $1 AND status = 'mapped'`,
+      [terrainId]
+    );
+
+    // FK CASCADE will auto-delete gateway_registry + device_registry entries for this terrain
+    const r = await db.query(`DELETE FROM terrains WHERE id = $1 RETURNING id`, [terrainId]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "terrain not found" });
+    res.json({ ok: true, deleted: r.rows[0].id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
 /** ZONES **/
 router.post("/terrains/:terrainId/zones", async (req, res) => {
   try {
@@ -219,6 +327,32 @@ router.get("/terrains/:terrainId/zones", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+router.put("/zones/:zoneId", async (req, res) => {
+  try {
+    const { zoneId } = req.params;
+    const { name, description } = req.body ?? {};
+    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const r = await db.query(
+      `UPDATE zones SET name = $2, description = $3 WHERE id = $1
+       RETURNING id, terrain_id, name, description, created_at`,
+      [zoneId, name.trim(), description ?? null]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "zone not found" });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete("/zones/:zoneId", async (req, res) => {
+  try {
+    const { zoneId } = req.params;
+    // Unassign points from this zone first
+    await db.query(`UPDATE measurement_points SET zone_id = NULL WHERE zone_id = $1`, [zoneId]);
+    const r = await db.query(`DELETE FROM zones WHERE id = $1 RETURNING id`, [zoneId]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "zone not found" });
+    res.json({ ok: true, deleted: r.rows[0].id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 /** MEASUREMENT POINTS **/
@@ -277,6 +411,62 @@ router.get("/terrains/:terrainId/points", async (req, res) => {
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
+});
+
+router.put("/points/:pointId", async (req, res) => {
+  try {
+    const { pointId } = req.params;
+    const { name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, zone_id } = req.body ?? {};
+    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const r = await db.query(
+      `UPDATE measurement_points
+       SET name = $2, device = COALESCE($3, device), measure_category = COALESCE($4, measure_category),
+           lora_dev_eui = COALESCE($5, lora_dev_eui), modbus_addr = COALESCE($6, modbus_addr),
+           meta = COALESCE($7::jsonb, meta), status = COALESCE($8, status), zone_id = COALESCE($9, zone_id)
+       WHERE id = $1
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, created_at`,
+      [pointId, name.trim(), device, measure_category, lora_dev_eui, modbus_addr, meta ? JSON.stringify(meta) : null, status, zone_id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "point not found" });
+    res.json(r.rows[0]);
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+router.delete("/points/:pointId", async (req, res) => {
+  try {
+    const { pointId } = req.params;
+
+    // Get all device_keys that were mapped to this point (for cascade cleanup)
+    const devicesPointedHere = await db.query(
+      `SELECT DISTINCT device_key FROM device_registry WHERE point_id = $1`,
+      [pointId]
+    );
+
+    // Revert incoming_messages that were mapped to this point → back to 'unmapped'
+    await db.query(
+      `UPDATE incoming_messages
+       SET status = 'unmapped', mapped_terrain_id = NULL, mapped_point_id = NULL
+       WHERE mapped_point_id = $1 AND status = 'mapped'`,
+      [pointId]
+    );
+
+    // Also revert messages for devices that were registered to this point
+    // (this handles the cascade: device_registry entries will be deleted via FK)
+    if (devicesPointedHere.rows.length > 0) {
+      const deviceKeys = devicesPointedHere.rows.map(r => r.device_key);
+      await db.query(
+        `UPDATE incoming_messages
+         SET status = 'unmapped', mapped_point_id = NULL, mapped_terrain_id = NULL
+         WHERE device_key = ANY($1) AND mapped_point_id = $2`,
+        [deviceKeys, pointId]
+      );
+    }
+
+    // FK CASCADE will auto-delete device_registry entries for this point
+    const r = await db.query(`DELETE FROM measurement_points WHERE id = $1 RETURNING id`, [pointId]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "point not found" });
+    res.json({ ok: true, deleted: r.rows[0].id });
+  } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 router.patch("/points/:pointId/assign-zone", async (req, res) => {
