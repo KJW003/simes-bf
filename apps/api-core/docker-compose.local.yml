@@ -1,0 +1,35 @@
+services:
+  core-db:
+    image: postgres:16
+    container_name: simes-local-core-db
+    environment:
+      POSTGRES_DB: simes_core
+      POSTGRES_USER: simes
+      POSTGRES_PASSWORD: simespass
+    ports:
+      - "5433:5432"
+    volumes:
+      - pg_local_data:/var/lib/postgresql/data
+  
+  redis:
+    image: redis:7-alpine
+    container_name: simes-local-redis
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+
+  telemetry-db:
+    image: timescale/timescaledb:latest-pg16
+    container_name: simes-local-telemetry-db
+    environment:
+      POSTGRES_DB: simes_telemetry
+      POSTGRES_USER: simes
+      POSTGRES_PASSWORD: simespass
+    ports:
+      - "5434:5432"
+    volumes:
+      - telemetry_local_data:/var/lib/postgresql/data
+
+volumes:
+  pg_local_data:
+  telemetry_local_data:

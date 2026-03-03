@@ -1,0 +1,6 @@
+
+{
+  "siteId": "site_demo_001",
+  "jobType": "forecast",
+  "range": { "from": "2026-02-01", "to": "2026-03-01" }
+}
