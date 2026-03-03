@@ -1,0 +1,19 @@
+[
+  {
+    "id": "inc_1",
+    "type": "data_spike",
+    "severity": "low",
+    "status": "investigating",
+    "orgId": "org_1",
+    "orgName": "ISGE",
+    "siteId": "site_1",
+    "siteName": "Campus Principal",
+    "terrainId": "terrain_1",
+    "terrainName": "Bâtiment Énergie",
+    "gatewayId": "Milesight-ISGE-01",
+    "title": "Pic de données anormal détecté sur ISGE",
+    "description": "Volume de messages 2x supérieur à la normale pendant 15 min. Possible boucle de retry.",
+    "_startedAtOffsetMin": 60,
+    "notes": []
+  }
+]

@@ -1,0 +1,20 @@
+[
+  {
+    "id": "zone_admin",
+    "terrainId": "terrain_1",
+    "name": "Administration",
+    "pointIds": ["point_grid", "point_clim", "point_pv", "point_battery", "point_genset"]
+  },
+  {
+    "id": "zone_tp",
+    "terrainId": "terrain_1",
+    "name": "Salles de TP",
+    "pointIds": ["point_eclairage", "point_prises"]
+  },
+  {
+    "id": "zone_serveur",
+    "terrainId": "terrain_1",
+    "name": "Salle Serveur",
+    "pointIds": ["point_serveur", "point_unknown"]
+  }
+]

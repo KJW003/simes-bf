@@ -1,0 +1,123 @@
+[
+  {
+    "id": "anom_1",
+    "orgId": "org_1",
+    "siteId": "site_1",
+    "terrainId": "terrain_1",
+    "pointIds": ["point_clim"],
+    "pointNames": ["Climatisation Centrale"],
+    "type": "pf_low",
+    "severity": "high",
+    "_startTimeOffsetMin": 180,
+    "durationMinutes": 180,
+    "summary": "Facteur de puissance critique sur la climatisation",
+    "description": "Le facteur de puissance moyen est descendu à 0.75, bien en dessous du seuil de 0.85. Pénalités tarifaires possibles.",
+    "impactKwh": 8.5,
+    "impactCost": 1700,
+    "measuredValue": 0.75,
+    "expectedValue": 0.92,
+    "thresholdValue": 0.85,
+    "suspectedCauses": [
+      "Compresseurs de climatisation sous-chargés",
+      "Banc de condensateurs défaillant",
+      "Démarrages fréquents"
+    ],
+    "recommendations": [
+      "Vérifier l'état du banc de condensateurs",
+      "Contrôler les compresseurs",
+      "Envisager des variateurs de vitesse"
+    ],
+    "fieldChecklist": [
+      "Inspecter visuellement les condensateurs",
+      "Mesurer le courant de chaque phase",
+      "Vérifier les connexions électriques"
+    ],
+    "status": "new",
+    "notes": [],
+    "includeInReport": false,
+    "createdAt": "2026-02-12T06:00:00Z",
+    "updatedAt": "2026-02-12T06:00:00Z"
+  },
+  {
+    "id": "anom_2",
+    "orgId": "org_1",
+    "siteId": "site_1",
+    "terrainId": "terrain_1",
+    "pointIds": ["point_prises"],
+    "pointNames": ["Prises de Courant TP"],
+    "type": "current_unbalance",
+    "severity": "critical",
+    "_startTimeOffsetMin": 60,
+    "durationMinutes": 60,
+    "summary": "Déséquilibre de courant excessif – Phase C surchargée",
+    "description": "Le déséquilibre de courant atteint 18.2%, répartition très inégale des charges entre les phases.",
+    "impactKwh": 3.2,
+    "impactCost": 640,
+    "measuredValue": 18.2,
+    "expectedValue": 5,
+    "thresholdValue": 15,
+    "suspectedCauses": [
+      "Équipements monophasés mal répartis dans les salles de TP",
+      "Charge asymétrique importante"
+    ],
+    "recommendations": [
+      "Rééquilibrer les charges monophasées",
+      "Installer un équilibreur de charge"
+    ],
+    "fieldChecklist": [
+      "Mesurer les courants par phase avec pince ampèremétrique",
+      "Identifier les équipements sur chaque phase"
+    ],
+    "status": "acknowledged",
+    "assignedTo": "usr_2",
+    "notes": [
+      {
+        "id": "note_1",
+        "userId": "usr_2",
+        "userName": "Ibrahim Ouédraogo",
+        "content": "Je vais inspecter les salles de TP demain matin.",
+        "_timestampOffsetMin": 30
+      }
+    ],
+    "includeInReport": true,
+    "createdAt": "2026-02-12T08:00:00Z",
+    "updatedAt": "2026-02-12T08:30:00Z"
+  },
+  {
+    "id": "anom_3",
+    "orgId": "org_1",
+    "siteId": "site_1",
+    "terrainId": "terrain_1",
+    "pointIds": ["point_eclairage"],
+    "pointNames": ["Éclairage Général"],
+    "type": "thd_high",
+    "severity": "medium",
+    "_startTimeOffsetMin": 90,
+    "durationMinutes": 90,
+    "summary": "THD élevé sur l'éclairage – LED/ballast harmoniques",
+    "description": "Le THD atteint 13.2% sur la phase B de l'éclairage. Probable interaction entre ballasts LED et réseau.",
+    "impactKwh": 1.2,
+    "impactCost": 240,
+    "measuredValue": 13.2,
+    "expectedValue": 5,
+    "thresholdValue": 10,
+    "suspectedCauses": [
+      "Ballasts LED générant des harmoniques",
+      "Filtrage insuffisant"
+    ],
+    "recommendations": [
+      "Envisager des filtres antiharmoniques",
+      "Vérifier la compatibilité des LED"
+    ],
+    "fieldChecklist": [
+      "Mesurer le spectre harmonique sur le départ éclairage",
+      "Identifier les luminaires problématiques"
+    ],
+    "status": "in_progress",
+    "assignedTo": "usr_2",
+    "notes": [],
+    "includeInReport": true,
+    "createdAt": "2026-02-12T07:30:00Z",
+    "updatedAt": "2026-02-12T08:30:00Z"
+  }
+]

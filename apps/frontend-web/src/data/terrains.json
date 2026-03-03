@@ -1,0 +1,15 @@
+[
+  {
+    "id": "terrain_1",
+    "siteId": "site_1",
+    "name": "Bâtiment Énergie",
+    "gatewayId": "Milesight-ISGE-01",
+    "status": "online",
+    "_lastSeenOffsetMin": 1,
+    "dataCompleteness24h": 98.5,
+    "messageRate": 12.4,
+    "errorRate": 0.1,
+    "pointsCount": 8,
+    "unmappedDevicesCount": 0
+  }
+]

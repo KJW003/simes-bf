@@ -1,0 +1,35 @@
+# Build output
+dist/
+
+# Dependencies (handled by root .gitignore too)
+node_modules/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Lock files (project uses npm)
+bun.lockb
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Binary documents (keep in external wiki/drive)
+*.docx
+*.pdf
+*.docx_extracted.txt
+
+# Logs
+*.log
+npm-debug.log*
+
+# Dev reports
+MOCK_DATA_REPORT.md

@@ -1,0 +1,39 @@
+[
+  {
+    "component": "Ingestion Workers",
+    "status": "healthy",
+    "latencyMs": 45,
+    "errorRate": 0.02,
+    "_lastCheckOffsetMin": 1
+  },
+  {
+    "component": "TimescaleDB",
+    "status": "healthy",
+    "latencyMs": 12,
+    "errorRate": 0,
+    "_lastCheckOffsetMin": 1
+  },
+  {
+    "component": "Forecasting Engine",
+    "status": "healthy",
+    "latencyMs": 2340,
+    "errorRate": 0.1,
+    "_lastCheckOffsetMin": 5,
+    "details": "Last batch completed: 5 min ago"
+  },
+  {
+    "component": "PV Analysis Jobs",
+    "status": "degraded",
+    "latencyMs": 8500,
+    "errorRate": 2.5,
+    "_lastCheckOffsetMin": 2,
+    "details": "Irradiance API responding slowly"
+  },
+  {
+    "component": "Alert Engine",
+    "status": "healthy",
+    "latencyMs": 28,
+    "errorRate": 0,
+    "_lastCheckOffsetMin": 1
+  }
+]
