@@ -479,3 +479,28 @@ export function useReconcileIncoming() {
     },
   });
 }
+
+// ─── Historical Readings ───────────────────────────────────
+
+export function useReadings(
+  terrainId: string | null,
+  params?: { from?: string; to?: string; point_id?: string; limit?: number },
+) {
+  return useQuery({
+    queryKey: ['readings', terrainId, params],
+    queryFn: () => api.getReadings(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useTerrainContract(terrainId: string | null) {
+  return useQuery({
+    queryKey: ['terrain-contract', terrainId],
+    queryFn: () => api.getTerrainContract(terrainId!),
+    enabled: !!terrainId,
+    staleTime: 120_000,
+    retry: 1,
+  });
+}
