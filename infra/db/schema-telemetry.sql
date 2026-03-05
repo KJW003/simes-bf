@@ -145,6 +145,7 @@ CREATE TABLE IF NOT EXISTS acrel_agg_15m (
 SELECT create_hypertable('acrel_agg_15m', 'bucket_start', if_not_exists => TRUE);
 
 CREATE INDEX IF NOT EXISTS acrel_agg_15m_site_time_idx ON acrel_agg_15m (site_id, bucket_start DESC);
+CREATE INDEX IF NOT EXISTS acrel_agg_15m_terrain_idx ON acrel_agg_15m (terrain_id, bucket_start DESC);
 
 -- ─── 3) Aggregation: daily buckets ──────────────────────────
 CREATE TABLE IF NOT EXISTS acrel_agg_daily (
@@ -166,3 +167,4 @@ CREATE TABLE IF NOT EXISTS acrel_agg_daily (
 );
 
 CREATE INDEX IF NOT EXISTS acrel_agg_daily_site_day_idx ON acrel_agg_daily (site_id, day DESC);
+CREATE INDEX IF NOT EXISTS acrel_agg_daily_terrain_idx ON acrel_agg_daily (terrain_id, day DESC);
