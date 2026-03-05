@@ -68,6 +68,7 @@ CREATE TABLE IF NOT EXISTS measurement_points (
   measure_category measure_category NOT NULL DEFAULT 'UNKNOWN',
   lora_dev_eui TEXT,
   modbus_addr INTEGER,
+  ct_ratio DOUBLE PRECISION NOT NULL DEFAULT 1,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','inactive')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -137,7 +138,7 @@ CREATE INDEX IF NOT EXISTS tariff_plans_group_idx ON tariff_plans(group_code);
 -- ─── 9) Terrain Contracts ───────────────────────────────────
 CREATE TABLE IF NOT EXISTS terrain_contracts (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  terrain_id UUID NOT NULL,
+  terrain_id UUID NOT NULL REFERENCES terrains(id) ON DELETE CASCADE,
   tariff_plan_id UUID NOT NULL REFERENCES tariff_plans(id),
   subscribed_power_kw DOUBLE PRECISION NOT NULL,
   meter_rental DOUBLE PRECISION NOT NULL DEFAULT 0,

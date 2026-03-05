@@ -124,42 +124,75 @@ async function runAggregate(payload = {}) {
 new Worker(
   "telemetry",
   async (job) => {
-    const { runId, payload } = job.data;
+    const { runId, payload } = job.data || {};
 
-    await setRunStatus(runId, "running", { started_at: new Date().toISOString() });
+    // ── acrel.ingested: triggered by ingestion service after each reading ──
+    // These events do NOT have a runId — they trigger a targeted aggregation
+    // for the specific point that just received data.
+    if (job.name === "acrel.ingested") {
+      const { pointId, terrainId, siteId, orgId, time } = job.data || {};
+      if (!pointId) return { ok: true, skipped: "no pointId" };
+
+      try {
+        // Aggregate the 15-minute bucket that contains this reading
+        const readingTime = new Date(time || Date.now());
+        const bucketStart = new Date(readingTime);
+        bucketStart.setMinutes(bucketStart.getMinutes() - (bucketStart.getMinutes() % 15), 0, 0);
+        const bucketEnd = new Date(bucketStart.getTime() + 15 * 60 * 1000);
+
+        const summary = await runAggregate({
+          from: bucketStart.toISOString(),
+          to: bucketEnd.toISOString(),
+          point_id: pointId,
+          terrain_id: terrainId,
+          site_id: siteId,
+        });
+
+        return { ok: true, summary };
+      } catch (e) {
+        console.error("[telemetry-worker] acrel.ingested error:", e.message);
+        return { ok: false, error: e.message };
+      }
+    }
+
+    // ── telemetry.aggregate: manual/scheduled full aggregation ──
+    if (runId) {
+      await setRunStatus(runId, "running", { started_at: new Date().toISOString() });
+    }
 
     try {
-      // Job réel
       if (job.name === "telemetry.aggregate") {
         const summary = await runAggregate(payload);
 
-        await insertJobResult(runId, job.name, summary);
-
-        await setRunStatus(runId, "success", {
-          finished_at: new Date().toISOString(),
-          result: summary
-        });
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          await setRunStatus(runId, "success", {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
 
         return { ok: true, summary };
       }
 
-      // fallback (ancien comportement)
-      await new Promise((r) => setTimeout(r, 600));
-
+      // fallback for unknown job types
       const result = { queue: "telemetry", name: job.name };
-      await insertJobResult(runId, job.name, result);
-
-      await setRunStatus(runId, "success", {
-        finished_at: new Date().toISOString(),
-        result
-      });
+      if (runId) {
+        await insertJobResult(runId, job.name, result);
+        await setRunStatus(runId, "success", {
+          finished_at: new Date().toISOString(),
+          result
+        });
+      }
 
       return { ok: true };
     } catch (e) {
-      await setRunStatus(runId, "failed", {
-        finished_at: new Date().toISOString(),
-        error: e.message
-      });
+      if (runId) {
+        await setRunStatus(runId, "failed", {
+          finished_at: new Date().toISOString(),
+          error: e.message
+        });
+      }
       throw e;
     }
   },

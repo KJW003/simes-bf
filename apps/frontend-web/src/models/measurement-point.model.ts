@@ -72,7 +72,8 @@ export interface MeasurementPoint extends IEntity {
   name: string;
   type: PointType;
   energySourceCategory: EnergySourceCategory;
-  ctRatio: string;
+  /** Current transformer ratio (default 1). Raw I values are multiplied by this. */
+  ctRatio: number;
   ptRatio?: string;
   phases: 1 | 3;
 

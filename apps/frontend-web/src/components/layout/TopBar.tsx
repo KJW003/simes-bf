@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
+import { useApiHealth } from '@/hooks/useApiHealth';
 import {
   Building2,
   MapPin,
@@ -49,6 +50,7 @@ export function TopBar() {
     logout,
   } = useAppContext();
 
+  const { isOnline, latencyMs } = useApiHealth();
   const [searchQuery, setSearchQuery] = useState('');
 
   const getStatusIcon = (status: string) => {
@@ -234,39 +236,30 @@ export function TopBar() {
         />
       </div>
 
+      {/* API connectivity indicator */}
+      <div className="flex items-center gap-1.5" title={isOnline ? `API connectée (${latencyMs ?? '—'} ms)` : 'API déconnectée'}>
+        <span className={cn(
+          'w-2 h-2 rounded-full',
+          isOnline ? 'bg-green-500' : 'bg-red-500 animate-pulse'
+        )} />
+        <span className="text-[10px] text-muted-foreground hidden sm:inline">
+          {isOnline ? 'API' : 'Hors ligne'}
+        </span>
+      </div>
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-8 w-8 relative hover:bg-accent/80">
             <Bell className="w-4 h-4" />
-            <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-severity-critical text-white text-[10px] rounded-full flex items-center justify-center animate-count-up font-medium">
-              3
-            </span>
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-80">
           <DropdownMenuLabel>Notifications</DropdownMenuLabel>
           <DropdownMenuSeparator />
           <DropdownMenuItem className="flex-col items-start gap-1 py-3">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-severity-critical" />
-              <span className="font-medium text-sm">Anomalie critique détectée</span>
-            </div>
-            <span className="text-xs text-muted-foreground ml-4">
-              Déséquilibre de courant sur Atelier Mécanique
+            <span className="text-xs text-muted-foreground">
+              Aucune notification pour le moment.
             </span>
-          </DropdownMenuItem>
-          <DropdownMenuItem className="flex-col items-start gap-1 py-3">
-            <div className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-severity-warning" />
-              <span className="font-medium text-sm">PF bas persistant</span>
-            </div>
-            <span className="text-xs text-muted-foreground ml-4">
-              Ligne Compresseurs depuis 3 h
-            </span>
-          </DropdownMenuItem>
-          <DropdownMenuSeparator />
-          <DropdownMenuItem className="text-center text-sm text-primary">
-            Voir toutes les notifications
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

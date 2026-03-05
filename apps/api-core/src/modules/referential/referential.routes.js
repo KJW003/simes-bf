@@ -366,6 +366,7 @@ router.post("/terrains/:terrainId/points", async (req, res) => {
       measure_category,
       lora_dev_eui,
       modbus_addr,
+      ct_ratio,
       meta,
       status,
     } = req.body ?? {};
@@ -375,9 +376,9 @@ router.post("/terrains/:terrainId/points", async (req, res) => {
 
     const r = await db.query(
       `INSERT INTO measurement_points
-       (terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)
-       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, created_at`,
+       (terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, created_at`,
       [
         terrainId,
         zone_id ?? null,
@@ -386,6 +387,7 @@ router.post("/terrains/:terrainId/points", async (req, res) => {
         (measure_category ?? "UNKNOWN").toUpperCase(),
         lora_dev_eui ?? null,
         modbus_addr ?? null,
+        ct_ratio ?? 1,
         JSON.stringify(meta ?? {}),
         status ?? "active",
       ]
@@ -401,7 +403,7 @@ router.get("/terrains/:terrainId/points", async (req, res) => {
   try {
     const { terrainId } = req.params;
     const r = await db.query(
-      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, created_at
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY created_at DESC`,
@@ -416,16 +418,17 @@ router.get("/terrains/:terrainId/points", async (req, res) => {
 router.put("/points/:pointId", async (req, res) => {
   try {
     const { pointId } = req.params;
-    const { name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, zone_id } = req.body ?? {};
+    const { name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, zone_id } = req.body ?? {};
     if (!name || typeof name !== "string") return bad(res, "name is required");
     const r = await db.query(
       `UPDATE measurement_points
        SET name = $2, device = COALESCE($3, device), measure_category = COALESCE($4, measure_category),
            lora_dev_eui = COALESCE($5, lora_dev_eui), modbus_addr = COALESCE($6, modbus_addr),
-           meta = COALESCE($7::jsonb, meta), status = COALESCE($8, status), zone_id = COALESCE($9, zone_id)
+           ct_ratio = COALESCE($7, ct_ratio),
+           meta = COALESCE($8::jsonb, meta), status = COALESCE($9, status), zone_id = COALESCE($10, zone_id)
        WHERE id = $1
-       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, created_at`,
-      [pointId, name.trim(), device, measure_category, lora_dev_eui, modbus_addr, meta ? JSON.stringify(meta) : null, status, zone_id]
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, created_at`,
+      [pointId, name.trim(), device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta ? JSON.stringify(meta) : null, status, zone_id]
     );
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "point not found" });
     res.json(r.rows[0]);

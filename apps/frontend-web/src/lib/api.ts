@@ -75,6 +75,7 @@ export interface ApiMeasurementPoint {
   measure_category: string;
   lora_dev_eui: string | null;
   modbus_addr: string | null;
+  ct_ratio: number;
   meta: Record<string, unknown>;
   status: string;
   created_at: string;
@@ -166,7 +167,7 @@ export const api = {
       body: JSON.stringify({ zone_id: zoneId }),
     }),
 
-  updatePoint: (pointId: string, data: { name: string; device?: string; measure_category?: string; status?: string }) =>
+  updatePoint: (pointId: string, data: { name: string; device?: string; measure_category?: string; status?: string; ct_ratio?: number }) =>
     request<ApiMeasurementPoint>(`/points/${pointId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePoint: (pointId: string) =>
     request<{ ok: boolean; deleted: string }>(`/points/${pointId}`, { method: 'DELETE' }),
@@ -330,7 +331,7 @@ export const api = {
   reconcileIncoming: () =>
     request<{ ok: boolean; reconciled: number }>('/admin/incoming/reconcile', { method: 'POST' }),
 
-  createPoint: (terrainId: string, data: { name: string; device: string; measure_category?: string; lora_dev_eui?: string | null; modbus_addr?: number | null; zone_id?: string | null }) =>
+  createPoint: (terrainId: string, data: { name: string; device: string; measure_category?: string; lora_dev_eui?: string | null; modbus_addr?: number | null; zone_id?: string | null; ct_ratio?: number }) =>
     request<ApiMeasurementPoint>(`/terrains/${terrainId}/points`, {
       method: 'POST',
       body: JSON.stringify(data),

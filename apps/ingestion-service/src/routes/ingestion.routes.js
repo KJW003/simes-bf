@@ -9,6 +9,7 @@ const {
   lookupPoint,
   buildUpsertSQL,
   isIsoDateString,
+  applyCT,
 } = require("../shared/acrel");
 const { isUG67Batch, normalizeUG67 } = require("../shared/ug67-normalizer");
 
@@ -162,7 +163,17 @@ router.post("/milesight", async (req, res) => {
         .query(`UPDATE device_registry SET last_seen_at = NOW() WHERE terrain_id = $1 AND device_key = $2`, [terrainId, deviceKey])
         .catch(() => {});
 
+      // Lookup CT ratio for this measurement point
+      const mpRow = await corePool.query(
+        `SELECT ct_ratio FROM measurement_points WHERE id = $1`,
+        [pointId]
+      );
+      const ctRatio = Number(mpRow.rows[0]?.ct_ratio) || 1;
+
       const picked = pickMetrics(metrics);
+      // Apply CT ratio: multiply all current-derived metrics
+      applyCT(picked, ctRatio);
+
       picked.rssi_lora = dev.rssi_lora ?? null;
       picked.rssi_gateway = source.rssi_gateway ?? null;
       picked.snr_gateway = dev._snr ?? source.snr_gateway ?? null;
@@ -205,7 +216,7 @@ router.post("/milesight", async (req, res) => {
     });
   } catch (e) {
     console.error("[INGEST/MILESIGHT] ERROR:", e);
-    res.status(500).json({ ok: false, error: e.message, stack: e.stack });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
@@ -260,6 +271,9 @@ router.post("/acrel", async (req, res) => {
       const rssi_lora = device.rssi_lora ?? null;
 
       const picked = pickMetrics(metrics);
+      // Apply CT ratio correction
+      applyCT(picked, Number(ref.ct_ratio) || 1);
+
       picked.rssi_lora = rssi_lora;
       picked.rssi_gateway = rssi_gateway;
       picked.snr_gateway = snr_gateway;
@@ -412,6 +426,9 @@ router.post("/acrel/batch", async (req, res) => {
         const metrics = it.metrics || {};
 
         const picked = pickMetrics(metrics);
+        // Apply CT ratio correction
+        applyCT(picked, Number(ref.ct_ratio) || 1);
+
         picked.rssi_lora = rssi_lora;
         picked.rssi_gateway = rssi_gateway;
         picked.snr_gateway = snr_gateway;

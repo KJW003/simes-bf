@@ -310,7 +310,7 @@ export function useDeleteTerrain() {
 export function useCreatePoint() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ terrainId, ...data }: { terrainId: string; name: string; device: string; measure_category?: string; lora_dev_eui?: string; modbus_addr?: number; zone_id?: string }) =>
+    mutationFn: ({ terrainId, ...data }: { terrainId: string; name: string; device: string; measure_category?: string; lora_dev_eui?: string; modbus_addr?: number; zone_id?: string; ct_ratio?: number }) =>
       api.createPoint(terrainId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['points'] });
@@ -323,7 +323,7 @@ export function useCreatePoint() {
 export function useUpdatePoint() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pointId, ...data }: { pointId: string; name: string; device?: string; measure_category?: string; status?: string }) =>
+    mutationFn: ({ pointId, ...data }: { pointId: string; name: string; device?: string; measure_category?: string; status?: string; ct_ratio?: number }) =>
       api.updatePoint(pointId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['points'] });

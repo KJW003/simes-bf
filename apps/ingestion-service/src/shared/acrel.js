@@ -12,6 +12,7 @@
  */
 
 const { corePool } = require("../config/db");
+const { applyCT } = require("./ct-transform");
 
 // ── DB-column whitelist (matches schema-telemetry.sql exactly) ──
 const METRIC_COLS = new Set([
@@ -101,12 +102,13 @@ function makeDeviceKey(modbusAddrOrObj, devEuiFallback) {
 
 /**
  * Lookup measurement_point by terrain + modbus_addr or lora_dev_eui.
- * Returns { point_id, measure_category, terrain_id, site_id, org_id } or null.
+ * Returns { point_id, measure_category, terrain_id, site_id, org_id, ct_ratio } or null.
  */
 async function lookupPoint({ terrainId, modbusAddr, loraDevEui }) {
   if (terrainId && Number.isInteger(modbusAddr)) {
     const r = await corePool.query(
       `SELECT mp.id AS point_id, mp.measure_category, mp.terrain_id,
+              mp.ct_ratio,
               t.site_id, s.organization_id AS org_id
        FROM measurement_points mp
        JOIN terrains t ON t.id = mp.terrain_id
@@ -121,6 +123,7 @@ async function lookupPoint({ terrainId, modbusAddr, loraDevEui }) {
   if (terrainId && loraDevEui && typeof loraDevEui === "string") {
     const r = await corePool.query(
       `SELECT mp.id AS point_id, mp.measure_category, mp.terrain_id,
+              mp.ct_ratio,
               t.site_id, s.organization_id AS org_id
        FROM measurement_points mp
        JOIN terrains t ON t.id = mp.terrain_id
@@ -184,4 +187,5 @@ module.exports = {
   lookupPoint,
   buildUpsertSQL,
   isIsoDateString,
+  applyCT,
 };

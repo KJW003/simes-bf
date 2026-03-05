@@ -179,6 +179,9 @@ function LiveReadingsPanel({ terrainId }: { terrainId: string }) {
                             {r.rssi_gateway != null && <div>RSSI GW: <span className="mono">{fmtInt(r.rssi_gateway)} dBm</span></div>}
                             {r.point?.modbus_addr != null && <div>Modbus Addr: <span className="mono">{r.point.modbus_addr}</span></div>}
                             {r.point?.device && <div>Appareil: <span className="mono">{r.point.device}</span></div>}
+                            {r.point?.ct_ratio != null && Number(r.point.ct_ratio) !== 1 && (
+                              <div>Ratio TC: <span className="mono font-medium">{r.point.ct_ratio}</span></div>
+                            )}
                           </div>
                         </td>
                       </tr>

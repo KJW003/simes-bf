@@ -2,6 +2,35 @@ const express = require("express");
 const router = express.Router();
 const { corePool, telemetryPool } = require("../../config/db");
 
+// ─── Shared Acrel column list (DRY) ────────────────────────
+const ACREL_METRIC_COLS = [
+  "voltage_a", "voltage_b", "voltage_c", "voltage_ab", "voltage_bc", "voltage_ca",
+  "current_a", "current_b", "current_c", "current_sum", "aftercurrent",
+  "active_power_a", "active_power_b", "active_power_c", "active_power_total",
+  "reactive_power_a", "reactive_power_b", "reactive_power_c", "reactive_power_total",
+  "apparent_power_a", "apparent_power_b", "apparent_power_c", "apparent_power_total",
+  "power_factor_a", "power_factor_b", "power_factor_c", "power_factor_total",
+  "frequency", "voltage_unbalance", "current_unbalance",
+  "energy_total", "energy_import", "energy_export",
+  "reactive_energy_import", "reactive_energy_export",
+  "energy_total_a", "energy_import_a", "energy_export_a",
+  "energy_total_b", "energy_import_b", "energy_export_b",
+  "energy_total_c", "energy_import_c", "energy_export_c",
+  "energy_spike", "energy_peak", "energy_flat", "energy_valley",
+  "thdu_a", "thdu_b", "thdu_c", "thdi_a", "thdi_b", "thdi_c",
+  "temp_a", "temp_b", "temp_c", "temp_n",
+  "di_state", "do1_state", "do2_state", "alarm_state",
+  "rssi_lora", "rssi_gateway", "snr_gateway", "f_cnt",
+];
+const ACREL_COLS_SQL = ACREL_METRIC_COLS.join(", ");
+
+/** Convert a telemetry row to numbers (strip nulls → 0) */
+function rowToNumbers(row) {
+  const out = {};
+  for (const col of ACREL_METRIC_COLS) out[col] = Number(row[col]) || 0;
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────
 // GET /terrains/:terrainId/readings/latest
 // Latest reading per measurement_point in the terrain
@@ -12,24 +41,7 @@ router.get("/terrains/:terrainId/readings/latest", async (req, res) => {
 
     const r = await telemetryPool.query(
       `SELECT DISTINCT ON (point_id)
-              point_id, time,
-              voltage_a, voltage_b, voltage_c, voltage_ab, voltage_bc, voltage_ca,
-              current_a, current_b, current_c, current_sum, aftercurrent,
-              active_power_a, active_power_b, active_power_c, active_power_total,
-              reactive_power_a, reactive_power_b, reactive_power_c, reactive_power_total,
-              apparent_power_a, apparent_power_b, apparent_power_c, apparent_power_total,
-              power_factor_a, power_factor_b, power_factor_c, power_factor_total,
-              frequency, voltage_unbalance, current_unbalance,
-              energy_total, energy_import, energy_export,
-              reactive_energy_import, reactive_energy_export,
-              energy_total_a, energy_import_a, energy_export_a,
-              energy_total_b, energy_import_b, energy_export_b,
-              energy_total_c, energy_import_c, energy_export_c,
-              energy_spike, energy_peak, energy_flat, energy_valley,
-              thdu_a, thdu_b, thdu_c, thdi_a, thdi_b, thdi_c,
-              temp_a, temp_b, temp_c, temp_n,
-              di_state, do1_state, do2_state, alarm_state,
-              rssi_lora, rssi_gateway, snr_gateway, f_cnt
+              point_id, time, ${ACREL_COLS_SQL}
        FROM acrel_readings
        WHERE terrain_id = $1
        ORDER BY point_id, time DESC`,
@@ -41,7 +53,7 @@ router.get("/terrains/:terrainId/readings/latest", async (req, res) => {
     let pointsMap = {};
     if (pointIds.length) {
       const pts = await corePool.query(
-        `SELECT id, name, device, measure_category, modbus_addr, zone_id
+        `SELECT id, name, device, measure_category, modbus_addr, zone_id, ct_ratio
          FROM measurement_points
          WHERE id = ANY($1::uuid[])`,
         [pointIds]
@@ -87,24 +99,7 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     params.push(limit);
 
     const sql = `
-      SELECT point_id, time,
-             voltage_a, voltage_b, voltage_c, voltage_ab, voltage_bc, voltage_ca,
-             current_a, current_b, current_c, current_sum, aftercurrent,
-             active_power_a, active_power_b, active_power_c, active_power_total,
-             reactive_power_a, reactive_power_b, reactive_power_c, reactive_power_total,
-             apparent_power_a, apparent_power_b, apparent_power_c, apparent_power_total,
-             power_factor_a, power_factor_b, power_factor_c, power_factor_total,
-             frequency, voltage_unbalance, current_unbalance,
-             energy_total, energy_import, energy_export,
-             reactive_energy_import, reactive_energy_export,
-             energy_total_a, energy_import_a, energy_export_a,
-             energy_total_b, energy_import_b, energy_export_b,
-             energy_total_c, energy_import_c, energy_export_c,
-             energy_spike, energy_peak, energy_flat, energy_valley,
-             thdu_a, thdu_b, thdu_c, thdi_a, thdi_b, thdi_c,
-             temp_a, temp_b, temp_c, temp_n,
-             di_state, do1_state, do2_state, alarm_state,
-             rssi_lora, rssi_gateway, snr_gateway, f_cnt
+      SELECT point_id, time, ${ACREL_COLS_SQL}
       FROM acrel_readings
       WHERE ${where.join(" AND ")}
       ORDER BY time DESC
@@ -195,9 +190,9 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
   try {
     const { terrainId } = req.params;
 
-    // 1) Points
+    // 1) Points (include ct_ratio for frontend display)
     const ptsR = await corePool.query(
-      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, ct_ratio, created_at
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY name`,
@@ -216,24 +211,7 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
     // 3) Latest readings (one per point)
     const readR = await telemetryPool.query(
       `SELECT DISTINCT ON (point_id)
-              point_id, time,
-              voltage_a, voltage_b, voltage_c, voltage_ab, voltage_bc, voltage_ca,
-              current_a, current_b, current_c, current_sum, aftercurrent,
-              active_power_a, active_power_b, active_power_c, active_power_total,
-              reactive_power_a, reactive_power_b, reactive_power_c, reactive_power_total,
-              apparent_power_a, apparent_power_b, apparent_power_c, apparent_power_total,
-              power_factor_a, power_factor_b, power_factor_c, power_factor_total,
-              frequency, voltage_unbalance, current_unbalance,
-              energy_total, energy_import, energy_export,
-              reactive_energy_import, reactive_energy_export,
-              energy_total_a, energy_import_a, energy_export_a,
-              energy_total_b, energy_import_b, energy_export_b,
-              energy_total_c, energy_import_c, energy_export_c,
-              energy_spike, energy_peak, energy_flat, energy_valley,
-              thdu_a, thdu_b, thdu_c, thdi_a, thdi_b, thdi_c,
-              temp_a, temp_b, temp_c, temp_n,
-              di_state, do1_state, do2_state, alarm_state,
-              rssi_lora, rssi_gateway, snr_gateway, f_cnt
+              point_id, time, ${ACREL_COLS_SQL}
        FROM acrel_readings
        WHERE terrain_id = $1
        ORDER BY point_id, time DESC`,
@@ -250,74 +228,7 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
       return {
         ...p,
         lastSeen: r?.time || null,
-        readings: r ? {
-          voltage_a: Number(r.voltage_a) || 0,
-          voltage_b: Number(r.voltage_b) || 0,
-          voltage_c: Number(r.voltage_c) || 0,
-          voltage_ab: Number(r.voltage_ab) || 0,
-          voltage_bc: Number(r.voltage_bc) || 0,
-          voltage_ca: Number(r.voltage_ca) || 0,
-          current_a: Number(r.current_a) || 0,
-          current_b: Number(r.current_b) || 0,
-          current_c: Number(r.current_c) || 0,
-          current_sum: Number(r.current_sum) || 0,
-          aftercurrent: Number(r.aftercurrent) || 0,
-          active_power_a: Number(r.active_power_a) || 0,
-          active_power_b: Number(r.active_power_b) || 0,
-          active_power_c: Number(r.active_power_c) || 0,
-          active_power_total: Number(r.active_power_total) || 0,
-          reactive_power_a: Number(r.reactive_power_a) || 0,
-          reactive_power_b: Number(r.reactive_power_b) || 0,
-          reactive_power_c: Number(r.reactive_power_c) || 0,
-          reactive_power_total: Number(r.reactive_power_total) || 0,
-          apparent_power_a: Number(r.apparent_power_a) || 0,
-          apparent_power_b: Number(r.apparent_power_b) || 0,
-          apparent_power_c: Number(r.apparent_power_c) || 0,
-          apparent_power_total: Number(r.apparent_power_total) || 0,
-          power_factor_a: Number(r.power_factor_a) || 0,
-          power_factor_b: Number(r.power_factor_b) || 0,
-          power_factor_c: Number(r.power_factor_c) || 0,
-          power_factor_total: Number(r.power_factor_total) || 0,
-          frequency: Number(r.frequency) || 0,
-          voltage_unbalance: Number(r.voltage_unbalance) || 0,
-          current_unbalance: Number(r.current_unbalance) || 0,
-          energy_total: Number(r.energy_total) || 0,
-          energy_import: Number(r.energy_import) || 0,
-          energy_export: Number(r.energy_export) || 0,
-          reactive_energy_import: Number(r.reactive_energy_import) || 0,
-          reactive_energy_export: Number(r.reactive_energy_export) || 0,
-          energy_total_a: Number(r.energy_total_a) || 0,
-          energy_import_a: Number(r.energy_import_a) || 0,
-          energy_export_a: Number(r.energy_export_a) || 0,
-          energy_total_b: Number(r.energy_total_b) || 0,
-          energy_import_b: Number(r.energy_import_b) || 0,
-          energy_export_b: Number(r.energy_export_b) || 0,
-          energy_total_c: Number(r.energy_total_c) || 0,
-          energy_import_c: Number(r.energy_import_c) || 0,
-          energy_export_c: Number(r.energy_export_c) || 0,
-          energy_spike: Number(r.energy_spike) || 0,
-          energy_peak: Number(r.energy_peak) || 0,
-          energy_flat: Number(r.energy_flat) || 0,
-          energy_valley: Number(r.energy_valley) || 0,
-          thdu_a: Number(r.thdu_a) || 0,
-          thdu_b: Number(r.thdu_b) || 0,
-          thdu_c: Number(r.thdu_c) || 0,
-          thdi_a: Number(r.thdi_a) || 0,
-          thdi_b: Number(r.thdi_b) || 0,
-          thdi_c: Number(r.thdi_c) || 0,
-          temp_a: Number(r.temp_a) || 0,
-          temp_b: Number(r.temp_b) || 0,
-          temp_c: Number(r.temp_c) || 0,
-          temp_n: Number(r.temp_n) || 0,
-          di_state: Number(r.di_state) || 0,
-          do1_state: Number(r.do1_state) || 0,
-          do2_state: Number(r.do2_state) || 0,
-          alarm_state: Number(r.alarm_state) || 0,
-          rssi_lora: Number(r.rssi_lora) || 0,
-          rssi_gateway: Number(r.rssi_gateway) || 0,
-          snr_gateway: Number(r.snr_gateway) || 0,
-          f_cnt: Number(r.f_cnt) || 0,
-        } : null,
+        readings: r ? rowToNumbers(r) : null,
       };
     });
 

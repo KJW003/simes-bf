@@ -1418,12 +1418,14 @@ function MeasurementPointsTab() {
   const [newCategory, setNewCategory] = useState("LOAD");
   const [newModbus, setNewModbus] = useState("");
   const [newDevEui, setNewDevEui] = useState("");
+  const [newCtRatio, setNewCtRatio] = useState("1");
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDevice, setEditDevice] = useState("");
   const [editCategory, setEditCategory] = useState("");
+  const [editCtRatio, setEditCtRatio] = useState("1");
 
   const handleCreate = async () => {
     if (!selectedTerrainId || !newName.trim()) return;
@@ -1435,10 +1437,11 @@ function MeasurementPointsTab() {
         measure_category: newCategory,
         modbus_addr: newModbus ? Number(newModbus) : undefined,
         lora_dev_eui: newDevEui || undefined,
+        ct_ratio: newCtRatio ? Number(newCtRatio) : 1,
       });
       toast.success("Point de mesure créé");
       setShowCreate(false);
-      setNewName(""); setNewDevice("ADW300"); setNewCategory("LOAD"); setNewModbus(""); setNewDevEui("");
+      setNewName(""); setNewDevice("ADW300"); setNewCategory("LOAD"); setNewModbus(""); setNewDevEui(""); setNewCtRatio("1");
     } catch { toast.error("Erreur création du point"); }
   };
 
@@ -1449,6 +1452,7 @@ function MeasurementPointsTab() {
         name: editName,
         device: editDevice,
         measure_category: editCategory,
+        ct_ratio: editCtRatio ? Number(editCtRatio) : 1,
       });
       toast.success("Point mis à jour");
       setEditingId(null);
@@ -1536,6 +1540,10 @@ function MeasurementPointsTab() {
                     <Label className="text-xs">DevEUI LoRa <span className="text-muted-foreground">(optionnel)</span></Label>
                     <Input className="h-8 text-xs font-mono" value={newDevEui} onChange={(e) => setNewDevEui(e.target.value)} placeholder="Ex: 24E124710D470399" />
                   </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Ratio TC <span className="text-muted-foreground">(CT ratio)</span></Label>
+                    <Input className="h-8 text-xs" value={newCtRatio} onChange={(e) => setNewCtRatio(e.target.value)} placeholder="1" type="number" min="1" step="1" />
+                  </div>
                 </div>
                 <div className="flex gap-2 justify-end">
                   <Button size="sm" variant="outline" onClick={() => setShowCreate(false)}>Annuler</Button>
@@ -1565,6 +1573,7 @@ function MeasurementPointsTab() {
                       <th className="py-2 px-3 font-medium">Nom</th>
                       <th className="py-2 px-3 font-medium">Appareil</th>
                       <th className="py-2 px-3 font-medium">Catégorie</th>
+                      <th className="py-2 px-3 font-medium">Ratio TC</th>
                       <th className="py-2 px-3 font-medium">Modbus</th>
                       <th className="py-2 px-3 font-medium">DevEUI</th>
                       <th className="py-2 px-3 font-medium">Statut</th>
@@ -1588,6 +1597,7 @@ function MeasurementPointsTab() {
                                 </SelectContent>
                               </Select>
                             </td>
+                            <td className="py-2 px-3"><Input className="h-7 text-xs w-16" type="number" min="1" step="1" value={editCtRatio} onChange={(e) => setEditCtRatio(e.target.value)} /></td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.modbus_addr ?? "—"}</td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.lora_dev_eui ? (p.lora_dev_eui as string).slice(-8) : "—"}</td>
                             <td className="py-2 px-3"><Badge variant="outline" className="text-[10px]">{p.status}</Badge></td>
@@ -1603,12 +1613,13 @@ function MeasurementPointsTab() {
                             <td className="py-2 px-3 font-medium">{p.name}</td>
                             <td className="py-2 px-3">{p.device}</td>
                             <td className="py-2 px-3"><Badge variant="outline" className="text-[10px]">{p.measure_category}</Badge></td>
+                            <td className="py-2 px-3 font-mono">{p.ct_ratio ?? 1}</td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.modbus_addr ?? "—"}</td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.lora_dev_eui ? (p.lora_dev_eui as string).slice(-8) : "—"}</td>
                             <td className="py-2 px-3"><Badge variant="outline" className="text-[10px]">{p.status}</Badge></td>
                             <td className="py-2 px-3">
                               <div className="flex gap-0.5">
-                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditingId(p.id); setEditName(p.name); setEditDevice(p.device); setEditCategory(p.measure_category); }}>
+                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditingId(p.id); setEditName(p.name); setEditDevice(p.device); setEditCategory(p.measure_category); setEditCtRatio(String(p.ct_ratio ?? 1)); }}>
                                   <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                                 </Button>
                                 <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => handleDelete(p.id, p.name)}>

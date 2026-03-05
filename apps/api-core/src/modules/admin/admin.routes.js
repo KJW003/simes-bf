@@ -369,6 +369,7 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
       terrain_id = null,
       device_model = "ADW300",
       default_category = "LOAD",
+      default_ct_ratio = 1,
     } = req.body || {};
 
     // 1) Resolve terrain (from body or existing mapping)
@@ -462,11 +463,11 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
 
         const mp = await corePool.query(
           `INSERT INTO measurement_points
-             (terrain_id, name, device, measure_category, modbus_addr, lora_dev_eui)
-           VALUES ($1, $2, $3, $4, $5, $6)
+             (terrain_id, name, device, measure_category, modbus_addr, lora_dev_eui, ct_ratio)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
            ON CONFLICT DO NOTHING
            RETURNING id, name`,
-          [terrainId, name, device_model, default_category, modbusAddr, devEui]
+          [terrainId, name, device_model, default_category, modbusAddr, devEui, default_ct_ratio]
         );
 
         if (mp.rows.length) {
@@ -476,10 +477,10 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
           const nameAlt = `${name}-${Date.now().toString(36)}`;
           const mp2 = await corePool.query(
             `INSERT INTO measurement_points
-               (terrain_id, name, device, measure_category, modbus_addr, lora_dev_eui)
-             VALUES ($1, $2, $3, $4, $5, $6)
+               (terrain_id, name, device, measure_category, modbus_addr, lora_dev_eui, ct_ratio)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING id, name`,
-            [terrainId, nameAlt, device_model, default_category, modbusAddr, devEui]
+            [terrainId, nameAlt, device_model, default_category, modbusAddr, devEui, default_ct_ratio]
           );
           pointId = mp2.rows[0].id;
         }

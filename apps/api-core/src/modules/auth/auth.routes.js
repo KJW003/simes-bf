@@ -112,29 +112,16 @@ router.post("/auth/login", async (req, res) => {
 });
 
 // ── GET /auth/me ────────────────────────────────────────────
-router.get("/auth/me", async (req, res) => {
+router.get("/auth/me", requireAuth, async (req, res) => {
   try {
     if (!corePool) {
       return res.status(503).json({ ok: false, error: "Database unavailable" });
     }
 
-    const authHeader = req.headers.authorization;
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      return res.status(401).json({ ok: false, error: "No token" });
-    }
-
-    const token = authHeader.slice(7);
-    let decoded;
-    try {
-      decoded = jwt.verify(token, jwtSecret);
-    } catch {
-      return res.status(401).json({ ok: false, error: "Invalid token" });
-    }
-
     const { rows } = await corePool.query(
       `SELECT id, email, name, role, organization_id, site_access, avatar, active
        FROM users WHERE id = $1`,
-      [decoded.sub]
+      [req.userId]
     );
 
     if (rows.length === 0 || !rows[0].active) {
