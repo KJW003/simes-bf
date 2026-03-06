@@ -612,8 +612,7 @@ export function WidgetBoard() {
     }),
     [selectedTerrainId, overviewPoints, overviewZones, readingsData]
   );
-    [selectedTerrainId, overviewPoints, overviewZones]
-  );
+
 
   // Ordered layout with pinned first
   const orderedLayout = useMemo(() => {
