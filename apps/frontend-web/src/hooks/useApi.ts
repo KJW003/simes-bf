@@ -189,6 +189,29 @@ export function useTerrainOverview(terrainId: string | null) {
   });
 }
 
+// ─── Historical readings ───────────────────────────────────
+
+export function useReadings(terrainId: string | null, params?: { from?: string; to?: string; point_id?: string; limit?: number }) {
+  return useQuery({
+    queryKey: ['readings', terrainId, params],
+    queryFn: () => api.getReadings(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+// ─── Runs ──────────────────────────────────────────────────
+
+export function useRuns() {
+  return useQuery({
+    queryKey: ['runs'],
+    queryFn: () => api.getRuns(),
+    staleTime: 15_000,
+    retry: 1,
+  });
+}
+
 // ─── Admin: Gateways & Incoming ────────────────────────────
 
 export function useGateways() {
@@ -477,30 +500,5 @@ export function useReconcileIncoming() {
       qc.invalidateQueries({ queryKey: ['admin-gateways'] });
       qc.invalidateQueries({ queryKey: ['admin-gateway-devices'] });
     },
-  });
-}
-
-// ─── Historical Readings ───────────────────────────────────
-
-export function useReadings(
-  terrainId: string | null,
-  params?: { from?: string; to?: string; point_id?: string; limit?: number },
-) {
-  return useQuery({
-    queryKey: ['readings', terrainId, params],
-    queryFn: () => api.getReadings(terrainId!, params),
-    enabled: !!terrainId,
-    staleTime: 30_000,
-    retry: 1,
-  });
-}
-
-export function useTerrainContract(terrainId: string | null) {
-  return useQuery({
-    queryKey: ['terrain-contract', terrainId],
-    queryFn: () => api.getTerrainContract(terrainId!),
-    enabled: !!terrainId,
-    staleTime: 120_000,
-    retry: 1,
   });
 }

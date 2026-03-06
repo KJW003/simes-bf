@@ -228,6 +228,16 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
+  submitJob: (type: string, payload?: Record<string, unknown>) =>
+    request<{ id: string; type: string; status: string; created_at: string }>(`/jobs/${type}`, {
+      method: 'POST',
+      body: JSON.stringify(payload ?? {}),
+    }),
+
+  // ── Runs ──
+  getRuns: () =>
+    request<Array<{ id: string; type: string; status: string; payload: Record<string, unknown>; result: Record<string, unknown> | null; error: string | null; created_at: string; started_at: string | null; finished_at: string | null }>>('/runs'),
+
   // ── Results ──
   getResult: (type: string, runId?: string) => {
     const qs = runId ? `?runId=${runId}` : '';

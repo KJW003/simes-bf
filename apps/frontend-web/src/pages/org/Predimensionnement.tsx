@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Progress } from '@/components/ui/progress';
 import { useAppContext } from '@/contexts/AppContext';
 import { cn } from '@/lib/utils';
 import {
@@ -28,6 +27,7 @@ import {
   Line,
   BarChart,
   Bar,
+  ReferenceLine,
 } from 'recharts';
 
 // Steps
@@ -38,27 +38,10 @@ const steps = [
   { id: 4, label: 'Résultats', icon: TrendingUp },
 ];
 
-// Mock ROI results
-const cashFlowData = Array.from({ length: 20 }, (_, i) => ({
-  year: `A${i + 1}`,
-  cumulative: -18000000 + i * 2600000 + (i > 5 ? i * 350000 : 0),
-  annual: 2500000 + Math.random() * 500000,
-}));
-
-const monthlyProductionEstimate = [
-  { month: 'Jan', kwh: 5800 },
-  { month: 'Fév', kwh: 6200 },
-  { month: 'Mar', kwh: 7500 },
-  { month: 'Avr', kwh: 7800 },
-  { month: 'Mai', kwh: 7200 },
-  { month: 'Jun', kwh: 6600 },
-  { month: 'Jul', kwh: 5900 },
-  { month: 'Aoû', kwh: 5700 },
-  { month: 'Sep', kwh: 6400 },
-  { month: 'Oct', kwh: 6900 },
-  { month: 'Nov', kwh: 6100 },
-  { month: 'Déc', kwh: 5500 },
-];
+// Monthly irradiance factors for Ouagadougou region (ratio of daily avg)
+const MONTHLY_IRRADIANCE_FACTORS = [0.88, 0.94, 1.06, 1.10, 1.04, 0.96, 0.88, 0.85, 0.94, 1.02, 0.96, 0.86];
+const MONTHS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
+const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
 export default function Predimensionnement() {
   const { selectedTerrain } = useAppContext();
@@ -85,10 +68,40 @@ export default function Predimensionnement() {
   const goPrev = () => setCurrentStep((s) => Math.max(s - 1, 1));
   const setField = (key: keyof typeof form, value: number | string) => setForm((f) => ({ ...f, [key]: value }));
 
-  // Estimated results
+  // Computed results from form inputs
   const annualProd = form.pvCapacity * form.irradiance * 365 * (1 - form.losses / 100);
   const annualSavings = annualProd * form.tariff;
-  const payback = form.investment / annualSavings;
+  const payback = annualSavings > 0 ? form.investment / annualSavings : Infinity;
+
+  // Compute monthly production from irradiance factors
+  const monthlyProductionEstimate = useMemo(() =>
+    MONTHS.map((month, i) => ({
+      month,
+      kwh: Math.round(form.pvCapacity * form.irradiance * MONTHLY_IRRADIANCE_FACTORS[i] * DAYS_IN_MONTH[i] * (1 - form.losses / 100)),
+    })),
+    [form.pvCapacity, form.irradiance, form.losses],
+  );
+
+  // Compute cash flow over 20 years with discount rate + panel degradation (0.5%/yr)
+  const cashFlowData = useMemo(() => {
+    const yearlyData: Array<{ year: string; cumulative: number; annual: number }> = [];
+    let cumulative = -form.investment;
+    for (let i = 0; i < 20; i++) {
+      const degradation = 1 - 0.005 * i;
+      const prod = annualProd * degradation;
+      const savings = prod * form.tariff;
+      const discounted = savings / Math.pow(1 + form.discount / 100, i + 1);
+      cumulative += discounted;
+      yearlyData.push({ year: `A${i + 1}`, cumulative: Math.round(cumulative), annual: Math.round(discounted) });
+    }
+    return yearlyData;
+  }, [annualProd, form.tariff, form.investment, form.discount]);
+
+  // Self-consumption estimate based on battery capacity vs daily production
+  const dailyProd = annualProd / 365;
+  const selfConsumption = dailyProd > 0
+    ? Math.min(100, Math.round(((form.batteryCapacity * (form.batteryEfficiency / 100) + dailyProd * 0.4) / dailyProd) * 100))
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -252,7 +265,7 @@ export default function Predimensionnement() {
             </Card>
             <Card className="text-center p-4">
               <div className="text-xs text-muted-foreground mb-1">Autoconsommation</div>
-              <div className="text-xl font-semibold">68%</div>
+              <div className="text-xl font-semibold">{selfConsumption}%</div>
               <div className="text-xs text-muted-foreground">estimé</div>
             </Card>
           </div>
@@ -290,6 +303,7 @@ export default function Predimensionnement() {
                     <XAxis dataKey="year" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${(v / 1e6).toFixed(0)}M`} />
                     <Tooltip formatter={(val: number) => [`${(val / 1e6).toFixed(1)}M XOF`, 'Cumulé']} />
+                    <ReferenceLine y={0} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
                     <Line dataKey="cumulative" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
