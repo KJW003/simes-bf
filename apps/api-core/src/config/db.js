@@ -22,9 +22,9 @@ if (!telemetryDbUrl) {
 } else {
   telemetryPool = new Pool({
     connectionString: telemetryDbUrl,
-    max: 20,  // Increased from 10 (default) to handle higher concurrency
+    max: 20,
     idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 5000,
+    connectionTimeoutMillis: 10000,
   });
   telemetryPool.on("connect", () => console.log("✅ Connected to telemetry-db"));
   telemetryPool.on("error", (err) => console.error("❌ telemetry-db pool error", err));

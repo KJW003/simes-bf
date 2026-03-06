@@ -68,6 +68,7 @@ router.get("/terrains/:terrainId/readings/latest", async (req, res) => {
 
     res.json({ ok: true, terrain_id: terrainId, count: readings.length, readings });
   } catch (e) {
+    console.error("[telemetry/readings/latest]", e.message, e.stack);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -109,6 +110,7 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     const r = await telemetryPool.query(sql, params);
     res.json({ ok: true, terrain_id: terrainId, count: r.rows.length, readings: r.rows });
   } catch (e) {
+    console.error("[telemetry/readings]", e.message, e.stack);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -127,17 +129,12 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       [terrainId]
     );
 
-    // Latest total power across all points - optimized with window function
+    // Latest total power across all points
     const latestPower = await telemetryPool.query(
-      `WITH latest AS (
-         SELECT point_id, time, active_power_total,
-                ROW_NUMBER() OVER (PARTITION BY point_id ORDER BY time DESC) as rn
-         FROM acrel_readings
-         WHERE terrain_id = $1
-       )
-       SELECT point_id, time, active_power_total
-       FROM latest
-       WHERE rn = 1`,
+      `SELECT DISTINCT ON (point_id) point_id, time, active_power_total
+       FROM acrel_readings
+       WHERE terrain_id = $1
+       ORDER BY point_id, time DESC`,
       [terrainId]
     );
 
@@ -182,6 +179,7 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       last_update: lastUpdate,
     });
   } catch (e) {
+    console.error("[telemetry/dashboard]", e.message, e.stack);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -213,17 +211,13 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
       [terrainId]
     );
 
-    // 3) Latest readings (one per point) - optimized with window function for better performance
+    // 3) Latest readings (one per point)
     const readR = await telemetryPool.query(
-      `WITH latest AS (
-         SELECT point_id, time, ${ACREL_COLS_SQL},
-                ROW_NUMBER() OVER (PARTITION BY point_id ORDER BY time DESC) as rn
-         FROM acrel_readings
-         WHERE terrain_id = $1
-       )
-       SELECT point_id, time, ${ACREL_COLS_SQL}
-       FROM latest
-       WHERE rn = 1`,
+      `SELECT DISTINCT ON (point_id)
+              point_id, time, ${ACREL_COLS_SQL}
+       FROM acrel_readings
+       WHERE terrain_id = $1
+       ORDER BY point_id, time DESC`,
       [terrainId]
     );
 
@@ -256,6 +250,7 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
       zones_count: zones.length,
     });
   } catch (e) {
+    console.error("[telemetry/overview]", e.message, e.stack);
     res.status(500).json({ ok: false, error: e.message });
   }
 });
