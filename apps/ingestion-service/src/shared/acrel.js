@@ -12,7 +12,6 @@
  */
 
 const { corePool } = require("../config/db");
-const { applyCT } = require("./ct-transform");
 
 // ── DB-column whitelist (matches schema-telemetry.sql exactly) ──
 const METRIC_COLS = new Set([
@@ -187,5 +186,4 @@ module.exports = {
   lookupPoint,
   buildUpsertSQL,
   isIsoDateString,
-  applyCT,
 };
