@@ -502,3 +502,79 @@ export function useReconcileIncoming() {
     },
   });
 }
+
+// ─── Incidents ─────────────────────────────────────────────
+
+export function useIncidents(params?: { status?: string; severity?: string; terrain_id?: string }) {
+  return useQuery({
+    queryKey: ['incidents', params],
+    queryFn: () => api.getIncidents(params),
+    staleTime: 15_000,
+    retry: 1,
+  });
+}
+
+export function useIncidentStats() {
+  return useQuery({
+    queryKey: ['incident-stats'],
+    queryFn: () => api.getIncidentStats(),
+    staleTime: 15_000,
+    retry: 1,
+  });
+}
+
+export function useCreateIncident() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { title: string; description?: string; severity?: string; source?: string; terrain_id?: string; point_id?: string }) =>
+      api.createIncident(data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['incidents'] });
+      qc.invalidateQueries({ queryKey: ['incident-stats'] });
+    },
+  });
+}
+
+export function useUpdateIncident() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: { id: string; status?: string; severity?: string; assigned_to?: string; description?: string }) =>
+      api.updateIncident(id, data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['incidents'] });
+      qc.invalidateQueries({ queryKey: ['incident-stats'] });
+    },
+  });
+}
+
+// ─── Audit Logs ────────────────────────────────────────────
+
+export function useLogs(params?: { level?: string; source?: string; search?: string; limit?: number }) {
+  return useQuery({
+    queryKey: ['logs', params],
+    queryFn: () => api.getLogs(params),
+    staleTime: 10_000,
+    retry: 1,
+  });
+}
+
+export function useLogStats() {
+  return useQuery({
+    queryKey: ['log-stats'],
+    queryFn: () => api.getLogStats(),
+    staleTime: 15_000,
+    retry: 1,
+  });
+}
+
+// ─── Pipeline Health ───────────────────────────────────────
+
+export function usePipelineHealth() {
+  return useQuery({
+    queryKey: ['pipeline-health'],
+    queryFn: () => api.getPipelineHealth(),
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+    retry: 1,
+  });
+}

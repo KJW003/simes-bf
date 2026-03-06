@@ -12,6 +12,8 @@ const tariffsRoutes = require("./modules/tariffs/tariffs.routes");
 const adminRoutes = require("./modules/admin/admin.routes");
 const telemetryRoutes = require("./modules/telemetry/telemetry.routes");
 const listenerRoutes = require("./modules/test-listener/test-listener.routes");
+const incidentsRoutes = require("./modules/incidents/incidents.routes");
+const logsRoutes = require("./modules/logs/logs.routes");
 
 const app = express();
 
@@ -47,6 +49,8 @@ app.use("/", requireAuth, tariffsRoutes);
 app.use("/", adminRoutes);  // admin routes already have their own requireAuth per-route
 app.use("/", requireAuth, telemetryRoutes);
 app.use("/runs", requireAuth, runsRoutes);
+app.use("/", requireAuth, incidentsRoutes);
+app.use("/", requireAuth, logsRoutes);
 
 //Debug only
 app.use("/test-listener", listenerRoutes);

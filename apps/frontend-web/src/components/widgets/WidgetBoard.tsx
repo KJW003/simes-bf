@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   ContextMenu,
@@ -47,6 +48,8 @@ import {
   Settings,
   AlertTriangle,
   BarChart3,
+  ExternalLink,
+  FileDown,
 } from 'lucide-react';
 import type {
   WidgetLayoutItem,
@@ -678,6 +681,7 @@ function loadLayout(storageKey: string, terrainId?: string): WidgetLayoutItem[] 
 }
 
 export function WidgetBoard() {
+  const navigate = useNavigate();
   const { currentUser, selectedTerrainId } = useAppContext();
   const storageKey = useMemo(() => buildStorageKey(currentUser?.id), [currentUser?.id]);
 
@@ -835,6 +839,55 @@ export function WidgetBoard() {
   const fullscreenItem = fullscreenId ? layout.find(i => i.instanceId === fullscreenId) ?? null : null;
   const fullscreenDef = fullscreenItem ? defMap.get(fullscreenItem.id) ?? null : null;
 
+  // Drill-down routes
+  const drillDownRoutes: Record<string, string> = {
+    'energy-quality-summary': '/power-quality',
+    'live-load': '/data-monitor',
+    'cost-energy': '/invoice',
+    'diagnostics': '/power-quality',
+    'active-alerts': '/anomalies',
+    'forecast': '/forecasts',
+    'pv-production': '/pv-battery',
+  };
+
+  const drillDown = (widgetId: string, config: WidgetConfig) => {
+    const route = drillDownRoutes[widgetId];
+    if (route) {
+      if (config.dataSource?.type === 'POINT' && config.dataSource.refId) {
+        navigate(`/points/${config.dataSource.refId}`);
+      } else {
+        navigate(route);
+      }
+    }
+  };
+
+  // Export current layout as a JSON report snapshot
+  const exportAsReport = () => {
+    const report = {
+      title: `Rapport tableau de bord — ${new Date().toLocaleDateString('fr-FR')}`,
+      created: new Date().toISOString(),
+      terrainId: selectedTerrainId,
+      period: timePeriod,
+      widgets: orderedLayout.map(item => {
+        const def = defMap.get(item.id);
+        const data = resolveData(item);
+        return {
+          widget: def?.title ?? item.id,
+          description: def?.description ?? '',
+          size: item.size,
+          kpis: data.kpis,
+          meta: data.meta,
+        };
+      }),
+    };
+    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `simes-report-${new Date().toISOString().slice(0, 10)}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+
   // ConfigureWidgetModal item
   const configuringItem = configuringInstanceId ? layout.find(i => i.instanceId === configuringInstanceId) ?? null : null;
   const configuringDef = configuringItem ? defMap.get(configuringItem.id) ?? null : null;
@@ -863,6 +916,10 @@ export function WidgetBoard() {
           </Button>
           <Button variant="outline" size="sm" onClick={saveLayout}>
             Sauvegarder
+          </Button>
+          <Button variant="outline" size="sm" onClick={exportAsReport}>
+            <FileDown className="w-4 h-4 mr-2" />
+            Rapport
           </Button>
           <Button variant="ghost" size="sm" onClick={resetLayout}>
             Réinitialiser
@@ -1001,6 +1058,12 @@ export function WidgetBoard() {
                   <Settings className="w-4 h-4 mr-2" />
                   Configurer
                 </ContextMenuItem>
+                {drillDownRoutes[item.id] && (
+                  <ContextMenuItem onClick={() => drillDown(item.id, item.config)}>
+                    <ExternalLink className="w-4 h-4 mr-2" />
+                    Voir en détail
+                  </ContextMenuItem>
+                )}
                 <ContextMenuSub>
                   <ContextMenuSubTrigger>
                     <Settings className="w-4 h-4 mr-2" />
@@ -1030,6 +1093,7 @@ export function WidgetBoard() {
         <DialogContent className="max-w-3xl">
           <DialogHeader>
             <DialogTitle>Bibliothèque de widgets</DialogTitle>
+            <DialogDescription>Ajouter un widget au tableau de bord</DialogDescription>
           </DialogHeader>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {allWidgetDefs.map(w => (
@@ -1072,6 +1136,7 @@ export function WidgetBoard() {
                 <Badge variant="outline" className="text-[10px] ml-2">{fullscreenDef?.description}</Badge>
               )}
             </DialogTitle>
+            <DialogDescription className="sr-only">Vue plein écran du widget</DialogDescription>
           </DialogHeader>
           <div className="flex-1 overflow-auto min-h-0">
             {fullscreenItem && fullscreenDef && (

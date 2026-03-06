@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, ReferenceLine,
+  Tooltip, ResponsiveContainer, ReferenceLine, Legend,
 } from 'recharts';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
@@ -24,17 +24,27 @@ const PF_THRESHOLD = 0.85;
 const THD_WARNING = 5;
 const THD_CRITICAL = 8;
 
+const PERIOD_OPTIONS = [
+  { value: '6h', label: '6 heures', ms: 6 * 3600_000 },
+  { value: '12h', label: '12 heures', ms: 12 * 3600_000 },
+  { value: '24h', label: '24 heures', ms: 24 * 3600_000 },
+  { value: '7d', label: '7 jours', ms: 7 * 86400_000 },
+  { value: '30d', label: '30 jours', ms: 30 * 86400_000 },
+];
+
 export default function PowerQuality() {
   const { selectedTerrainId } = useAppContext();
   const [tab, setTab] = useState('pf');
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
+  const [period, setPeriod] = useState('24h');
 
   const now = useMemo(() => new Date(), []);
-  const from24h = useMemo(() => new Date(now.getTime() - 24 * 3600_000).toISOString(), [now]);
+  const periodMs = PERIOD_OPTIONS.find(p => p.value === period)?.ms ?? 24 * 3600_000;
+  const fromDate = useMemo(() => new Date(now.getTime() - periodMs).toISOString(), [now, periodMs]);
 
   const { data: overviewData, isLoading: loadingOv } = useTerrainOverview(selectedTerrainId);
   const { data: readingsData, isLoading: loadingR } = useReadings(selectedTerrainId, {
-    from: from24h, to: now.toISOString(), limit: 5000,
+    from: fromDate, to: now.toISOString(), limit: 5000,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
   });
 
@@ -84,7 +94,7 @@ export default function PowerQuality() {
     return Array.from({ length: 24 }, (_, h) => {
       const vals = byHour.get(h) ?? [];
       return { hour: `${h}h`, avg: vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null };
-    });
+    }).filter(d => d.avg !== null);
   }, [readings]);
 
   // ─── Hourly THD per phase trend
@@ -102,7 +112,7 @@ export default function PowerQuality() {
       const e = byHour.get(h);
       const avg = (arr: number[]) => arr.length ? arr.reduce((s, v) => s + v, 0) / arr.length : null;
       return { hour: `${h}h`, phase_a: e ? avg(e.a) : null, phase_b: e ? avg(e.b) : null, phase_c: e ? avg(e.c) : null };
-    });
+    }).filter(d => d.phase_a !== null || d.phase_b !== null || d.phase_c !== null);
   }, [readings]);
 
   // ─── Worst PF points
@@ -142,9 +152,9 @@ export default function PowerQuality() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <PageHeader title="Qualité réseau" description={`Qualité de l'énergie électrique — dernières 24h — ${selectedPointName}`} />
+      <PageHeader title="Qualité réseau" description={`Qualité de l'énergie électrique — ${PERIOD_OPTIONS.find(p => p.value === period)?.label ?? '24 heures'} — ${selectedPointName}`} />
 
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <span className="text-sm text-muted-foreground">Point de mesure :</span>
         <Select value={selectedPoint} onValueChange={setSelectedPoint}>
           <SelectTrigger className="w-64 h-8 text-xs">
@@ -153,6 +163,15 @@ export default function PowerQuality() {
           <SelectContent>
             <SelectItem value="_all">Tous les points</SelectItem>
             {points.map(p => <SelectItem key={String(p.id)} value={String(p.id)}>{String(p.name)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+        <span className="text-sm text-muted-foreground ml-2">Période :</span>
+        <Select value={period} onValueChange={setPeriod}>
+          <SelectTrigger className="w-40 h-8 text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {PERIOD_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -244,6 +263,7 @@ export default function PowerQuality() {
                   <YAxis tick={{ fontSize: 10 }} unit="%" />
                   <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number) => [v?.toFixed(1) ?? '—', '%']} />
                   <ReferenceLine y={THD_CRITICAL} stroke="hsl(var(--destructive))" strokeDasharray="5 3" label={{ value: `${THD_CRITICAL}%`, fontSize: 10, fill: 'hsl(var(--destructive))' }} />
+                  <Legend />
                   <Line type="monotone" dataKey="phase_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Phase A" />
                   <Line type="monotone" dataKey="phase_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Phase B" />
                   <Line type="monotone" dataKey="phase_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="Phase C" />

@@ -14,7 +14,7 @@ import {
   AlertTriangle, CheckCircle2,
 } from 'lucide-react';
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, BarChart, Bar,
 } from 'recharts';
 
@@ -164,7 +164,9 @@ export default function PointDetails() {
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 10 }} unit=" W" />
+                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} domain={[0, 1]} />
                     <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Legend />
                     <Line type="monotone" dataKey="p_total" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="P totale (W)" />
                     <Line type="monotone" dataKey="pf" stroke="#f59e0b" dot={false} strokeWidth={1} name="PF" yAxisId="right" />
                   </LineChart>
@@ -185,6 +187,7 @@ export default function PointDetails() {
                   <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 10 }} unit=" V" />
                   <Tooltip contentStyle={{ fontSize: 12 }} />
+                  <Legend />
                   <Line type="monotone" dataKey="v_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Phase A" />
                   <Line type="monotone" dataKey="v_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Phase B" />
                   <Line type="monotone" dataKey="v_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="Phase C" />
@@ -205,6 +208,7 @@ export default function PointDetails() {
                   <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                   <YAxis tick={{ fontSize: 10 }} unit=" A" />
                   <Tooltip contentStyle={{ fontSize: 12 }} />
+                  <Legend />
                   <Line type="monotone" dataKey="i_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Phase A" />
                   <Line type="monotone" dataKey="i_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Phase B" />
                   <Line type="monotone" dataKey="i_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="Phase C" />
@@ -244,6 +248,7 @@ export default function PointDetails() {
                     <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 10 }} unit="%" />
                     <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Legend />
                     <Line type="monotone" dataKey="thdi_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="THDi A" />
                     <Line type="monotone" dataKey="thdi_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="THDi B" />
                     <Line type="monotone" dataKey="thdi_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="THDi C" />

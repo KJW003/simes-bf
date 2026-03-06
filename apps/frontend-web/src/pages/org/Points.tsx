@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -257,6 +257,7 @@ function PointDetailModal({
             <Badge variant="outline" className="text-[10px] ml-2">{String((point as any).measure_category ?? '—')}</Badge>
             {zoneName && <span className="text-sm text-muted-foreground font-normal">— Zone: {zoneName}</span>}
           </DialogTitle>
+          <DialogDescription className="sr-only">Détail du point de mesure</DialogDescription>
         </DialogHeader>
 
         {/* Metadata */}
