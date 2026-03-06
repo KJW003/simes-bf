@@ -107,6 +107,9 @@ services:
       - traefik.http.routers.pgadmin.rule=PathPrefix(`/pgadmin`)
       - traefik.http.routers.pgadmin.entrypoints=web
       - traefik.http.routers.pgadmin.priority=50
+      - traefik.http.routers.pgadmin.service=pgadmin
+      - traefik.http.routers.pgadmin.middlewares=pgadmin-stripprefix
+      - traefik.http.middlewares.pgadmin-stripprefix.stripprefix.prefixes=/pgadmin
       - traefik.http.services.pgadmin.loadbalancer.server.port=80
 
   # ===== EDGE / ROUTER =====
