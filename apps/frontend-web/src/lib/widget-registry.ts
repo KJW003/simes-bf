@@ -11,7 +11,7 @@ import type {
   WidgetResolverContext,
   MetricKey,
 } from '@/types/widget-engine';
-import { METRIC_UNITS } from '@/types/widget-engine';
+import { METRIC_UNITS, METRIC_SUB_COLUMNS } from '@/types/widget-engine';
 import {
   Activity,
   Gauge,
@@ -66,69 +66,70 @@ function resolvePoints(
   }
 }
 
-/** Current snapshot KPI for a metric from live overview data */
-function aggregateMetricKpi(points: RawPoint[], metric: MetricKey): number {
+/** Current snapshot KPI for a specific column from live overview data */
+function aggregateColumnKpi(points: RawPoint[], col: string): number {
   if (points.length === 0) return 0;
-  const num = (p: RawPoint, key: string) => {
-    const v = p.readings?.[key];
+  const vals = points.map(p => {
+    const v = p.readings?.[col];
     return v != null ? Number(v) : 0;
-  };
-  const numOr = (p: RawPoint, key: string, fallback: number) => {
-    const v = p.readings?.[key];
-    return v != null ? Number(v) : fallback;
-  };
-
-  switch (metric) {
-    case 'P':
-      return points.reduce((s, p) => s + Math.abs(num(p, 'active_power_total')), 0);
-    case 'Q':
-      return points.reduce((s, p) => s + Math.abs(num(p, 'reactive_power_total')), 0);
-    case 'S':
-      return points.reduce((s, p) => s + Math.abs(num(p, 'apparent_power_total')), 0);
-    case 'Energy':
-      return points.reduce((s, p) => s + num(p, 'energy_import') + num(p, 'energy_export'), 0);
-    case 'PF':
-      return Math.min(...points.map(p => numOr(p, 'power_factor_total', 1)));
-    case 'THD':
-      return Math.max(
-        ...points.flatMap(p => [
-          num(p, 'thdi_a'),
-          num(p, 'thdi_b'),
-          num(p, 'thdi_c'),
-        ])
-      );
-    case 'V':
-      return points.reduce(
-        (s, p) => s + numOr(p, 'voltage_a', 230),
-        0
-      ) / points.length;
-    case 'I':
-      return points.reduce(
-        (s, p) => s + num(p, 'current_a'),
-        0
-      );
-    case 'Freq':
-      return numOr(points[0], 'frequency', 50);
-    case 'VUnbal':
-      return Math.max(...points.map(p => num(p, 'voltage_unbalance')));
-    case 'IUnbal':
-      return Math.max(...points.map(p => num(p, 'current_unbalance')));
-    default:
-      return 0;
-  }
+  });
+  // For power/current/energy → sum; for PF/V/THD/Freq → avg or min/max
+  const sumCols = /^(active_power|reactive_power|apparent_power|current|energy)/;
+  const minCols = /^power_factor/;
+  const maxCols = /^(thd|voltage_unbalance|current_unbalance)/;
+  if (minCols.test(col)) return Math.min(...vals);
+  if (maxCols.test(col)) return Math.max(...vals);
+  if (sumCols.test(col)) return vals.reduce((s, v) => s + Math.abs(v), 0);
+  // voltage, frequency → average
+  return vals.reduce((s, v) => s + v, 0) / vals.length;
 }
 
-/** Time series are not available from the overview endpoint (snapshot only).
- *  Return empty arrays — use historical readings hooks for charts. */
-function resolveSeriesForConfig(
-  _config: WidgetConfig,
-  _ctx: WidgetResolverContext,
-  metrics: MetricKey[],
+/** Get the effective columns from config: use config.columns if set, else default first sub-column per metric */
+function getEffectiveColumns(config: WidgetConfig): string[] {
+  if (config.columns && config.columns.length > 0) return config.columns;
+  // Fallback: first sub-column for each selected metric
+  return config.metrics.flatMap(m => {
+    const subs = METRIC_SUB_COLUMNS[m];
+    return subs && subs.length > 0 ? [subs[subs.length - 1].col] : [];
+  });
+}
+
+/** Build time series from historical readings for specific DB columns */
+function resolveSeriesFromReadings(
+  config: WidgetConfig,
+  ctx: WidgetResolverContext,
 ): Record<string, Array<{ ts: number; value: number }>> {
   const result: Record<string, Array<{ ts: number; value: number }>> = {};
-  for (const metric of metrics) {
-    result[metric] = [];
+  const columns = getEffectiveColumns(config);
+  const readings = (ctx.readings ?? []) as Array<Record<string, unknown>>;
+
+  // Filter readings by point/category if needed
+  const pointIds = new Set<string>();
+  if (config.dataSource.type === 'POINT') {
+    pointIds.add(config.dataSource.refId);
+  } else {
+    const filteredPoints = resolvePoints(config, ctx);
+    filteredPoints.forEach(p => { if (p.id) pointIds.add(String(p.id)); });
   }
+
+  const filteredReadings = pointIds.size > 0
+    ? readings.filter(r => pointIds.has(String(r.point_id)))
+    : readings;
+
+  // Sort chronologically
+  const sorted = [...filteredReadings].sort(
+    (a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime()
+  );
+
+  for (const col of columns) {
+    result[col] = sorted
+      .filter(r => r[col] != null)
+      .map(r => ({
+        ts: new Date(String(r.time)).getTime(),
+        value: Number(r[col]),
+      }));
+  }
+
   return result;
 }
 
@@ -136,6 +137,35 @@ function buildUnitsMap(metrics: MetricKey[]): Record<string, string> {
   const map: Record<string, string> = {};
   for (const m of metrics) {
     map[m] = METRIC_UNITS[m];
+  }
+  return map;
+}
+
+/** Build units map keyed by column name */
+function buildColumnUnitsMap(columns: string[], metrics: MetricKey[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const col of columns) {
+    // Find which metric this column belongs to
+    for (const m of metrics) {
+      const subs = METRIC_SUB_COLUMNS[m] ?? [];
+      if (subs.some(s => s.col === col)) {
+        map[col] = METRIC_UNITS[m];
+        break;
+      }
+    }
+  }
+  return map;
+}
+
+/** Build display labels keyed by column name */
+function buildColumnLabelsMap(columns: string[]): Record<string, string> {
+  const map: Record<string, string> = {};
+  for (const col of columns) {
+    for (const subs of Object.values(METRIC_SUB_COLUMNS)) {
+      const found = subs.find(s => s.col === col);
+      if (found) { map[col] = found.label; break; }
+    }
+    if (!map[col]) map[col] = col;
   }
   return map;
 }
@@ -149,23 +179,22 @@ function energyQualityResolver(
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
   const points = resolvePoints(config, ctx);
-  const metricKeys: MetricKey[] = config.metrics.length > 0
-    ? config.metrics
-    : ['P', 'Energy', 'PF', 'THD'];
+  const columns = getEffectiveColumns(config);
 
   const kpis: Record<string, number | null> = {};
-  for (const m of metricKeys) {
-    kpis[m] = Number(aggregateMetricKpi(points, m).toFixed(2));
+  for (const col of columns) {
+    kpis[col] = Number(aggregateColumnKpi(points, col).toFixed(2));
   }
 
-  const series = resolveSeriesForConfig(config, ctx, metricKeys);
+  const series = resolveSeriesFromReadings(config, ctx);
 
   return {
     kpis,
     series,
-    availableMetrics: metricKeys,
+    availableMetrics: columns as MetricKey[],
     meta: {
-      unitByMetric: buildUnitsMap(metricKeys),
+      unitByMetric: buildColumnUnitsMap(columns, config.metrics),
+      columnLabels: buildColumnLabelsMap(columns),
       sourceInfo: `${points.length} point(s)`,
       completeness: 98.5,
     },
@@ -177,23 +206,22 @@ function liveLoadResolver(
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
   const points = resolvePoints(config, ctx);
-  const metricKeys: MetricKey[] = config.metrics.length > 0
-    ? config.metrics
-    : ['P'];
+  const columns = getEffectiveColumns(config);
 
   const kpis: Record<string, number | null> = {};
-  for (const m of metricKeys) {
-    kpis[m] = Number(aggregateMetricKpi(points, m).toFixed(2));
+  for (const col of columns) {
+    kpis[col] = Number(aggregateColumnKpi(points, col).toFixed(2));
   }
 
-  const series = resolveSeriesForConfig(config, ctx, metricKeys);
+  const series = resolveSeriesFromReadings(config, ctx);
 
   return {
     kpis,
     series,
-    availableMetrics: metricKeys,
+    availableMetrics: columns as MetricKey[],
     meta: {
-      unitByMetric: buildUnitsMap(metricKeys),
+      unitByMetric: buildColumnUnitsMap(columns, config.metrics),
+      columnLabels: buildColumnLabelsMap(columns),
       sourceInfo: `${points.length} point(s)`,
     },
   };
@@ -204,7 +232,7 @@ function costResolver(
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
   const points = resolvePoints(config, ctx);
-  const energyKwh = aggregateMetricKpi(points, 'Energy');
+  const energyKwh = aggregateColumnKpi(points, 'energy_import') + aggregateColumnKpi(points, 'energy_export');
   const dailyCost = Math.round(energyKwh * 0.095);
   const monthlyBudget = dailyCost * 30;
   const dayOfMonth = new Date().getDate();

@@ -17,7 +17,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { useAppContext } from '@/contexts/AppContext';
-import { useTerrainOverview } from '@/hooks/useApi';
+import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import { ConfigureWidgetModal } from '@/components/widgets/ConfigureWidgetModal';
 import { getWidgetDefinition, getWidgetDefinitions } from '@/lib/widget-registry';
 import { cn } from '@/lib/utils';
@@ -361,6 +361,9 @@ function MultiMetricWidget({
   const metrics = data.availableMetrics;
   const [activeTab, setActiveTab] = useState(0);
   const mode = config.display.multiMetricMode;
+  const colLabels = (data.meta?.columnLabels ?? {}) as Record<string, string>;
+  const getLabel = (m: string) => colLabels[m] ?? METRIC_LABELS[m as MetricKey] ?? m;
+  const getUnit = (m: string) => (data.meta?.unitByMetric as Record<string, string>)?.[m] ?? METRIC_UNITS[m as MetricKey] ?? '';
 
   // Reset activeTab when metrics list changes
   const metricsKey = metrics.join(',');
@@ -388,7 +391,7 @@ function MultiMetricWidget({
     const metric = metrics[0] ?? 'P';
     const series = data.series?.[metric] ?? [];
     const kpiVal = data.kpis?.[metric];
-    const unit = METRIC_UNITS[metric] ?? '';
+    const unit = getUnit(metric);
     return (
       <div className="space-y-2">
         {kpiVal != null && (
@@ -410,10 +413,10 @@ function MultiMetricWidget({
         <div className="flex flex-wrap gap-4">
           {metrics.map((m) => {
             const val = data.kpis?.[m];
-            const unit = METRIC_UNITS[m] ?? '';
+            const unit = getUnit(m);
             return (
               <div key={m} className="min-w-[80px]">
-                <div className="text-xs text-muted-foreground">{METRIC_LABELS[m] ?? m}</div>
+                <div className="text-xs text-muted-foreground">{getLabel(m)}</div>
                 <div className="text-lg font-semibold">
                   {val != null ? Number(val).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
                   <span className="text-xs text-muted-foreground ml-1">{unit}</span>
@@ -431,7 +434,7 @@ function MultiMetricWidget({
             const series = data.series?.[m] ?? [];
             return (
               <div key={m} className="space-y-1">
-                <div className="text-[10px] text-muted-foreground font-medium">{METRIC_LABELS[m] ?? m}</div>
+                <div className="text-[10px] text-muted-foreground font-medium">{getLabel(m)}</div>
                 <MetricChart data={series} metric={m} size="sm" color={METRIC_COLORS[i % METRIC_COLORS.length]} />
               </div>
             );
@@ -451,10 +454,10 @@ function MultiMetricWidget({
       <div className="flex flex-wrap gap-4">
         {metrics.map((m) => {
           const val = data.kpis?.[m];
-          const unit = METRIC_UNITS[m] ?? '';
+          const unit = getUnit(m);
           return (
             <div key={m} className="min-w-[60px]">
-              <div className="text-[10px] text-muted-foreground">{METRIC_LABELS[m] ?? m}</div>
+              <div className="text-[10px] text-muted-foreground">{getLabel(m)}</div>
               <div className="text-sm font-semibold">
                 {val != null ? Number(val).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
                 <span className="text-[10px] text-muted-foreground ml-0.5">{unit}</span>
@@ -477,7 +480,7 @@ function MultiMetricWidget({
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
           >
-            {METRIC_LABELS[m] ?? m}
+            {getLabel(m)}
           </button>
         ))}
       </div>
@@ -539,7 +542,7 @@ const stateBadgeMap: Record<WidgetRuntimeState, { label: string; className: stri
   offline: { label: 'Hors ligne', className: 'badge-warning' },
 };
 
-const STORAGE_VERSION = 'v5'; // bump: LOAD-only default for conso widgets
+const STORAGE_VERSION = 'v6'; // bump: column-level metric selection + readings charts
 const buildStorageKey = (userId?: string) => `simes_widget_layout_${STORAGE_VERSION}_${userId ?? 'guest'}`;
 
 function isValidLayout(data: unknown): data is WidgetLayoutItem[] {
@@ -572,6 +575,10 @@ export function WidgetBoard() {
   const overviewPoints = useMemo(() => (overviewData?.points ?? []) as Array<Record<string, unknown>>, [overviewData]);
   const overviewZones = useMemo(() => (overviewData?.zones ?? []) as Array<Record<string, unknown>>, [overviewData]);
 
+  // Fetch historical readings for chart widgets (last 24h by default)
+  const readingsFrom = useMemo(() => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), []);
+  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, limit: 5000 });
+
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [fullscreenId, setFullscreenId] = useState<string | null>(null);
@@ -595,9 +602,16 @@ export function WidgetBoard() {
     return map;
   }, []);
 
-  // Resolver context — includes pre-fetched overview data
+  // Resolver context — includes pre-fetched overview data + historical readings
   const resolverCtx: WidgetResolverContext = useMemo(
-    () => ({ terrainId: selectedTerrainId, points: overviewPoints, zones: overviewZones }),
+    () => ({
+      terrainId: selectedTerrainId,
+      points: overviewPoints,
+      zones: overviewZones,
+      readings: (readingsData?.readings ?? []) as Array<Record<string, unknown>>,
+    }),
+    [selectedTerrainId, overviewPoints, overviewZones, readingsData]
+  );
     [selectedTerrainId, overviewPoints, overviewZones]
   );
 

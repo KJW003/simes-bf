@@ -40,7 +40,8 @@ export interface WidgetDataSource {
 // ── Re-exports from models (metrics) ────────────────────────
 import type { MetricKey } from '@/models/metric.model';
 export type { MetricKey };
-export { METRIC_LABELS, METRIC_UNITS } from '@/models/metric.model';
+export type { SubMetric } from '@/models/metric.model';
+export { METRIC_LABELS, METRIC_UNITS, METRIC_SUB_COLUMNS } from '@/models/metric.model';
 
 // -------------------------
 // TIME RANGE
@@ -77,6 +78,8 @@ export interface WidgetConfig {
   scopeType: ScopeType;
   dataSource: WidgetDataSource;
   metrics: MetricKey[];
+  /** Specific DB columns selected per metric (e.g. 'current_a', 'voltage_b') */
+  columns?: string[];
   timeRange: WidgetTimeRange;
   display: WidgetDisplay;
 }
@@ -144,6 +147,8 @@ export interface WidgetResolverContext {
   points?: Array<Record<string, unknown>>;
   /** Pre-fetched zones from overview API */
   zones?: Array<Record<string, unknown>>;
+  /** Historical readings from /readings API (time series) */
+  readings?: Array<Record<string, unknown>>;
 }
 
 export type WidgetRenderer = (props: {

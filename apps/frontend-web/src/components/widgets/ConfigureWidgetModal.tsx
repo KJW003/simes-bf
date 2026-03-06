@@ -22,6 +22,7 @@ import type {
 } from '@/types/widget-engine';
 import {
   METRIC_LABELS,
+  METRIC_SUB_COLUMNS,
   ENERGY_SOURCE_LABELS,
   type EnergySourceCategory,
   type WidgetConfigSchema,
@@ -102,6 +103,9 @@ export function ConfigureWidgetModal({
   const [selectedMetrics, setSelectedMetrics] = useState<MetricKey[]>(
     initialConfig?.metrics ?? configSchema.defaultConfig.metrics ?? []
   );
+  const [selectedColumns, setSelectedColumns] = useState<string[]>(
+    initialConfig?.columns ?? []
+  );
   const [multiMetricMode, setMultiMetricMode] = useState<MultiMetricMode>(
     initialConfig?.display?.multiMetricMode ?? 'TABS'
   );
@@ -128,8 +132,25 @@ export function ConfigureWidgetModal({
   );
 
   const toggleMetric = (metric: MetricKey) => {
-    setSelectedMetrics(prev =>
-      prev.includes(metric) ? prev.filter(m => m !== metric) : [...prev, metric]
+    setSelectedMetrics(prev => {
+      if (prev.includes(metric)) {
+        // Remove metric + its sub-columns
+        const subCols = (METRIC_SUB_COLUMNS[metric] ?? []).map(s => s.col);
+        setSelectedColumns(c => c.filter(col => !subCols.includes(col)));
+        return prev.filter(m => m !== metric);
+      }
+      // Add metric + auto-select first sub-column
+      const subs = METRIC_SUB_COLUMNS[metric] ?? [];
+      if (subs.length === 1) {
+        setSelectedColumns(c => [...c, subs[0].col]);
+      }
+      return [...prev, metric];
+    });
+  };
+
+  const toggleColumn = (col: string) => {
+    setSelectedColumns(prev =>
+      prev.includes(col) ? prev.filter(c => c !== col) : [...prev, col]
     );
   };
 
@@ -153,6 +174,7 @@ export function ConfigureWidgetModal({
           : {}),
       },
       metrics: selectedMetrics,
+      columns: selectedColumns,
       timeRange: {
         mode: configSchema.hasTimeRange ? 'WIDGET_MANAGED' : 'FOLLOW_PAGE',
         value: timeRangeValue,
@@ -277,6 +299,53 @@ export function ConfigureWidgetModal({
               </div>
               {selectedMetrics.length === 0 && (
                 <p className="text-xs text-severity-warning">Sélectionnez au moins une métrique.</p>
+              )}
+            </div>
+          )}
+
+          {/* Sub-metric column selection */}
+          {selectedMetrics.length > 0 && (
+            <div className="space-y-3">
+              <Label>Colonnes spécifiques</Label>
+              <p className="text-xs text-muted-foreground">
+                Pour chaque métrique, choisissez les grandeurs exactes à afficher.
+              </p>
+              {selectedMetrics.map(metric => {
+                const subs = METRIC_SUB_COLUMNS[metric] ?? [];
+                if (subs.length <= 1) return null;
+                return (
+                  <div key={metric} className="space-y-1">
+                    <div className="text-xs font-medium text-foreground">{METRIC_LABELS[metric]}</div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {subs.map(sub => {
+                        const active = selectedColumns.includes(sub.col);
+                        return (
+                          <button
+                            key={sub.col}
+                            type="button"
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded border px-2 py-0.5 text-[11px] transition-colors',
+                              active
+                                ? 'border-primary bg-primary/10 text-primary'
+                                : 'border-border bg-background text-muted-foreground hover:bg-accent'
+                            )}
+                            onClick={() => toggleColumn(sub.col)}
+                          >
+                            <Checkbox
+                              checked={active}
+                              className="h-3 w-3 pointer-events-none"
+                              tabIndex={-1}
+                            />
+                            {sub.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+              {selectedColumns.length === 0 && selectedMetrics.some(m => (METRIC_SUB_COLUMNS[m]?.length ?? 0) > 1) && (
+                <p className="text-xs text-severity-warning">Sélectionnez au moins une colonne spécifique.</p>
               )}
             </div>
           )}

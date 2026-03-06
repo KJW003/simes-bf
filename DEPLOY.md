@@ -125,7 +125,7 @@ Content-Type: `application/json`
 
 The system will automatically buffer unknown gateways and route mapped ones.
 
-## 7b. Admin workflow after deployment
+## 8. Admin workflow after deployment
 
 Once the platform is running and the UG67 starts sending data:
 
@@ -137,7 +137,7 @@ Once the platform is running and the UG67 starts sending data:
 
 L'URL d'ingestion est aussi affichée en bannière sur la page Admin (copiable en un clic).
 
-## 8. Monitoring & Logs
+## 9. Monitoring & Logs
 
 ```bash
 # All logs
@@ -152,7 +152,69 @@ docker exec -it simes-core-db psql -U simes -d simes_core
 docker exec -it simes-telemetry-db psql -U simes -d simes_telemetry
 ```
 
-## 9. Backup
+## 10. Database admin UI (pgAdmin)
+
+pgAdmin 4 is included in the deployment for graphical database administration:
+
+```
+http://localhost/pgadmin  (after ./deploy.sh)
+```
+
+**Default credentials** (from `.env`):
+- Email: `${PGADMIN_EMAIL}` (defaults to `admin@simes.local`)
+- Password: `${PGADMIN_PASSWORD}` (defaults to `admin1234`)
+
+### Quick setup
+
+After deployment, the `deploy.sh` script prints database connection details. To register servers in pgAdmin:
+
+1. Open http://localhost/pgadmin
+2. Login with credentials above
+3. Click **Register → Server**
+4. Fill in the form:
+   - **Name**: `SIMES Core` (or choose)
+   - **Host**: `core-db`
+   - **Port**: `5432`
+   - **Database**: `simes_core`
+   - **Username**: `simes`
+   - **Password**: `${CORE_DB_PASSWORD}` (from `.env` output)
+   - Click **Save**
+
+5. Repeat for Telemetry DB:
+   - **Name**: `SIMES Telemetry`
+   - **Host**: `telemetry-db`
+   - **Port**: `5432`
+   - **Database**: `simes_telemetry`
+   - **Username**: `simes`
+   - **Password**: `${TELEMETRY_DB_PASSWORD}`
+
+### Audit queries
+
+Once connected, navigate to: **Servers** → **SIMES Core** → **Databases** → **simes_core** → **Schemas** → **public** → **Tables**
+
+Common audit queries (right-click → **Query Tool**):
+
+```sql
+-- Count readings
+SELECT COUNT(*) FROM acrel_readings;
+
+-- Readings timeline (recent 10)
+SELECT time, point_id, voltage_a, current_a FROM acrel_readings 
+ORDER BY time DESC LIMIT 10;
+
+-- Data points coverage
+SELECT COUNT(DISTINCT point_id) FROM acrel_readings;
+
+-- Temporal range
+SELECT MIN(time) as earliest, MAX(time) as latest FROM acrel_readings;
+
+-- NULL check (data quality)
+SELECT COUNT(*), COUNT(current_a) FROM acrel_readings;
+```
+
+See [PGADMIN.md](./PGADMIN.md) for comprehensive audit and troubleshooting.
+
+## 11. Backup
 
 ```bash
 # Core DB backup
@@ -162,7 +224,7 @@ docker exec simes-core-db pg_dump -U simes simes_core > backup_core_$(date +%F).
 docker exec simes-telemetry-db pg_dump -U simes simes_telemetry > backup_telemetry_$(date +%F).sql
 ```
 
-## 10. Update deployment
+## 12. Update deployment
 
 ```bash
 cd /opt/simes
