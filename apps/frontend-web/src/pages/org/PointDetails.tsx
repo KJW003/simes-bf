@@ -57,7 +57,6 @@ export default function PointDetails() {
       thdi_a: r.thdi_a != null ? Number(r.thdi_a) : null,
       thdi_b: r.thdi_b != null ? Number(r.thdi_b) : null,
       thdi_c: r.thdi_c != null ? Number(r.thdi_c) : null,
-      freq: r.frequency != null ? Number(r.frequency) : null,
     })).reverse(),
     [readings],
   );
@@ -75,9 +74,6 @@ export default function PointDetails() {
 
     const vUnbal = latest.voltage_unbalance != null ? Number(latest.voltage_unbalance) : null;
     if (vUnbal != null) list.push({ label: 'Déséquilibre tension', status: vUnbal > 2 ? 'warning' : 'ok', detail: `${vUnbal.toFixed(1)}%` });
-
-    const freq = latest.frequency != null ? Number(latest.frequency) : null;
-    if (freq != null) list.push({ label: 'Fréquence', status: Math.abs(freq - 50) > 0.5 ? 'warning' : 'ok', detail: `${freq.toFixed(2)} Hz` });
 
     const alarm = latest.alarm_state != null ? Number(latest.alarm_state) : null;
     if (alarm != null) list.push({ label: 'Alarme', status: alarm > 0 ? 'critical' : 'ok', detail: alarm > 0 ? `Code ${alarm}` : 'Aucune' });
@@ -144,7 +140,6 @@ export default function PointDetails() {
         <KpiCard label="Tension A" value={fmt(latest?.voltage_a, 1) + ' V'} icon={<Thermometer className="w-4 h-4" />} />
         <KpiCard label="PF total" value={fmt(latest?.power_factor_total, 3)} icon={<Gauge className="w-4 h-4" />}
           variant={latest?.power_factor_total != null && Number(latest.power_factor_total) < 0.85 ? 'warning' : 'default'} />
-        <KpiCard label="Fréquence" value={fmt(latest?.frequency, 2) + ' Hz'} icon={<Activity className="w-4 h-4" />} />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -273,7 +268,7 @@ export default function PointDetails() {
                       <th>Heure</th><th>P (W)</th><th>Q (var)</th><th>S (VA)</th>
                       <th>V_a</th><th>V_b</th><th>V_c</th>
                       <th>I_a</th><th>I_b</th><th>I_c</th>
-                      <th>PF</th><th>Fréq</th><th>Énergie imp.</th>
+                      <th>PF</th><th>Énergie imp.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -290,7 +285,6 @@ export default function PointDetails() {
                         <td className="mono">{fmt(r.current_b, 2)}</td>
                         <td className="mono">{fmt(r.current_c, 2)}</td>
                         <td className="mono">{fmt(r.power_factor_total, 3)}</td>
-                        <td className="mono">{fmt(r.frequency, 2)}</td>
                         <td className="mono">{fmt(r.energy_import, 0)}</td>
                       </tr>
                     ))}

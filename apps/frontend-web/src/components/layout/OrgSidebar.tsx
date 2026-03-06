@@ -98,6 +98,9 @@ export function OrgSidebar() {
             {canAccessOrgRoute(role, 'dataMonitor') && (
               <NavItem to="/data-monitor" icon={Activity} label="Terrain & zones" />
             )}
+            {canAccessOrgRoute(role, 'dataMonitor') && (
+              <NavItem to="/points" icon={Activity} label="Points de mesure" />
+            )}
             {canAccessOrgRoute(role, 'powerQuality') && (
               <NavItem to="/power-quality" icon={Gauge} label="Qualité réseau" />
             )}

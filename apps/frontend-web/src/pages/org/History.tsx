@@ -32,7 +32,6 @@ const METRICS = [
   { key: 'voltage_a', label: 'Tension phase A (V)', unit: 'V' },
   { key: 'current_a', label: 'Courant phase A (A)', unit: 'A' },
   { key: 'power_factor_total', label: 'Facteur de puissance', unit: '' },
-  { key: 'frequency', label: 'Fréquence (Hz)', unit: 'Hz' },
   { key: 'energy_import', label: 'Énergie importée (kWh)', unit: 'kWh' },
 ] as const;
 

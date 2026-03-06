@@ -63,15 +63,6 @@ export default function EnergyAudit() {
       detail: `${actual} mesures / ~${expectedReadings} attendues (${completeness.toFixed(0)}%)`,
     });
 
-    // Frequency stability
-    const freqValues = readings.map(r => r.frequency).filter(v => v != null).map(Number);
-    if (freqValues.length) {
-      const freqMin = Math.min(...freqValues);
-      const freqMax = Math.max(...freqValues);
-      const deviation = Math.max(Math.abs(freqMax - 50), Math.abs(50 - freqMin));
-      diags.push({ label: 'Stabilité fréquence', status: deviation > 0.5 ? 'warning' : 'ok', detail: `${freqMin.toFixed(2)} – ${freqMax.toFixed(2)} Hz` });
-    }
-
     return diags;
   }, [readings, points]);
 

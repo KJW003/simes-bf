@@ -57,7 +57,6 @@ function LiveReadingsPanel({ terrainId }: { terrainId: string }) {
                 <th className="py-2 px-2 text-right">Ia (A)</th>
                 <th className="py-2 px-2 text-right">Ib (A)</th>
                 <th className="py-2 px-2 text-right">Ic (A)</th>
-                <th className="py-2 px-2 text-right">Freq (Hz)</th>
                 <th className="py-2 px-2 text-right">E imp (kWh)</th>
                 <th className="py-2 px-2 text-right">E exp (kWh)</th>
                 <th className="py-2 px-2 text-right">Dernière vue</th>
@@ -88,7 +87,6 @@ function LiveReadingsPanel({ terrainId }: { terrainId: string }) {
                       <td className="py-1.5 px-2 text-right mono">{fmt(r.current_a)}</td>
                       <td className="py-1.5 px-2 text-right mono">{fmt(r.current_b)}</td>
                       <td className="py-1.5 px-2 text-right mono">{fmt(r.current_c)}</td>
-                      <td className="py-1.5 px-2 text-right mono">{fmt(r.frequency, 1)}</td>
                       <td className="py-1.5 px-2 text-right mono">{fmt(r.energy_import, 1)}</td>
                       <td className="py-1.5 px-2 text-right mono">{fmt(r.energy_export, 1)}</td>
                       <td className="py-1.5 px-2 text-right text-muted-foreground">{toMinutesAgo(r.time)} min</td>
@@ -174,7 +172,6 @@ function LiveReadingsPanel({ terrainId }: { terrainId: string }) {
                             )}
 
                             <div className="font-medium text-muted-foreground col-span-full border-b pb-1 mb-1 mt-2">Radio / Transmission</div>
-                            <div>Fréquence: <span className="mono">{fmt(r.frequency, 1)} Hz</span></div>
                             {r.rssi_lora != null && <div>RSSI LoRa: <span className="mono">{fmtInt(r.rssi_lora)} dBm</span></div>}
                             {r.rssi_gateway != null && <div>RSSI GW: <span className="mono">{fmtInt(r.rssi_gateway)} dBm</span></div>}
                             {r.point?.modbus_addr != null && <div>Modbus Addr: <span className="mono">{r.point.modbus_addr}</span></div>}

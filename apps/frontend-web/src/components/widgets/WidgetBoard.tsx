@@ -32,7 +32,11 @@ import {
   CartesianGrid,
   Tooltip as ChartTooltip,
   ResponsiveContainer,
+  Legend,
 } from 'recharts';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import {
   Plus,
   GripVertical,
@@ -42,7 +46,6 @@ import {
   Trash2,
   Settings,
   AlertTriangle,
-  CheckCircle,
   BarChart3,
 } from 'lucide-react';
 import type {
@@ -55,6 +58,26 @@ import type {
   WidgetResolverContext,
   MetricKey,
 } from '@/types/widget-engine';
+
+/** Format a timestamp for chart X-axis */
+function fmtTime(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+function fmtDateTime(ts: number): string {
+  const d = new Date(ts);
+  return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+/** Time period options */
+const TIME_PERIOD_OPTIONS = [
+  { value: '1h', label: '1 heure', ms: 60 * 60 * 1000 },
+  { value: '6h', label: '6 heures', ms: 6 * 60 * 60 * 1000 },
+  { value: '12h', label: '12 heures', ms: 12 * 60 * 60 * 1000 },
+  { value: '24h', label: '24 heures', ms: 24 * 60 * 60 * 1000 },
+  { value: '48h', label: '48 heures', ms: 48 * 60 * 60 * 1000 },
+  { value: '7d', label: '7 jours', ms: 7 * 24 * 60 * 60 * 1000 },
+];
 
 // -------------------------
 // Unique instance ID generator
@@ -113,17 +136,20 @@ function MetricChart({
   metric,
   size,
   color,
+  label,
 }: {
   data: Array<{ ts: number; value: number }>;
   metric: string;
   size: WidgetSize;
   color: string;
+  label?: string;
 }) {
   const chartData = useMemo(
     () => downsample(data, size === 'sm' ? 48 : size === 'md' ? 96 : 192),
     [data, size]
   );
   const unit = METRIC_UNITS[metric as MetricKey] ?? '';
+  const displayLabel = label ?? METRIC_LABELS[metric as MetricKey] ?? metric;
 
   if (chartData.length === 0) {
     return (
@@ -142,15 +168,26 @@ function MetricChart({
       <ResponsiveContainer width="100%" height="100%">
         <LineChart data={chartData}>
           <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-          <XAxis dataKey="ts" hide />
-          <YAxis hide />
+          <XAxis
+            dataKey="ts"
+            tickFormatter={fmtTime}
+            tick={{ fontSize: 10 }}
+            stroke="hsl(var(--muted-foreground))"
+            interval="preserveStartEnd"
+            minTickGap={40}
+            domain={['dataMin', 'dataMax']}
+            type="number"
+            scale="time"
+          />
+          <YAxis hide={size === 'sm'} tick={{ fontSize: 10 }} width={40} stroke="hsl(var(--muted-foreground))" />
           <ChartTooltip
-            formatter={(val: number) => [`${val.toFixed(1)} ${unit}`, METRIC_LABELS[metric as MetricKey] ?? metric]}
-            labelFormatter={() => ''}
+            formatter={(val: number) => [`${val.toFixed(2)} ${unit}`, displayLabel]}
+            labelFormatter={(ts: number) => fmtDateTime(ts)}
           />
           <Line
             type="monotone"
             dataKey="value"
+            name={displayLabel}
             stroke={color}
             strokeWidth={2}
             dot={false}
@@ -373,8 +410,8 @@ function MultiMetricWidget({
     setActiveTab(0);
   }
 
-  // Clamp activeTab to valid index
-  const clampedTab = Math.min(activeTab, Math.max(0, metrics.length - 1));
+  // Clamp activeTab to valid index (metrics.length = "all" overlay tab)
+  const clampedTab = activeTab === metrics.length ? activeTab : Math.min(activeTab, Math.max(0, metrics.length - 1));
 
   // If no metrics → placeholder
   if (metrics.length === 0) {
@@ -444,9 +481,29 @@ function MultiMetricWidget({
     );
   }
 
+  // Build merged overlay chart data for multi-curve display
+  const overlayData = useMemo(() => {
+    const tsSet = new Set<number>();
+    metrics.forEach(m => (data.series?.[m] ?? []).forEach(pt => tsSet.add(pt.ts)));
+    const allTs = Array.from(tsSet).sort((a, b) => a - b);
+    const lookup: Record<string, Map<number, number>> = {};
+    metrics.forEach(m => {
+      const map = new Map<number, number>();
+      (data.series?.[m] ?? []).forEach(pt => map.set(pt.ts, pt.value));
+      lookup[m] = map;
+    });
+    return allTs.map(ts => {
+      const row: Record<string, number | undefined> = { ts };
+      metrics.forEach(m => { row[m] = lookup[m].get(ts); });
+      return row;
+    });
+  }, [data.series, metrics]);
+
   // TABS mode (default, also fallback for SMALL_MULTIPLES on non-lg sizes)
   const currentMetric = metrics[clampedTab] ?? metrics[0];
   const currentSeries = data.series?.[currentMetric] ?? [];
+  // "all" tab shows the overlay chart
+  const ALL_TAB = metrics.length; // index beyond last metric
 
   return (
     <div className="space-y-2">
@@ -468,6 +525,20 @@ function MultiMetricWidget({
       </div>
       {/* Tab bar */}
       <div className="flex gap-1 border-b">
+        {metrics.length > 1 && (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTab(ALL_TAB); }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className={cn(
+              'px-2 py-1 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer',
+              clampedTab === ALL_TAB || activeTab === ALL_TAB
+                ? 'border-primary text-primary'
+                : 'border-transparent text-muted-foreground hover:text-foreground'
+            )}
+          >
+            Toutes
+          </button>
+        )}
         {metrics.map((m, i) => (
           <button
             key={m}
@@ -475,7 +546,7 @@ function MultiMetricWidget({
             onMouseDown={(e) => e.stopPropagation()}
             className={cn(
               'px-2 py-1 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer',
-              i === clampedTab
+              i === clampedTab && activeTab !== ALL_TAB
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
             )}
@@ -484,13 +555,53 @@ function MultiMetricWidget({
           </button>
         ))}
       </div>
-      {/* Active chart */}
-      <MetricChart
-        data={currentSeries}
-        metric={currentMetric}
-        size={size}
-        color={METRIC_COLORS[clampedTab % METRIC_COLORS.length]}
-      />
+      {/* Active chart: overlay or single */}
+      {activeTab === ALL_TAB ? (
+        <div className={cn(size === 'sm' ? 'h-20' : size === 'md' ? 'h-28' : 'h-40')}>
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={overlayData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis
+                dataKey="ts"
+                tickFormatter={fmtTime}
+                tick={{ fontSize: 10 }}
+                stroke="hsl(var(--muted-foreground))"
+                interval="preserveStartEnd"
+                minTickGap={40}
+                domain={['dataMin', 'dataMax']}
+                type="number"
+                scale="time"
+              />
+              <YAxis hide={size === 'sm'} tick={{ fontSize: 10 }} width={40} stroke="hsl(var(--muted-foreground))" />
+              <ChartTooltip
+                formatter={(val: number, name: string) => [`${Number(val).toFixed(2)} ${getUnit(name)}`, getLabel(name)]}
+                labelFormatter={(ts: number) => fmtDateTime(ts)}
+              />
+              <Legend formatter={(value: string) => getLabel(value)} />
+              {metrics.map((m, i) => (
+                <Line
+                  key={m}
+                  type="monotone"
+                  dataKey={m}
+                  name={m}
+                  stroke={METRIC_COLORS[i % METRIC_COLORS.length]}
+                  strokeWidth={2}
+                  dot={false}
+                  connectNulls
+                />
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <MetricChart
+          data={currentSeries}
+          metric={currentMetric}
+          size={size}
+          color={METRIC_COLORS[clampedTab % METRIC_COLORS.length]}
+          label={getLabel(currentMetric)}
+        />
+      )}
     </div>
   );
 }
@@ -575,8 +686,12 @@ export function WidgetBoard() {
   const overviewPoints = useMemo(() => (overviewData?.points ?? []) as Array<Record<string, unknown>>, [overviewData]);
   const overviewZones = useMemo(() => (overviewData?.zones ?? []) as Array<Record<string, unknown>>, [overviewData]);
 
-  // Fetch historical readings for chart widgets (last 24h by default)
-  const readingsFrom = useMemo(() => new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(), []);
+  // Time period selector for readings
+  const [timePeriod, setTimePeriod] = useState('24h');
+  const periodMs = TIME_PERIOD_OPTIONS.find(o => o.value === timePeriod)?.ms ?? 24 * 60 * 60 * 1000;
+
+  // Fetch historical readings for chart widgets
+  const readingsFrom = useMemo(() => new Date(Date.now() - periodMs).toISOString(), [periodMs]);
   const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, limit: 5000 });
 
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));
@@ -732,6 +847,16 @@ export function WidgetBoard() {
           <p className="text-sm text-muted-foreground">Glissez-déposez, configurez et composez vos widgets.</p>
         </div>
         <div className="flex items-center gap-2">
+          <Select value={timePeriod} onValueChange={setTimePeriod}>
+            <SelectTrigger className="w-32 h-8 text-xs">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {TIME_PERIOD_OPTIONS.map(o => (
+                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
             <Plus className="w-4 h-4 mr-2" />
             Ajouter widget
@@ -939,20 +1064,21 @@ export function WidgetBoard() {
 
       {/* Fullscreen Dialog */}
       <Dialog open={!!fullscreenDef} onOpenChange={(open) => !open && setFullscreenId(null)}>
-        <DialogContent className="max-w-5xl h-[85vh]">
+        <DialogContent className="max-w-[95vw] w-[95vw] max-h-[95vh] h-[95vh]">
           <DialogHeader>
-            <DialogTitle>{fullscreenDef?.title}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              {fullscreenDef?.title}
+              {fullscreenItem && (
+                <Badge variant="outline" className="text-[10px] ml-2">{fullscreenDef?.description}</Badge>
+              )}
+            </DialogTitle>
           </DialogHeader>
-          <div className="h-[calc(85vh-6rem)] overflow-auto">
+          <div className="flex-1 overflow-auto min-h-0">
             {fullscreenItem && fullscreenDef && (
-              <div className="p-4">
+              <div className="p-6 h-full [&_.h-40]:h-[60vh] [&_.h-28]:h-[55vh] [&_.h-20]:h-[50vh] [&_.h-24]:h-[50vh] [&_.h-32]:h-[55vh]">
                 {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config)}
               </div>
             )}
-            <div className="mt-4 text-xs text-muted-foreground flex items-center gap-2">
-              <CheckCircle className="w-3 h-3 text-severity-ok" />
-              Données synchronisées il y a 10 secondes
-            </div>
           </div>
         </DialogContent>
       </Dialog>

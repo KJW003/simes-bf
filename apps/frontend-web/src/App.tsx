@@ -25,6 +25,7 @@ import Reports from "./pages/org/Reports";
 import Administration from "./pages/org/Administration";
 import ZonePage from "./pages/org/ZonePage";
 import PointDetails from "./pages/org/PointDetails";
+import Points from "./pages/org/Points";
 
 // Platform Mode Pages
 import NocOverview from "./pages/platform/NocOverview";
@@ -67,6 +68,7 @@ function AppRoutes() {
           <>
             {canAccessOrgRoute(role, "dashboard") && <Route path="/" element={<Dashboard />} />}
             {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<DataMonitor />} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<Points />} />}
             {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<PowerQuality />} />}
             {canAccessOrgRoute(role, "history") && <Route path="/history" element={<History />} />}
             {canAccessOrgRoute(role, "forecasts") && <Route path="/forecasts" element={<Forecasts />} />}
