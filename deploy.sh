@@ -8,6 +8,7 @@
 #   ./deploy.sh              # full deploy (build + up + init DB)
 #   ./deploy.sh --no-build   # skip Docker build (use cached images)
 #   ./deploy.sh --db-only    # only run DB init (containers must be up)
+#
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
