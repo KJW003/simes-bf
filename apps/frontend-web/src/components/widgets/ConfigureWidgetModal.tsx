@@ -26,9 +26,6 @@ import {
   type EnergySourceCategory,
   type WidgetConfigSchema,
 } from '@/types/widget-engine';
-import {
-  mockMeasurementPoints,
-} from '@/lib/mock-data';
 import { useAppContext } from '@/contexts/AppContext';
 
 interface ConfigureWidgetModalProps {
@@ -38,6 +35,10 @@ interface ConfigureWidgetModalProps {
   configSchema: WidgetConfigSchema;
   initialConfig?: Partial<WidgetConfig>;
   onSave: (config: WidgetConfig) => void;
+  /** Real points from overview API */
+  points?: Array<Record<string, unknown>>;
+  /** Real zones from overview API */
+  zones?: Array<Record<string, unknown>>;
 }
 
 const DATA_SOURCE_LABELS: Record<DataSourceType, string> = {
@@ -83,6 +84,8 @@ export function ConfigureWidgetModal({
   configSchema,
   initialConfig,
   onSave,
+  points: pointsProp,
+  zones: zonesProp,
 }: ConfigureWidgetModalProps) {
   const { selectedTerrainId } = useAppContext();
 
@@ -106,10 +109,22 @@ export function ConfigureWidgetModal({
     initialConfig?.timeRange?.value ?? '1M'
   );
 
-  // Derived options
+  // Derived options — use real points from overview API
   const terrainPoints = useMemo(
-    () => mockMeasurementPoints.filter(p => p.terrainId === (selectedTerrainId ?? 'terrain_1')),
-    [selectedTerrainId]
+    () => (pointsProp ?? []).map(p => ({
+      id: String(p.id ?? ''),
+      name: String(p.name ?? '—'),
+      device: String(p.device ?? ''),
+    })),
+    [pointsProp]
+  );
+
+  const terrainZones = useMemo(
+    () => (zonesProp ?? []).map(z => ({
+      id: String(z.id ?? ''),
+      name: String(z.name ?? '—'),
+    })),
+    [zonesProp]
   );
 
   const toggleMetric = (metric: MetricKey) => {
@@ -196,7 +211,7 @@ export function ConfigureWidgetModal({
                 <SelectContent>
                   {terrainPoints.map(p => (
                     <SelectItem key={p.id} value={p.id}>
-                      {p.name} ({p.rawDeviceId})
+                      {p.name} ({p.device})
                     </SelectItem>
                   ))}
                 </SelectContent>

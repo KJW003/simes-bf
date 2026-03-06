@@ -1,9 +1,9 @@
 // ============================================================
 // SIMES Widget Engine – Registry
 // All widget definitions: config schema, resolver, renderer.
+// Resolvers work with pre-fetched overview data (ctx.points).
 // ============================================================
 
-import React from 'react';
 import type {
   WidgetDefinition,
   WidgetConfig,
@@ -12,18 +12,6 @@ import type {
   MetricKey,
 } from '@/types/widget-engine';
 import { METRIC_UNITS } from '@/types/widget-engine';
-import {
-  getPointsByTerrainId,
-  getPointsByZoneId,
-  getPointById,
-  getPointSeries,
-  aggregateZone,
-  aggregateTerrain,
-  aggregateCategory,
-  mockMeasurementPoints,
-} from '@/lib/mock-data';
-import type { MeasurementPoint } from '@/types';
-import type { TimeSeriesPoint } from '@/lib/mock-data';
 import {
   Activity,
   Gauge,
@@ -37,121 +25,109 @@ import {
 } from 'lucide-react';
 
 // -------------------------
+// TYPES – raw API point shape from /overview
+// -------------------------
+type RawPoint = Record<string, unknown> & {
+  id?: string;
+  name?: string;
+  zone_id?: string;
+  measure_category?: string;
+  readings?: Record<string, unknown> | null;
+};
+
+// -------------------------
 // RESOLVER HELPERS
 // -------------------------
 
 function resolvePoints(
   config: WidgetConfig,
   ctx: WidgetResolverContext
-): MeasurementPoint[] {
+): RawPoint[] {
+  const all = (ctx.points ?? []) as RawPoint[];
   const { dataSource } = config;
 
   switch (dataSource.type) {
     case 'POINT': {
-      const pt = getPointById(dataSource.refId);
-      return pt ? [pt] : [];
+      return all.filter(p => String(p.id) === dataSource.refId);
     }
     case 'ZONE_AGG': {
-      return getPointsByZoneId(dataSource.refId);
+      return all.filter(p => String(p.zone_id) === dataSource.refId);
     }
     case 'TERRAIN_AGG': {
-      const terrainId = dataSource.refId || ctx.terrainId;
-      return terrainId ? getPointsByTerrainId(terrainId) : [];
+      return all; // all points already scoped to current terrain
     }
     case 'CATEGORY_AGG': {
-      const terrainId = ctx.terrainId;
-      const base = terrainId
-        ? getPointsByTerrainId(terrainId)
-        : mockMeasurementPoints;
       return dataSource.categoryFilter
-        ? base.filter(p => p.energySourceCategory === dataSource.categoryFilter)
-        : base;
+        ? all.filter(p => String(p.measure_category) === dataSource.categoryFilter)
+        : all;
     }
     default:
       return [];
   }
 }
 
-/** Current snapshot KPI for a metric from live MeasurementPoint data */
-function aggregateMetricKpi(points: MeasurementPoint[], metric: MetricKey): number {
+/** Current snapshot KPI for a metric from live overview data */
+function aggregateMetricKpi(points: RawPoint[], metric: MetricKey): number {
   if (points.length === 0) return 0;
+  const num = (p: RawPoint, key: string) => {
+    const v = p.readings?.[key];
+    return v != null ? Number(v) : 0;
+  };
+  const numOr = (p: RawPoint, key: string, fallback: number) => {
+    const v = p.readings?.[key];
+    return v != null ? Number(v) : fallback;
+  };
+
   switch (metric) {
     case 'P':
-      return points.reduce((s, p) => s + Math.abs(p.metrics.totalActivePower), 0);
+      return points.reduce((s, p) => s + Math.abs(num(p, 'active_power_total')), 0);
     case 'Q':
-      return points.reduce((s, p) => s + Math.abs(p.metrics.totalReactivePower), 0);
+      return points.reduce((s, p) => s + Math.abs(num(p, 'reactive_power_total')), 0);
     case 'S':
-      return points.reduce((s, p) => s + Math.abs(p.metrics.totalApparentPower), 0);
+      return points.reduce((s, p) => s + Math.abs(num(p, 'apparent_power_total')), 0);
     case 'Energy':
-      return points.reduce((s, p) => s + p.energyKwhImport + p.energyKwhExport, 0);
+      return points.reduce((s, p) => s + num(p, 'energy_import') + num(p, 'energy_export'), 0);
     case 'PF':
-      // Audit-friendly: PF_min (worst-case power factor)
-      return Math.min(...points.map(p => p.metrics.averagePowerFactor));
+      return Math.min(...points.map(p => numOr(p, 'power_factor_total', 1)));
     case 'THD':
       return Math.max(
         ...points.flatMap(p => [
-          p.metrics.phaseA?.thd ?? 0,
-          p.metrics.phaseB?.thd ?? 0,
-          p.metrics.phaseC?.thd ?? 0,
+          num(p, 'thdi_a'),
+          num(p, 'thdi_b'),
+          num(p, 'thdi_c'),
         ])
       );
     case 'V':
       return points.reduce(
-        (s, p) => s + (p.metrics.phaseA?.voltage ?? 230),
+        (s, p) => s + numOr(p, 'voltage_a', 230),
         0
       ) / points.length;
     case 'I':
       return points.reduce(
-        (s, p) => s + (p.metrics.phaseA?.current ?? 0),
+        (s, p) => s + num(p, 'current_a'),
         0
       );
     case 'Freq':
-      return points[0]?.metrics.frequency ?? 50;
+      return numOr(points[0], 'frequency', 50);
     case 'VUnbal':
-      return Math.max(...points.map(p => p.metrics.voltageUnbalance ?? 0));
+      return Math.max(...points.map(p => num(p, 'voltage_unbalance')));
     case 'IUnbal':
-      return Math.max(...points.map(p => p.metrics.currentUnbalance ?? 0));
+      return Math.max(...points.map(p => num(p, 'current_unbalance')));
     default:
       return 0;
   }
 }
 
-/** Resolve time series for a set of metrics using the new aggregation helpers */
+/** Time series are not available from the overview endpoint (snapshot only).
+ *  Return empty arrays — use historical readings hooks for charts. */
 function resolveSeriesForConfig(
-  config: WidgetConfig,
-  ctx: WidgetResolverContext,
+  _config: WidgetConfig,
+  _ctx: WidgetResolverContext,
   metrics: MetricKey[],
-): Record<string, TimeSeriesPoint[]> {
-  const { dataSource } = config;
-  const result: Record<string, TimeSeriesPoint[]> = {};
-
+): Record<string, Array<{ ts: number; value: number }>> {
+  const result: Record<string, Array<{ ts: number; value: number }>> = {};
   for (const metric of metrics) {
-    switch (dataSource.type) {
-      case 'POINT': {
-        result[metric] = getPointSeries(dataSource.refId, metric);
-        break;
-      }
-      case 'ZONE_AGG': {
-        result[metric] = aggregateZone(dataSource.refId, metric);
-        break;
-      }
-      case 'TERRAIN_AGG': {
-        const tid = dataSource.refId || ctx.terrainId || '';
-        result[metric] = aggregateTerrain(tid, metric);
-        break;
-      }
-      case 'CATEGORY_AGG': {
-        const tid = ctx.terrainId || '';
-        result[metric] = aggregateCategory(
-          tid,
-          dataSource.categoryFilter || '',
-          metric
-        );
-        break;
-      }
-      default:
-        result[metric] = [];
-    }
+    result[metric] = [];
   }
   return result;
 }
@@ -249,13 +225,16 @@ function diagnosticsResolver(
   const points = resolvePoints(config, ctx);
   const issues: Array<{ label: string; priority: string }> = [];
   for (const p of points) {
-    if (p.metrics.averagePowerFactor < 0.85) {
+    const r = p.readings;
+    if (!r) continue;
+    const pf = r.power_factor_total != null ? Number(r.power_factor_total) : 1;
+    if (pf < 0.85) {
       issues.push({ label: `PF bas – ${p.name}`, priority: 'Priorité haute' });
     }
     const thd = Math.max(
-      p.metrics.phaseA?.thd ?? 0,
-      p.metrics.phaseB?.thd ?? 0,
-      p.metrics.phaseC?.thd ?? 0
+      r.thdi_a != null ? Number(r.thdi_a) : 0,
+      r.thdi_b != null ? Number(r.thdi_b) : 0,
+      r.thdi_c != null ? Number(r.thdi_c) : 0
     );
     if (thd > 8) {
       issues.push({ label: `THD élevé – ${p.name}`, priority: 'À vérifier' });
@@ -274,13 +253,13 @@ function alertsResolver(
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
   const points = resolvePoints(config, ctx);
-  const alerts = points.flatMap(p =>
-    p.activeAlarms.map(a => ({
-      label: `${a.type.replace(/_/g, ' ')} ${a.phase ? `(Phase ${a.phase})` : ''}`,
-      severity: a.severity,
-      pointName: p.name,
-    }))
-  );
+  const alerts = points
+    .filter(p => p.readings?.alarm_state != null && Number(p.readings.alarm_state) > 0)
+    .map(p => ({
+      label: `Alarme active (état ${p.readings?.alarm_state})`,
+      severity: 'warning' as const,
+      pointName: String(p.name),
+    }));
   return {
     kpis: { alertCount: alerts.length },
     series: {},
@@ -319,14 +298,17 @@ function pvProductionResolver(
   config: WidgetConfig,
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
-  // Always filter PV points
-  const terrainId = config.dataSource.refId || ctx.terrainId || '';
-  const allPts = terrainId ? getPointsByTerrainId(terrainId) : mockMeasurementPoints;
-  const pvPoints = allPts.filter(p => p.energySourceCategory === 'PV');
+  const all = (ctx.points ?? []) as RawPoint[];
+  const pvPoints = all.filter(p => String(p.measure_category) === 'PV');
 
-  const todayKwh = pvPoints.reduce((s, p) => s + p.energyKwhExport, 0);
-  const installedKwc = pvPoints.length * 20; // mock 20kWc per point
-  const peakKw = pvPoints.reduce((s, p) => s + Math.abs(p.metrics.totalActivePower), 0);
+  const num = (p: RawPoint, key: string) => {
+    const v = p.readings?.[key];
+    return v != null ? Number(v) : 0;
+  };
+
+  const todayKwh = pvPoints.reduce((s, p) => s + num(p, 'energy_export'), 0);
+  const installedKwc = pvPoints.length * 20;
+  const peakKw = pvPoints.reduce((s, p) => s + Math.abs(num(p, 'active_power_total')), 0);
 
   // Generate daily production series (30 days)
   const dailySeries: Array<{ ts: number; value: number }> = [];
@@ -356,12 +338,11 @@ function pvProductionResolver(
 }
 
 function pvPerformanceRatioResolver(
-  config: WidgetConfig,
+  _config: WidgetConfig,
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
-  const terrainId = config.dataSource.refId || ctx.terrainId || '';
-  const allPts = terrainId ? getPointsByTerrainId(terrainId) : mockMeasurementPoints;
-  const pvPoints = allPts.filter(p => p.energySourceCategory === 'PV');
+  const all = (ctx.points ?? []) as RawPoint[];
+  const pvPoints = all.filter(p => String(p.measure_category) === 'PV');
 
   const pr = 0.78 + Math.random() * 0.12; // 78-90%
   const availability = 0.95 + Math.random() * 0.04; // 95-99%
@@ -394,8 +375,8 @@ function pvPerformanceRatioResolver(
 }
 
 function batteryStatusResolver(
-  config: WidgetConfig,
-  ctx: WidgetResolverContext
+  _config: WidgetConfig,
+  _ctx: WidgetResolverContext
 ): ResolvedWidgetData {
   const soc = 45 + Math.random() * 40; // 45-85%
   const cycleCount = Number((1.1 + Math.random() * 0.5).toFixed(1));

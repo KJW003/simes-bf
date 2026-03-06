@@ -140,6 +140,10 @@ export interface WidgetResolverContext {
   terrainId?: string;
   siteId?: string;
   orgId?: string;
+  /** Pre-fetched points from overview API (each point has .readings sub-object) */
+  points?: Array<Record<string, unknown>>;
+  /** Pre-fetched zones from overview API */
+  zones?: Array<Record<string, unknown>>;
 }
 
 export type WidgetRenderer = (props: {

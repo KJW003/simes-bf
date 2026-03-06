@@ -17,6 +17,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { useAppContext } from '@/contexts/AppContext';
+import { useTerrainOverview } from '@/hooks/useApi';
 import { ConfigureWidgetModal } from '@/components/widgets/ConfigureWidgetModal';
 import { getWidgetDefinition, getWidgetDefinitions } from '@/lib/widget-registry';
 import { cn } from '@/lib/utils';
@@ -566,6 +567,11 @@ export function WidgetBoard() {
   const { currentUser, selectedTerrainId } = useAppContext();
   const storageKey = useMemo(() => buildStorageKey(currentUser?.id), [currentUser?.id]);
 
+  // Fetch real overview data
+  const { data: overviewData } = useTerrainOverview(selectedTerrainId);
+  const overviewPoints = useMemo(() => (overviewData?.points ?? []) as Array<Record<string, unknown>>, [overviewData]);
+  const overviewZones = useMemo(() => (overviewData?.zones ?? []) as Array<Record<string, unknown>>, [overviewData]);
+
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [fullscreenId, setFullscreenId] = useState<string | null>(null);
@@ -589,10 +595,10 @@ export function WidgetBoard() {
     return map;
   }, []);
 
-  // Resolver context
+  // Resolver context — includes pre-fetched overview data
   const resolverCtx: WidgetResolverContext = useMemo(
-    () => ({ terrainId: selectedTerrainId }),
-    [selectedTerrainId]
+    () => ({ terrainId: selectedTerrainId, points: overviewPoints, zones: overviewZones }),
+    [selectedTerrainId, overviewPoints, overviewZones]
   );
 
   // Ordered layout with pinned first
@@ -947,6 +953,8 @@ export function WidgetBoard() {
           configSchema={configuringDef.configSchema}
           initialConfig={configuringItem.config}
           onSave={(config) => updateWidgetConfig(configuringItem.instanceId, config)}
+          points={overviewPoints}
+          zones={overviewZones}
         />
       )}
     </div>

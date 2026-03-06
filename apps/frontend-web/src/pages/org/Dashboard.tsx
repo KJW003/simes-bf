@@ -10,14 +10,10 @@ import {
 } from '@/components/ui/select';
 import {
   Zap, Activity, BatteryCharging, Clock, Radio, AlertTriangle,
-  CheckCircle2, ExternalLink, Loader2, RefreshCw, ChevronDown, ChevronUp,
-  TrendingUp, Gauge, Zap as ZapIcon,
+  CheckCircle2, ExternalLink, Loader2, ChevronDown, ChevronUp,
 } from 'lucide-react';
-import {
-  LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer,
-} from 'recharts';
-import { useDashboard, useTerrainOverview, useReadings } from '@/hooks/useApi';
+import { useDashboard, useTerrainOverview } from '@/hooks/useApi';
+import { WidgetBoard } from '@/components/widgets/WidgetBoard';
 import { cn } from '@/lib/utils';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
@@ -84,226 +80,8 @@ function LiveKPIs({ terrainId }: { terrainId: string }) {
   );
 }
 
-/** Energy Quality Widget — PF, THD, Power, Energy */
-function EnergyQualityWidget({ terrainId }: { terrainId: string }) {
-  const now = useMemo(() => new Date(), []);
-  const from24h = useMemo(() => new Date(now.getTime() - 24 * 3600_000).toISOString(), [now]);
-  const { data: readingsData, isLoading } = useReadings(terrainId, { from: from24h, to: now.toISOString(), limit: 5000 });
-  
-  const readings = (readingsData?.readings ?? []) as Array<Record<string, unknown>>;
-  
-  const stats = useMemo(() => {
-    if (readings.length === 0) {
-      return { pfAvg: 0, thdMax: 0, powerAvg: 0, energySum: 0 };
-    }
-    
-    const pfValues = readings.map(r => r.power_factor_total).filter(v => v != null).map(Number);
-    const thdValues = readings.flatMap(r => [r.thdi_a, r.thdi_b, r.thdi_c]).filter(v => v != null).map(Number);
-    const powerValues = readings.map(r => r.active_power_total).filter(v => v != null).map(Number);
-    const energyValues = readings.map(r => r.energy_import).filter(v => v != null).map(Number);
-    
-    return {
-      pfAvg: pfValues.length ? pfValues.reduce((s, v) => s + v, 0) / pfValues.length : 0,
-      thdMax: thdValues.length ? Math.max(...thdValues) : 0,
-      powerAvg: powerValues.length ? powerValues.reduce((s, v) => s + v, 0) / powerValues.length / 1000 : 0,
-      energySum: energyValues.length ? Math.max(...energyValues) : 0,
-    };
-  }, [readings]);
-
-  const sparklineData = useMemo(() => {
-    const byHour = new Map<number, number[]>();
-    for (const r of readings) {
-      const h = new Date(String(r.time)).getHours();
-      const p = Number(r.active_power_total ?? 0);
-      if (!byHour.has(h)) byHour.set(h, []);
-      byHour.get(h)!.push(p);
-    }
-    return Array.from({ length: 24 }, (_, h) => {
-      const vals = byHour.get(h) ?? [];
-      return { h: `${h}h`, p: vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length / 1000 : 0 };
-    });
-  }, [readings]);
-
-  if (isLoading) {
-    return <Card><CardContent className="py-6"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></CardContent></Card>;
-  }
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <Gauge className="w-4 h-4 text-primary" />
-          Qualité Énergie (24h)
-        </CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-          <div>
-            <div className="text-muted-foreground">PF moyen</div>
-            <div className={cn('font-semibold mono text-sm', stats.pfAvg < 0.85 && 'text-amber-600')}>
-              {stats.pfAvg.toFixed(3)}
-            </div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">THD max</div>
-            <div className={cn('font-semibold mono text-sm', stats.thdMax > 8 && 'text-amber-600')}>
-              {stats.thdMax.toFixed(1)}%
-            </div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">Puissance moy</div>
-            <div className="font-semibold mono text-sm">{stats.powerAvg.toFixed(1)} kW</div>
-          </div>
-          <div>
-            <div className="text-muted-foreground">Énergie imp</div>
-            <div className="font-semibold mono text-sm">{stats.energySum.toFixed(1)} kWh</div>
-          </div>
-        </div>
-        <div className="h-24 border border-dashed rounded-md p-2">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={sparklineData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" opacity={0.3} />
-              <XAxis dataKey="h" tick={{ fontSize: 9 }} />
-              <YAxis tick={{ fontSize: 9 }} />
-              <Tooltip contentStyle={{ fontSize: 11 }} formatter={(v: number) => [v.toFixed(1) + ' kW', 'Puissance']} />
-              <Line type="monotone" dataKey="p" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} />
-            </LineChart>
-          </ResponsiveContainer>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Quality by Point Widget — worst/best PF and THD performers */
-function QualityPointsWidget({ terrainId }: { terrainId: string }) {
-  const { data: overviewData, isLoading } = useTerrainOverview(terrainId);
-  
-  const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
-  
-  const stats = useMemo(() => {
-    const items = points.map(p => {
-      const r = (p as any).readings as Record<string, unknown> | null;
-      return {
-        name: String(p.name),
-        pf: r?.power_factor_total != null ? Number(r.power_factor_total) : null,
-        thd: r && [r.thdi_a, r.thdi_b, r.thdi_c].some(v => v != null)
-          ? Math.max(...[r.thdi_a, r.thdi_b, r.thdi_c].filter(v => v != null).map(Number))
-          : null,
-      };
-    });
-
-    const worstPf = [...items].filter(x => x.pf != null).sort((a, b) => (a.pf ?? 1) - (b.pf ?? 1)).slice(0, 3);
-    const worstThd = [...items].filter(x => x.thd != null).sort((a, b) => (b.thd ?? 0) - (a.thd ?? 0)).slice(0, 3);
-
-    return { worstPf, worstThd };
-  }, [points]);
-
-  if (isLoading) {
-    return <Card><CardContent className="py-6"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></CardContent></Card>;
-  }
-
-  return (
-    <Card>
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-amber-500" />
-          Points critiques
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-2 gap-4 text-xs">
-          <div className="space-y-1.5">
-            <div className="font-medium text-muted-foreground">PF les plus faibles</div>
-            {stats.worstPf.length === 0 ? (
-              <div className="text-muted-foreground text-[11px]">Aucune donnée</div>
-            ) : (
-              stats.worstPf.map((p, i) => (
-                <div key={i} className="flex items-center justify-between text-[11px] bg-muted/50 rounded px-2 py-1">
-                  <span className="truncate">{p.name}</span>
-                  <Badge variant="outline" className={cn('text-[9px] px-1', p.pf! < 0.85 && 'badge-warning')}>
-                    {p.pf?.toFixed(3)}
-                  </Badge>
-                </div>
-              ))
-            )}
-          </div>
-          <div className="space-y-1.5">
-            <div className="font-medium text-muted-foreground">THD les plus élevés</div>
-            {stats.worstThd.length === 0 ? (
-              <div className="text-muted-foreground text-[11px]">Aucune donnée</div>
-            ) : (
-              stats.worstThd.map((p, i) => (
-                <div key={i} className="flex items-center justify-between text-[11px] bg-muted/50 rounded px-2 py-1">
-                  <span className="truncate">{p.name}</span>
-                  <Badge variant="outline" className={cn('text-[9px] px-1', p.thd! > 8 && 'badge-critical')}>
-                    {p.thd?.toFixed(1)}%
-                  </Badge>
-                </div>
-              ))
-            )}
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Active Alerts Widget — points with alarm_state != 0 */
-function ActiveAlertsWidget({ terrainId }: { terrainId: string }) {
-  const { data: overviewData, isLoading } = useTerrainOverview(terrainId);
-  
-  const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
-  
-  const alertPoints = useMemo(
-    () => points.filter(p => {
-      const r = (p as any).readings as Record<string, unknown> | null;
-      return r?.alarm_state != null && Number(r.alarm_state) > 0;
-    }).slice(0, 5),
-    [points]
-  );
-
-  if (isLoading) {
-    return <Card><CardContent className="py-6"><Loader2 className="w-4 h-4 animate-spin mx-auto" /></CardContent></Card>;
-  }
-
-  if (alertPoints.length === 0) {
-    return (
-      <Card className="border-dashed">
-        <CardContent className="py-6 text-center">
-          <CheckCircle2 className="w-5 h-5 text-emerald-500 mx-auto mb-2" />
-          <div className="text-sm font-medium">Aucune alarme</div>
-          <div className="text-xs text-muted-foreground">Tous les points fonctionnent normalement</div>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="border-red-200 bg-red-50/30">
-      <CardHeader className="pb-2">
-        <CardTitle className="text-sm font-medium flex items-center gap-2 text-red-700">
-          <AlertTriangle className="w-4 h-4" />
-          Alarmes actives ({alertPoints.length})
-        </CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="space-y-1.5">
-          {alertPoints.map(p => (
-            <div key={String(p.id)} className="flex items-center justify-between text-xs bg-red-100/50 rounded px-2 py-1.5">
-              <span className="font-medium">{String(p.name)}</span>
-              <Link to={`/points/${String(p.id)}`}>
-                <Badge variant="destructive" className="text-[9px] cursor-pointer">
-                  Voir détails
-                </Badge>
-              </Link>
-            </div>
-          ))}
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
+/** Live point tiles (expandable) */
+function PointWidgets({ terrainId }: { terrainId: string }) {
   const { data, isLoading } = useTerrainOverview(terrainId);
   const [filter, setFilter] = useState<string>('_all');
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -507,14 +285,8 @@ export default function Dashboard() {
           {/* Agregate KPIs */}
           <LiveKPIs terrainId={selectedTerrainId} />
 
-          {/* Widget Grid */}
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <EnergyQualityWidget terrainId={selectedTerrainId} />
-            <QualityPointsWidget terrainId={selectedTerrainId} />
-          </div>
-
-          {/* Alerts Widget */}
-          <ActiveAlertsWidget terrainId={selectedTerrainId} />
+          {/* Widget Board — full drag-drop, configure, resize management */}
+          <WidgetBoard />
 
           {/* Toggle + Per-point detail tiles */}
           <div className="flex items-center justify-between">
