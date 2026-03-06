@@ -15,7 +15,7 @@ function getAuthToken(): string | null {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+async function request<T>(path: string, init?: RequestInit, timeoutMs: number = 30000): Promise<T> {
   const url = `${BASE}${path}`;
   const token = getAuthToken();
   const headers: Record<string, string> = {
@@ -25,12 +25,23 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   if (token) {
     headers['Authorization'] = `Bearer ${token}`;
   }
-  const res = await fetch(url, { ...init, headers });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.error ?? `API ${res.status}`);
+
+  // Add timeout abort signal
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const res = await fetch(url, { ...init, headers, signal: controller.signal });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const error = new Error(body.error ?? `API ${res.status}`) as any;
+      error.status = res.status;
+      throw error;
+    }
+    return res.json() as Promise<T>;
+  } finally {
+    clearTimeout(timeoutId);
   }
-  return res.json() as Promise<T>;
 }
 
 // ─── Referential ───────────────────────────────────────────

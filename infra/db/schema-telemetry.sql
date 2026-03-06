@@ -119,6 +119,8 @@ SELECT create_hypertable('acrel_readings', 'time', if_not_exists => TRUE);
 CREATE INDEX IF NOT EXISTS acrel_point_time_idx ON acrel_readings (point_id, time DESC);
 CREATE INDEX IF NOT EXISTS acrel_site_time_idx ON acrel_readings (site_id, time DESC);
 CREATE INDEX IF NOT EXISTS acrel_terrain_time_idx ON acrel_readings (terrain_id, time DESC);
+-- Optimized for DISTINCT ON queries in overview endpoint
+CREATE INDEX IF NOT EXISTS acrel_terrain_point_time_idx ON acrel_readings (terrain_id, point_id, time DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS ux_acrel_readings_point_time ON acrel_readings (point_id, time);
 
 -- ─── 2) Aggregation: 15-minute buckets ──────────────────────

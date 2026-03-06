@@ -127,12 +127,17 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       [terrainId]
     );
 
-    // Latest total power across all points
+    // Latest total power across all points - optimized with window function
     const latestPower = await telemetryPool.query(
-      `SELECT DISTINCT ON (point_id) point_id, time, active_power_total
-       FROM acrel_readings
-       WHERE terrain_id = $1
-       ORDER BY point_id, time DESC`,
+      `WITH latest AS (
+         SELECT point_id, time, active_power_total,
+                ROW_NUMBER() OVER (PARTITION BY point_id ORDER BY time DESC) as rn
+         FROM acrel_readings
+         WHERE terrain_id = $1
+       )
+       SELECT point_id, time, active_power_total
+       FROM latest
+       WHERE rn = 1`,
       [terrainId]
     );
 
@@ -208,13 +213,17 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
       [terrainId]
     );
 
-    // 3) Latest readings (one per point)
+    // 3) Latest readings (one per point) - optimized with window function for better performance
     const readR = await telemetryPool.query(
-      `SELECT DISTINCT ON (point_id)
-              point_id, time, ${ACREL_COLS_SQL}
-       FROM acrel_readings
-       WHERE terrain_id = $1
-       ORDER BY point_id, time DESC`,
+      `WITH latest AS (
+         SELECT point_id, time, ${ACREL_COLS_SQL},
+                ROW_NUMBER() OVER (PARTITION BY point_id ORDER BY time DESC) as rn
+         FROM acrel_readings
+         WHERE terrain_id = $1
+       )
+       SELECT point_id, time, ${ACREL_COLS_SQL}
+       FROM latest
+       WHERE rn = 1`,
       [terrainId]
     );
 

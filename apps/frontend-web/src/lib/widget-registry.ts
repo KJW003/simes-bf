@@ -419,14 +419,14 @@ export const widgetDefinitions: WidgetDefinition[] = [
   {
     id: 'energy-quality-summary',
     title: 'Qualité énergie (Charges)',
-    description: 'Puissance, énergie, PF min et THD max — par défaut sur les charges (LOAD).',
+    description: 'Puissance, énergie, PF min, THD max, déséquilibres — par défaut sur les charges (LOAD).',
     category: 'core',
     supportedSizes: ['sm', 'md', 'lg'],
     icon: Gauge,
     configSchema: {
       allowedScopes: ['POINT', 'CATEGORY'],
       allowedDataSources: ['POINT', 'CATEGORY_AGG'],
-      supportedMetrics: ['P', 'Energy', 'PF', 'THD'],
+      supportedMetrics: ['P', 'Energy', 'PF', 'THD', 'VUnbal', 'IUnbal'],
       supportsMultiMetric: true,
       hasTimeRange: true,
       defaultConfig: {

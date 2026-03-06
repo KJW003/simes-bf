@@ -84,6 +84,10 @@ export default function Login() {
         setError('Compte verrouille temporairement suite a trop de tentatives.');
         return;
       }
+      if (result.reason === 'network') {
+        setError('Probleme de connexion avec le serveur. Veuillez verifier votre connexion internet et reessayer.');
+        return;
+      }
       setError('Identifiants invalides. Veuillez verifier votre email et mot de passe.');
     } finally {
       setLoading(false);

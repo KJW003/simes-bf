@@ -60,7 +60,7 @@ interface AppContextType {
   // Auth
   isAuthenticated: boolean;
   sessionChecked: boolean;
-  login: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; reason?: 'invalid' | 'locked'; lockedUntil?: number }>;
+  login: (email: string, password: string, remember: boolean) => Promise<{ ok: boolean; reason?: 'invalid' | 'locked' | 'network'; lockedUntil?: number }>;
   logout: () => void;
   authLock: {
     failedAttempts: number;
@@ -388,24 +388,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
       return { ok: false as const, reason: 'invalid' as const };
     } catch (apiErr: any) {
       const msg = apiErr?.message ?? '';
+      const status = apiErr?.status;
+
+      // Check for locked account response from server
       if (msg.includes('locked')) {
         return { ok: false as const, reason: 'locked' as const };
       }
 
-      // Count as failed attempt
-      const nextAttempts = failedAttempts + 1;
-      setFailedAttempts(nextAttempts);
-      if (nextAttempts >= MAX_LOGIN_ATTEMPTS) {
-        const until = Date.now() + LOCK_DURATION_MS;
-        setLockedUntil(until);
-        return { ok: false as const, reason: 'locked' as const, lockedUntil: until };
+      // Network/timeout errors (abort, timeout, 503, 504) → don't count as failed attempt
+      const isNetworkError = 
+        apiErr?.name === 'AbortError' ||
+        msg.includes('timeout') ||
+        msg.includes('Failed to fetch') ||
+        status === 503 ||
+        status === 504;
+
+      if (isNetworkError) {
+        return { ok: false as const, reason: 'network' as const };
       }
 
-      // Network error vs auth error
-      if (!msg.includes('invalid') && !msg.includes('401')) {
+      // Only count actual auth failures (401) as failed attempts
+      const isAuthError = status === 401 || msg.includes('invalid') || msg.includes('401');
+
+      if (isAuthError) {
+        const nextAttempts = failedAttempts + 1;
+        setFailedAttempts(nextAttempts);
+        if (nextAttempts >= MAX_LOGIN_ATTEMPTS) {
+          const until = Date.now() + LOCK_DURATION_MS;
+          setLockedUntil(until);
+          return { ok: false as const, reason: 'locked' as const, lockedUntil: until };
+        }
         return { ok: false as const, reason: 'invalid' as const };
       }
-      return { ok: false as const, reason: 'invalid' as const };
+
+      // Other errors (500, etc) → treat as network error
+      return { ok: false as const, reason: 'network' as const };
     }
   }, [failedAttempts, lockedUntil, loginSuccess]);
 
