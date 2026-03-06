@@ -163,13 +163,13 @@ services:
     labels:
       - traefik.enable=true
       - traefik.docker.network=edge
-      - traefik.http.routers.api.rule=PathPrefix(`/api`)
-      - traefik.http.routers.api.entrypoints=web
-      - traefik.http.routers.api.priority=100
-      - traefik.http.middlewares.api-strip.stripprefix.prefixes=/api
-      - traefik.http.routers.api.middlewares=api-strip
-      - traefik.http.routers.api.service=api
-      - traefik.http.services.api.loadbalancer.server.port=3000
+      - traefik.http.routers.apicore.rule=PathPrefix(`/api`)
+      - traefik.http.routers.apicore.entrypoints=web
+      - traefik.http.routers.apicore.priority=100
+      - traefik.http.middlewares.apicore-strip.stripprefix.prefixes=/api
+      - traefik.http.routers.apicore.middlewares=apicore-strip
+      - traefik.http.routers.apicore.service=apicore
+      - traefik.http.services.apicore.loadbalancer.server.port=3000
     networks:
       - edge
       - internal
