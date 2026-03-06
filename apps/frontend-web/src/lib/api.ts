@@ -111,7 +111,7 @@ export const api = {
     request<{ ok: boolean; token: string; user: ApiUser }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
-    }),
+    }, 60000),  // 60s timeout for bcrypt verification
 
   me: () => request<{ ok: boolean; user: ApiUser }>('/auth/me'),
 

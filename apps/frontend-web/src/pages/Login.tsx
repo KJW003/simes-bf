@@ -226,6 +226,7 @@ export default function Login() {
                       <Input
                         id="email"
                         type="email"
+                        autoComplete="email"
                         className={cn("pl-9", emailError && "border-destructive")}
                         placeholder="prenom.nom@entreprise.com"
                         value={email}
@@ -243,6 +244,7 @@ export default function Login() {
                       <Input
                         id="password"
                         type="password"
+                        autoComplete="current-password"
                         className={cn("pl-9", passwordError && "border-destructive")}
                         placeholder="••••••••"
                         value={password}

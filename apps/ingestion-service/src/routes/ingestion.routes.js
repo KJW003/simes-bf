@@ -162,13 +162,8 @@ router.post("/milesight", async (req, res) => {
         .query(`UPDATE device_registry SET last_seen_at = NOW() WHERE terrain_id = $1 AND device_key = $2`, [terrainId, deviceKey])
         .catch(() => {});
 
-      // Lookup CT ratio for this measurement point
-      const mpRow = await corePool.query(
-        `SELECT ct_ratio FROM measurement_points WHERE id = $1`,
-        [pointId]
-      );
-      const ctRatio = Number(mpRow.rows[0]?.ct_ratio) || 1;
-
+      // Device payload already includes CT in decoded values (Milesight codec applies it)
+      // No need to reapply CT from measurement_points config
       const picked = pickMetrics(metrics);
 
       picked.rssi_lora = dev.rssi_lora ?? null;

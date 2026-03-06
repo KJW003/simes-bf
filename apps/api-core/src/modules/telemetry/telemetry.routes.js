@@ -193,9 +193,10 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
   try {
     const { terrainId } = req.params;
 
-    // 1) Points (include ct_ratio for frontend display)
+    // 1) Points (include ct_ratio for frontend display, default to 1 if missing)
     const ptsR = await corePool.query(
-      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, ct_ratio, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, 
+              COALESCE(ct_ratio, 1) AS ct_ratio, created_at
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY name`,

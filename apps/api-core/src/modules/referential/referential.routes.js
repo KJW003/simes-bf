@@ -378,7 +378,7 @@ router.post("/terrains/:terrainId/points", async (req, res) => {
       `INSERT INTO measurement_points
        (terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
-       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, created_at`,
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at`,
       [
         terrainId,
         zone_id ?? null,
@@ -403,7 +403,7 @@ router.get("/terrains/:terrainId/points", async (req, res) => {
   try {
     const { terrainId } = req.params;
     const r = await db.query(
-      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY created_at DESC`,
@@ -427,7 +427,7 @@ router.put("/points/:pointId", async (req, res) => {
            ct_ratio = COALESCE($7, ct_ratio),
            meta = COALESCE($8::jsonb, meta), status = COALESCE($9, status), zone_id = COALESCE($10, zone_id)
        WHERE id = $1
-       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, created_at`,
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at`,
       [pointId, name.trim(), device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta ? JSON.stringify(meta) : null, status, zone_id]
     );
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "point not found" });
