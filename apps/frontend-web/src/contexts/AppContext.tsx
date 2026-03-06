@@ -198,8 +198,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [apiTerrains, setApiTerrains] = useState<Terrain[] | null>(null);
   const [apiReady, setApiReady] = useState(false);
 
-  // Fetch orgs from API on mount
+  // Fetch orgs from API once authenticated
   useEffect(() => {
+    if (!isAuthenticated) return;
     let cancelled = false;
     api.getOrgs()
       .then(orgs => {
@@ -212,7 +213,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         setApiReady(false);
       });
     return () => { cancelled = true; };
-  }, []);
+  }, [isAuthenticated]);
 
   // Fetch sites when org changes
   useEffect(() => {
@@ -239,18 +240,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
       .catch(() => { if (!cancelled) setApiTerrains(null); });
     return () => { cancelled = true; };
   }, [selectedSiteId, apiReady]);
+  // Force platform mode for super admins (only on role change)
   useEffect(() => {
     if (currentUser.role !== 'platform_super_admin') return;
-    if (mode !== 'platform') {
-      setMode('platform');
-    }
-    if (selectedOrgId !== null || selectedSiteId !== null || selectedTerrainId !== null || aggregatedView) {
-      setSelectedOrgId(null);
-      setSelectedSiteId(null);
-      setSelectedTerrainId(null);
-      setAggregatedView(false);
-    }
-  }, [currentUser.role, mode, selectedOrgId, selectedSiteId, selectedTerrainId, aggregatedView]);
+    setMode('platform');
+    setSelectedOrgId(null);
+    setSelectedSiteId(null);
+    setSelectedTerrainId(null);
+    setAggregatedView(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser.role]);
 
   useEffect(() => {
     setHasSolarState(getStoredSolarFlag(selectedOrgId));
@@ -299,21 +298,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Auto-select first site/terrain when API data arrives
+  // Auto-select first site when sites list arrives (and nothing selected)
   useEffect(() => {
-    if (!apiReady || !apiSites) return;
-    if (selectedSiteId) return; // already selected
-    if (apiSites.length > 0) {
-      setSelectedSiteId(apiSites[0].id);
-    }
+    if (!apiReady || !apiSites || apiSites.length === 0) return;
+    if (selectedSiteId && apiSites.some(s => s.id === selectedSiteId)) return; // still valid
+    setSelectedSiteId(apiSites[0].id);
   }, [apiSites, apiReady, selectedSiteId]);
 
   useEffect(() => {
-    if (!apiReady || !apiTerrains) return;
-    if (selectedTerrainId) return; // already selected
-    if (apiTerrains.length > 0) {
-      setSelectedTerrainId(apiTerrains[0].id);
-    }
+    if (!apiReady || !apiTerrains || apiTerrains.length === 0) return;
+    if (selectedTerrainId && apiTerrains.some(t => t.id === selectedTerrainId)) return; // still valid
+    setSelectedTerrainId(apiTerrains[0].id);
   }, [apiTerrains, apiReady, selectedTerrainId]);
   
   const selectSite = useCallback((siteId: string | null) => {

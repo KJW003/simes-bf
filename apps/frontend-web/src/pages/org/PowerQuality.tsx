@@ -6,6 +6,9 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
 import {
@@ -24,15 +27,20 @@ const THD_CRITICAL = 8;
 export default function PowerQuality() {
   const { selectedTerrainId } = useAppContext();
   const [tab, setTab] = useState('pf');
+  const [selectedPoint, setSelectedPoint] = useState<string>('_all');
 
   const now = useMemo(() => new Date(), []);
   const from24h = useMemo(() => new Date(now.getTime() - 24 * 3600_000).toISOString(), [now]);
 
   const { data: overviewData, isLoading: loadingOv } = useTerrainOverview(selectedTerrainId);
-  const { data: readingsData, isLoading: loadingR } = useReadings(selectedTerrainId, { from: from24h, to: now.toISOString(), limit: 5000 });
+  const { data: readingsData, isLoading: loadingR } = useReadings(selectedTerrainId, {
+    from: from24h, to: now.toISOString(), limit: 5000,
+    point_id: selectedPoint === '_all' ? undefined : selectedPoint,
+  });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
   const readings = (readingsData?.readings ?? []) as Array<Record<string, unknown>>;
+  const selectedPointName = selectedPoint === '_all' ? 'Tous les points' : String(points.find(p => String(p.id) === selectedPoint)?.name ?? selectedPoint);
   const isLoading = loadingOv || loadingR;
 
   // ─── Per-point latest PF / THD
@@ -134,7 +142,20 @@ export default function PowerQuality() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <PageHeader title="Qualité réseau" description="Qualité de l'énergie électrique — dernières 24h" />
+      <PageHeader title="Qualité réseau" description={`Qualité de l'énergie électrique — dernières 24h — ${selectedPointName}`} />
+
+      <div className="flex items-center gap-3">
+        <span className="text-sm text-muted-foreground">Point de mesure :</span>
+        <Select value={selectedPoint} onValueChange={setSelectedPoint}>
+          <SelectTrigger className="w-64 h-8 text-xs">
+            <SelectValue placeholder="Tous les points" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="_all">Tous les points</SelectItem>
+            {points.map(p => <SelectItem key={String(p.id)} value={String(p.id)}>{String(p.name)}</SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
         <KpiCard
@@ -174,7 +195,7 @@ export default function PowerQuality() {
         <TabsContent value="pf" className="space-y-4">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <Card className="lg:col-span-2">
-              <CardHeader className="pb-2"><CardTitle className="text-base">PF moyen par heure (24h)</CardTitle></CardHeader>
+              <CardHeader className="pb-2"><CardTitle className="text-base">PF moyen par heure (24h) — {selectedPointName}</CardTitle></CardHeader>
               <CardContent>
                 <ResponsiveContainer width="100%" height={280}>
                   <BarChart data={pfHourly}>
@@ -214,7 +235,7 @@ export default function PowerQuality() {
         {/* THD Tab */}
         <TabsContent value="thd" className="space-y-4">
           <Card>
-            <CardHeader className="pb-2"><CardTitle className="text-base">THDi par phase — tendance 24h</CardTitle></CardHeader>
+            <CardHeader className="pb-2"><CardTitle className="text-base">THDi par phase — tendance 24h — {selectedPointName}</CardTitle></CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={280}>
                 <LineChart data={thdHourly}>

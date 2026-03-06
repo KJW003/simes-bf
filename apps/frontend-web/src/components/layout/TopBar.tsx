@@ -193,19 +193,20 @@ export function TopBar() {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <div className="flex items-center gap-2 ml-2 pl-2 border-l">
+          <div className="flex items-center gap-2 ml-2 pl-2 border-l" title="Agrège les données de tous les terrains du site sélectionné">
             <Button
               variant={aggregatedView ? 'secondary' : 'ghost'}
               size="sm"
               className="h-8 text-xs"
               onClick={() => setAggregatedView(!aggregatedView)}
+              title="Affiche les données cumulées de tous les terrains du site au lieu d'un seul terrain"
             >
               {aggregatedView ? (
                 <ToggleRight className="w-4 h-4 mr-1" />
               ) : (
                 <ToggleLeft className="w-4 h-4 mr-1" />
               )}
-              Vue agrégée
+              Vue agrégée site
             </Button>
           </div>
         </div>

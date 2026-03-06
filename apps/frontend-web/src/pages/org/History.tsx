@@ -42,7 +42,7 @@ export default function History() {
   const { selectedTerrainId } = useAppContext();
   const [range, setRange] = useState<string>('1D');
   const [metric, setMetric] = useState<string>('active_power_total');
-  const [selectedPoint, setSelectedPoint] = useState<string>('');
+  const [selectedPoint, setSelectedPoint] = useState<string>('_all');
 
   const rangeObj = RANGES.find(r => r.key === range) ?? RANGES[0];
   const metricObj = METRICS.find(m => m.key === metric) ?? METRICS[0];
@@ -55,7 +55,7 @@ export default function History() {
   const { data, isLoading, isError } = useReadings(selectedTerrainId, {
     from,
     to: now.toISOString(),
-    point_id: selectedPoint || undefined,
+    point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     limit: 5000,
   });
 
@@ -206,10 +206,10 @@ export default function History() {
           <Select value={selectedPoint} onValueChange={setSelectedPoint}>
             <SelectTrigger className="w-56"><SelectValue placeholder="Tous les points" /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="">Tous les points</SelectItem>
+              <SelectItem value="_all">Tous les points</SelectItem>
               {points.map(p => (
                 <SelectItem key={String(p.id)} value={String(p.id)}>
-                  {String(p.name)} ({String(p.device)})
+                  {String(p.name)}
                 </SelectItem>
               ))}
             </SelectContent>
