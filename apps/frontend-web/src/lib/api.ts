@@ -400,6 +400,18 @@ export const api = {
   // ── Pipeline Health ──
   getPipelineHealth: () => request<{ ok: boolean; components: any[]; checked_at: string }>('/health/pipeline'),
 
+  // ── Purge readings ──
+  purgeReadings: (pointId: string, from?: string, to?: string) => {
+    const qs = new URLSearchParams();
+    if (from) qs.set('from', from);
+    if (to) qs.set('to', to);
+    const q = qs.toString();
+    return request<{ ok: boolean; point: string; deleted: { readings: number; agg_15m: number; agg_daily: number }; range: { from: string | null; to: string | null } }>(
+      `/admin/readings/${pointId}${q ? `?${q}` : ''}`,
+      { method: 'DELETE' }
+    );
+  },
+
   /** Base URL for raw fetch calls (e.g. file downloads) */
   baseURL: BASE,
 };

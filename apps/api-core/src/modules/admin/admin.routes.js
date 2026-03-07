@@ -1,6 +1,6 @@
 const express = require("express");
 const router = express.Router();
-const {corePool} = require("../../config/db");
+const {corePool, telemetryPool} = require("../../config/db");
 const { makeDeviceKey } = require("../../shared/acrel");
 const { requireAuth } = require("../../shared/auth-middleware");
 const { telemetryQueue } = require("../../jobs/queues");
@@ -935,6 +935,96 @@ router.get("/logs/scheduler", requireAuth, async (req, res) => {
       logs: recent,
     });
   } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── DELETE readings for a specific point (with optional date range) ────
+// DELETE /admin/readings/:pointId?from=...&to=...
+// If no from/to → deletes ALL readings + aggregations for this point
+// If from and/or to → deletes only within that time range
+router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
+  const { pointId } = req.params;
+  const { from, to } = req.query;
+
+  if (!pointId) return res.status(400).json({ ok: false, error: "pointId is required" });
+  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+
+  try {
+    // Verify the point exists
+    const pointCheck = await corePool.query(
+      `SELECT id, name FROM measurement_points WHERE id = $1`,
+      [pointId]
+    );
+    if (pointCheck.rows.length === 0) {
+      return res.status(404).json({ ok: false, error: "Point not found" });
+    }
+    const pointName = pointCheck.rows[0].name;
+
+    // Build WHERE clause
+    const conditions = ["point_id = $1"];
+    const params = [pointId];
+    let paramIdx = 2;
+
+    if (from) {
+      conditions.push(`time >= $${paramIdx}`);
+      params.push(from);
+      paramIdx++;
+    }
+    if (to) {
+      conditions.push(`time <= $${paramIdx}`);
+      params.push(to);
+      paramIdx++;
+    }
+
+    const where = conditions.join(" AND ");
+
+    // Delete from acrel_readings
+    const rReadings = await telemetryPool.query(
+      `DELETE FROM acrel_readings WHERE ${where}`,
+      params
+    );
+
+    // Delete from acrel_agg_15m (use bucket_start instead of time)
+    const agg15Conditions = conditions.map(c => c.replace(/\btime\b/g, "bucket_start"));
+    const r15m = await telemetryPool.query(
+      `DELETE FROM acrel_agg_15m WHERE ${agg15Conditions.join(" AND ")}`,
+      params
+    );
+
+    // Delete from acrel_agg_daily (use day instead of time, cast to date)
+    const aggDayConditions = ["point_id = $1"];
+    const dayParams = [pointId];
+    let dayIdx = 2;
+    if (from) {
+      aggDayConditions.push(`day >= ($${dayIdx})::date`);
+      dayParams.push(from);
+      dayIdx++;
+    }
+    if (to) {
+      aggDayConditions.push(`day <= ($${dayIdx})::date`);
+      dayParams.push(to);
+      dayIdx++;
+    }
+    const rDay = await telemetryPool.query(
+      `DELETE FROM acrel_agg_daily WHERE ${aggDayConditions.join(" AND ")}`,
+      dayParams
+    );
+
+    console.log(`[PURGE] point=${pointName} (${pointId}) from=${from || 'ALL'} to=${to || 'ALL'} → readings=${rReadings.rowCount} agg15m=${r15m.rowCount} aggDaily=${rDay.rowCount}`);
+
+    res.json({
+      ok: true,
+      point: pointName,
+      deleted: {
+        readings: rReadings.rowCount,
+        agg_15m: r15m.rowCount,
+        agg_daily: rDay.rowCount,
+      },
+      range: { from: from || null, to: to || null },
+    });
+  } catch (e) {
+    console.error("[PURGE] Error:", e.message);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

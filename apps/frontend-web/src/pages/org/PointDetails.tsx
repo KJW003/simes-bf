@@ -5,11 +5,16 @@ import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
+import api from '@/lib/api';
 import {
   Activity, Zap, Gauge, Thermometer, ArrowLeft, Download, Loader2,
-  AlertTriangle, CheckCircle2,
+  AlertTriangle, CheckCircle2, Trash2,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -31,6 +36,11 @@ export default function PointDetails() {
   const { selectedTerrainId } = useAppContext();
   const [tab, setTab] = useState('overview');
   const [range, setRange] = useState<'1D' | '7D' | '1M'>('1D');
+  const [purgeOpen, setPurgeOpen] = useState(false);
+  const [purgeFrom, setPurgeFrom] = useState('');
+  const [purgeTo, setPurgeTo] = useState('');
+  const [purging, setPurging] = useState(false);
+  const [purgeResult, setPurgeResult] = useState<{ readings: number; agg_15m: number; agg_daily: number } | null>(null);
 
   const now = useMemo(() => new Date(), []);
   const rangeMs = range === '1D' ? 86400_000 : range === '7D' ? 7 * 86400_000 : 30 * 86400_000;
@@ -99,6 +109,24 @@ export default function PointDetails() {
     return list;
   }, [latest]);
 
+  // ─── Purge readings
+  const handlePurge = async () => {
+    if (!pointId) return;
+    const confirmMsg = purgeFrom || purgeTo
+      ? `Supprimer les mesures${purgeFrom ? ` du ${purgeFrom}` : ''}${purgeTo ? ` au ${purgeTo}` : ''} ?`
+      : 'Supprimer TOUTES les mesures de ce point ?';
+    if (!window.confirm(confirmMsg)) return;
+    setPurging(true);
+    try {
+      const res = await api.purgeReadings(pointId, purgeFrom || undefined, purgeTo || undefined);
+      setPurgeResult(res.deleted);
+    } catch (e: any) {
+      alert('Erreur: ' + (e.message || 'Échec de la suppression'));
+    } finally {
+      setPurging(false);
+    }
+  };
+
   // ─── CSV export
   const exportCsv = () => {
     if (!readings.length) return;
@@ -147,6 +175,7 @@ export default function PointDetails() {
               ))}
             </div>
             <Button variant="outline" size="sm" onClick={exportCsv}><Download className="w-4 h-4 mr-1" />CSV</Button>
+            <Button variant="destructive" size="sm" onClick={() => { setPurgeResult(null); setPurgeOpen(true); }}><Trash2 className="w-4 h-4 mr-1" />Purger</Button>
           </div>
         }
       />
@@ -156,11 +185,11 @@ export default function PointDetails() {
         <KpiCard label="P active" value={fmt(latest?.active_power_total) + ' kW'} icon={<Zap className="w-4 h-4" />} />
         <KpiCard label="Q réactive" value={fmt(latest?.reactive_power_total) + ' kvar'} icon={<Zap className="w-4 h-4" />} />
         <KpiCard label="S apparente" value={fmt(latest?.apparent_power_total) + ' kVA'} icon={<Zap className="w-4 h-4" />} />
-        <KpiCard label="Tension A" value={fmt(latest?.voltage_a, 1) + ' V'} icon={<Thermometer className="w-4 h-4" />} />
-        <KpiCard label="Courant A" value={fmt(latest?.current_a, 1) + ' A'} icon={<Activity className="w-4 h-4" />} />
-        <KpiCard label="PF total" value={fmt(latest?.power_factor_total, 3)} icon={<Gauge className="w-4 h-4" />}
+        <KpiCard label="Tension A" value={fmt(latest?.voltage_a) + ' V'} icon={<Thermometer className="w-4 h-4" />} />
+        <KpiCard label="Courant A" value={fmt(latest?.current_a) + ' A'} icon={<Activity className="w-4 h-4" />} />
+        <KpiCard label="PF total" value={fmt(latest?.power_factor_total)} icon={<Gauge className="w-4 h-4" />}
           variant={latest?.power_factor_total != null && Number(latest.power_factor_total) < 0.85 ? 'warning' : 'default'} />
-        <KpiCard label="Fréquence" value={fmt(latest?.frequency, 2) + ' Hz'} icon={<Activity className="w-4 h-4" />} />
+        <KpiCard label="Fréquence" value={fmt(latest?.frequency) + ' Hz'} icon={<Activity className="w-4 h-4" />} />
       </div>
 
       <Tabs value={tab} onValueChange={setTab}>
@@ -412,28 +441,28 @@ export default function PointDetails() {
                     {readings.slice(0, 200).map((r, i) => (
                       <tr key={i}>
                         <td className="whitespace-nowrap">{fmtDT(String(r.time))}</td>
-                        <td className="mono">{fmt(r.active_power_total, 2)}</td>
-                        <td className="mono">{fmt(r.reactive_power_total, 2)}</td>
-                        <td className="mono">{fmt(r.apparent_power_total, 2)}</td>
-                        <td className="mono">{fmt(r.voltage_a, 1)}</td>
-                        <td className="mono">{fmt(r.voltage_b, 1)}</td>
-                        <td className="mono">{fmt(r.voltage_c, 1)}</td>
-                        <td className="mono">{fmt(r.voltage_ab, 1)}</td>
-                        <td className="mono">{fmt(r.voltage_bc, 1)}</td>
-                        <td className="mono">{fmt(r.voltage_ca, 1)}</td>
-                        <td className="mono">{fmt(r.current_a, 2)}</td>
-                        <td className="mono">{fmt(r.current_b, 2)}</td>
-                        <td className="mono">{fmt(r.current_c, 2)}</td>
-                        <td className="mono">{fmt(r.power_factor_total, 3)}</td>
-                        <td className="mono">{fmt(r.thdi_a, 1)}</td>
-                        <td className="mono">{fmt(r.thdi_b, 1)}</td>
-                        <td className="mono">{fmt(r.thdi_c, 1)}</td>
-                        <td className="mono">{fmt(r.thdu_a, 1)}</td>
-                        <td className="mono">{fmt(r.thdu_b, 1)}</td>
-                        <td className="mono">{fmt(r.thdu_c, 1)}</td>
-                        <td className="mono">{fmt(r.frequency, 2)}</td>
-                        <td className="mono">{fmt(r.energy_import, 1)}</td>
-                        <td className="mono">{fmt(r.energy_export, 1)}</td>
+                        <td className="mono">{fmt(r.active_power_total)}</td>
+                        <td className="mono">{fmt(r.reactive_power_total)}</td>
+                        <td className="mono">{fmt(r.apparent_power_total)}</td>
+                        <td className="mono">{fmt(r.voltage_a)}</td>
+                        <td className="mono">{fmt(r.voltage_b)}</td>
+                        <td className="mono">{fmt(r.voltage_c)}</td>
+                        <td className="mono">{fmt(r.voltage_ab)}</td>
+                        <td className="mono">{fmt(r.voltage_bc)}</td>
+                        <td className="mono">{fmt(r.voltage_ca)}</td>
+                        <td className="mono">{fmt(r.current_a)}</td>
+                        <td className="mono">{fmt(r.current_b)}</td>
+                        <td className="mono">{fmt(r.current_c)}</td>
+                        <td className="mono">{fmt(r.power_factor_total)}</td>
+                        <td className="mono">{fmt(r.thdi_a)}</td>
+                        <td className="mono">{fmt(r.thdi_b)}</td>
+                        <td className="mono">{fmt(r.thdi_c)}</td>
+                        <td className="mono">{fmt(r.thdu_a)}</td>
+                        <td className="mono">{fmt(r.thdu_b)}</td>
+                        <td className="mono">{fmt(r.thdu_c)}</td>
+                        <td className="mono">{fmt(r.frequency)}</td>
+                        <td className="mono">{fmt(r.energy_import)}</td>
+                        <td className="mono">{fmt(r.energy_export)}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -444,6 +473,47 @@ export default function PointDetails() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Purge dialog */}
+      <Dialog open={purgeOpen} onOpenChange={setPurgeOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <Trash2 className="w-5 h-5" /> Purger les mesures
+            </DialogTitle>
+            <DialogDescription>
+              Supprime les lectures (acrel_readings), agrégations 15min et journalières pour ce point.
+              Laissez les dates vides pour tout supprimer.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3">
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Date début (optionnel)</label>
+              <Input type="datetime-local" value={purgeFrom} onChange={e => setPurgeFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="text-xs font-medium text-muted-foreground">Date fin (optionnel)</label>
+              <Input type="datetime-local" value={purgeTo} onChange={e => setPurgeTo(e.target.value)} />
+            </div>
+          </div>
+
+          {purgeResult && (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm space-y-1">
+              <div className="font-medium text-emerald-800">Suppression effectuée</div>
+              <div className="text-emerald-700">Readings: {purgeResult.readings} — Agg 15m: {purgeResult.agg_15m} — Agg daily: {purgeResult.agg_daily}</div>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPurgeOpen(false)}>Annuler</Button>
+            <Button variant="destructive" onClick={handlePurge} disabled={purging}>
+              {purging ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
+              {purgeFrom || purgeTo ? 'Supprimer la plage' : 'Tout supprimer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

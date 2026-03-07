@@ -64,6 +64,29 @@ if (!connection) {
       );
 
       log("scheduler", "✓ Cleanup job scheduled: runs every 2 minutes");
+
+      // ── Stale device monitoring: every 5 minutes ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.check_stale_devices") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log("scheduler", `Removed old stale-check job: ${job.key}`);
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.check_stale_devices",
+        { payload: { warn_minutes: 30, critical_minutes: 60 } },
+        {
+          repeat: {
+            pattern: "*/5 * * * *", // Every 5 minutes
+          },
+          removeOnComplete: 10,
+          removeOnFail: 20,
+          attempts: 1,
+        }
+      );
+
+      log("scheduler", "✓ Stale device check scheduled: runs every 5 minutes (warn=30m, crit=60m)");
     } catch (e) {
       log("scheduler", `✗ Failed to setup cleanup job: ${e.message}`);
     }

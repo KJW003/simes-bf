@@ -36,6 +36,7 @@ import Gateways from "./pages/platform/Gateways";
 import Devices from "./pages/platform/Devices";
 import PipelineHealth from "./pages/platform/PipelineHealth";
 import Logs from "./pages/platform/Logs";
+import PurgeReadings from "./pages/platform/PurgeReadings";
 
 import NotFound from "./pages/NotFound";
 
@@ -62,6 +63,7 @@ function AppRoutes() {
             <Route path="/platform/devices" element={<Devices />} />
             <Route path="/platform/pipeline" element={<PipelineHealth />} />
             <Route path="/platform/logs" element={<Logs />} />
+            <Route path="/platform/purge" element={<PurgeReadings />} />
             <Route path="/platform/admin" element={<Administration />} />
           </>
         ) : (

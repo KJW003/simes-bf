@@ -10,6 +10,7 @@ import {
   Activity,
   FileSearch,
   Settings,
+  Trash2,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -106,6 +107,7 @@ export function PlatformSidebar() {
           </NavSection>
 
           <NavSection title="Administration">
+            <NavItem to="/platform/purge" icon={Trash2} label="Purge données" />
             <NavItem to="/platform/admin" icon={Settings} label="Configuration" />
           </NavSection>
         </nav>

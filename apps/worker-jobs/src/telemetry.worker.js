@@ -264,6 +264,117 @@ async function runProcessHistoricalMessages(payload = {}) {
   }
 }
 
+// ─── Stale device detection ─────────────────────────────────
+// Checks device_registry for devices that haven't reported in a while
+// and creates/resolves incidents in the core DB automatically.
+async function runCheckStaleDevices(payload = {}) {
+  const WARN_MINUTES = payload.warn_minutes || 30;
+  const CRITICAL_MINUTES = payload.critical_minutes || 60;
+
+  if (!db) throw new Error("Core DB not available");
+
+  try {
+    log("stale-check", `Starting stale device check (warn=${WARN_MINUTES}m, crit=${CRITICAL_MINUTES}m)`);
+
+    // 1) Find stale devices
+    const staleDevices = await db.query(
+      `SELECT dr.id, dr.device_key, dr.label, dr.terrain_id, dr.point_id,
+              dr.last_seen_at,
+              EXTRACT(EPOCH FROM (NOW() - dr.last_seen_at)) / 60 AS minutes_silent,
+              mp.name AS point_name, t.name AS terrain_name
+       FROM device_registry dr
+       LEFT JOIN measurement_points mp ON mp.id = dr.point_id
+       LEFT JOIN terrains t ON t.id = dr.terrain_id
+       WHERE dr.last_seen_at IS NOT NULL
+         AND dr.last_seen_at < NOW() - INTERVAL '${WARN_MINUTES} minutes'`
+    );
+
+    log("stale-check", `Found ${staleDevices.rows.length} stale device(s)`);
+
+    let created = 0;
+    let escalated = 0;
+    let resolved = 0;
+
+    for (const dev of staleDevices.rows) {
+      const minutesSilent = Math.round(dev.minutes_silent);
+      const severity = minutesSilent >= CRITICAL_MINUTES ? "critical" : "warning";
+      const deviceLabel = dev.label || dev.device_key;
+
+      // Check if an open incident already exists for this device
+      const existing = await db.query(
+        `SELECT id, severity FROM incidents
+         WHERE source = 'stale_device_monitor'
+           AND status IN ('open', 'acknowledged')
+           AND metadata->>'device_key' = $1
+         LIMIT 1`,
+        [dev.device_key]
+      );
+
+      if (existing.rows.length > 0) {
+        const inc = existing.rows[0];
+        // Escalate if needed
+        if (inc.severity === "warning" && severity === "critical") {
+          await db.query(
+            `UPDATE incidents SET severity = 'critical',
+               description = $1, updated_at = NOW()
+             WHERE id = $2`,
+            [`Appareil "${deviceLabel}" silencieux depuis ${minutesSilent} minutes (escaladé en critique)`, inc.id]
+          );
+          escalated++;
+          log("stale-check", `↑ Escalated incident ${inc.id} for ${dev.device_key} (${minutesSilent}m)`);
+        }
+        continue; // Already tracked
+      }
+
+      // Create new incident
+      await db.query(
+        `INSERT INTO incidents (id, title, description, severity, status, source, terrain_id, point_id, metadata)
+         VALUES (gen_random_uuid(), $1, $2, $3, 'open', 'stale_device_monitor', $4, $5, $6)`,
+        [
+          `Appareil silencieux: ${deviceLabel}`,
+          `Appareil "${deviceLabel}" n'a pas envoyé de données depuis ${minutesSilent} minutes.`,
+          severity,
+          dev.terrain_id,
+          dev.point_id,
+          JSON.stringify({
+            device_key: dev.device_key,
+            device_id: dev.id,
+            last_seen_at: dev.last_seen_at,
+            minutes_silent: minutesSilent,
+          }),
+        ]
+      );
+      created++;
+      log("stale-check", `+ Created ${severity} incident for ${dev.device_key} (${minutesSilent}m)`);
+    }
+
+    // 2) Auto-resolve incidents for devices that came back online
+    const autoResolved = await db.query(
+      `UPDATE incidents SET status = 'resolved', resolved_at = NOW(), updated_at = NOW(),
+              description = description || ' — Auto-résolu: appareil de retour en ligne.'
+       WHERE source = 'stale_device_monitor'
+         AND status IN ('open', 'acknowledged')
+         AND metadata->>'device_key' IN (
+           SELECT device_key FROM device_registry
+           WHERE last_seen_at >= NOW() - INTERVAL '${WARN_MINUTES} minutes'
+         )
+       RETURNING id, metadata->>'device_key' AS device_key`
+    );
+
+    resolved = autoResolved.rowCount;
+    for (const r of autoResolved.rows) {
+      log("stale-check", `✓ Auto-resolved incident ${r.id} for ${r.device_key}`);
+    }
+
+    const summary = { stale_found: staleDevices.rows.length, created, escalated, resolved };
+    log("stale-check", `Done: ${JSON.stringify(summary)}`);
+    return { ok: true, summary };
+  } catch (e) {
+    log("stale-check", `✗ Fatal error: ${e.message}`);
+    return { ok: false, error: e.message };
+  }
+}
+
 // Background cleanup: find mapped messages whose devices exist in device_registry
 // and re-send them to the ingestion service to create actual acrel_readings.
 async function runCleanupUnmappedMessages(payload = {}) {
@@ -451,6 +562,22 @@ new Worker(
       // ── telemetry.cleanup_unmapped_messages: auto-process unmapped messages from mapped devices ──
       if (job.name === "telemetry.cleanup_unmapped_messages") {
         const summary = await runCleanupUnmappedMessages(payload);
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          const status = summary.ok ? "success" : "failed";
+          await setRunStatus(runId, status, {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.check_stale_devices: periodic stale device check ──
+      if (job.name === "telemetry.check_stale_devices") {
+        const summary = await runCheckStaleDevices(payload || {});
 
         if (runId) {
           await insertJobResult(runId, job.name, summary);

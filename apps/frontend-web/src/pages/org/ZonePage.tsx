@@ -117,9 +117,9 @@ export default function ZonePage() {
       <div>
         <h3 className="text-sm font-semibold mb-3 text-muted-foreground uppercase">Vue d'ensemble</h3>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 animate-stagger-children">
-          <KpiCard label="Puissance totale" value={fmt(allKpis.totalPower, 0) + ' W'} icon={<Zap className="w-4 h-4" />} />
-          <KpiCard label="Énergie cumulée" value={fmt(allKpis.totalEnergy, 0) + ' Wh'} icon={<Activity className="w-4 h-4" />} />
-          <KpiCard label="PF moyen" value={fmt(allKpis.pfAvg, 3)} icon={<Gauge className="w-4 h-4" />}
+          <KpiCard label="Puissance totale" value={fmt(allKpis.totalPower) + ' kW'} icon={<Zap className="w-4 h-4" />} />
+          <KpiCard label="Énergie cumulée" value={fmt(allKpis.totalEnergy) + ' kWh'} icon={<Activity className="w-4 h-4" />} />
+          <KpiCard label="PF moyen" value={fmt(allKpis.pfAvg)} icon={<Gauge className="w-4 h-4" />}
             variant={allKpis.pfAvg < 0.85 ? 'warning' : 'default'} />
           <KpiCard label="Points en ligne" value={`${allKpis.pointsOnline} / ${allKpis.pointsTotal}`} icon={<CheckCircle2 className="w-4 h-4" />}
             variant={allKpis.pointsOnline < allKpis.pointsTotal ? 'warning' : 'success'} />
@@ -134,9 +134,9 @@ export default function ZonePage() {
             <span className="w-2 h-2 rounded-full bg-blue-500" /> Sources (Grid, PV, Générateur)
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <KpiCard label="Puissance" value={fmt(inputKpis.totalPower, 0) + ' W'} icon={<Zap className="w-4 h-4" />} />
-            <KpiCard label="Énergie" value={fmt(inputKpis.totalEnergy, 0) + ' Wh'} icon={<Activity className="w-4 h-4" />} />
-            <KpiCard label="PF" value={fmt(inputKpis.pfAvg, 3)} icon={<Gauge className="w-4 h-4" />} />
+            <KpiCard label="Puissance" value={fmt(inputKpis.totalPower) + ' kW'} icon={<Zap className="w-4 h-4" />} />
+            <KpiCard label="Énergie" value={fmt(inputKpis.totalEnergy) + ' kWh'} icon={<Activity className="w-4 h-4" />} />
+            <KpiCard label="PF" value={fmt(inputKpis.pfAvg)} icon={<Gauge className="w-4 h-4" />} />
             <KpiCard label="Points" value={`${inputKpis.pointsOnline} / ${inputKpis.pointsTotal}`} icon={<CheckCircle2 className="w-4 h-4" />} />
           </div>
           <Card>
@@ -187,9 +187,9 @@ export default function ZonePage() {
             <span className="w-2 h-2 rounded-full bg-amber-500" /> Charges (Consommateurs)
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
-            <KpiCard label="Puissance" value={fmt(outputKpis.totalPower, 0) + ' W'} icon={<Zap className="w-4 h-4" />} />
-            <KpiCard label="Énergie" value={fmt(outputKpis.totalEnergy, 0) + ' Wh'} icon={<Activity className="w-4 h-4" />} />
-            <KpiCard label="PF" value={fmt(outputKpis.pfAvg, 3)} icon={<Gauge className="w-4 h-4" />} />
+            <KpiCard label="Puissance" value={fmt(outputKpis.totalPower) + ' kW'} icon={<Zap className="w-4 h-4" />} />
+            <KpiCard label="Énergie" value={fmt(outputKpis.totalEnergy) + ' kWh'} icon={<Activity className="w-4 h-4" />} />
+            <KpiCard label="PF" value={fmt(outputKpis.pfAvg)} icon={<Gauge className="w-4 h-4" />} />
             <KpiCard label="Points" value={`${outputKpis.pointsOnline} / ${outputKpis.pointsTotal}`} icon={<CheckCircle2 className="w-4 h-4" />} />
           </div>
           <Card>
@@ -261,10 +261,10 @@ export default function ZonePage() {
                         <ExternalLink className="w-3.5 h-3.5 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
                       </div>
                       <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div><span className="text-muted-foreground">P</span><br/>{fmt(power, 1)} W</div>
-                        <div><span className="text-muted-foreground">PF</span><br/>{fmt(pf, 2)}</div>
-                        <div><span className="text-muted-foreground">Va</span><br/>{fmt(va, 0)} V</div>
-                        <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_import, 0)} Wh</div>
+                        <div><span className="text-muted-foreground">P</span><br/>{fmt(power)} kW</div>
+                        <div><span className="text-muted-foreground">PF</span><br/>{fmt(pf)}</div>
+                        <div><span className="text-muted-foreground">Va</span><br/>{fmt(va)} V</div>
+                        <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_import)} kWh</div>
                       </div>
                     </div>
                   </Link>

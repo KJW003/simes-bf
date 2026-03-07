@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
+import { K } from 'vitest/dist/chunks/reporters.d.BFLkQcL6.js';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
 const fmtDT = (iso: string) => {
@@ -168,19 +169,19 @@ export default function Points() {
                     <div className="space-y-2 text-xs">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">P</span>
-                        <span className="mono font-medium">{fmt(r.active_power_total, 1)} W</span>
+                        <span className="mono font-medium">{fmt(r.active_power_total)} kW</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Va / Vb / Vc</span>
-                        <span className="mono font-medium">{fmt(r.voltage_a, 0)} / {fmt(r.voltage_b, 0)} / {fmt(r.voltage_c, 0)} V</span>
+                        <span className="mono font-medium">{fmt(r.voltage_a)} / {fmt(r.voltage_b)} / {fmt(r.voltage_c)} V</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Ia / Ib / Ic</span>
-                        <span className="mono font-medium">{fmt(r.current_a, 1)} / {fmt(r.current_b, 1)} / {fmt(r.current_c, 1)} A</span>
+                        <span className="mono font-medium">{fmt(r.current_a)} / {fmt(r.current_b)} / {fmt(r.current_c)} A</span>
                       </div>
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">PF</span>
-                        <span className={cn('mono font-medium', pf != null && pf < 0.85 && 'text-amber-600')}>{fmt(r.power_factor_total, 3)}</span>
+                        <span className={cn('mono font-medium', pf != null && pf < 0.85 && 'text-amber-600')}>{fmt(r.power_factor_total)}</span>
                       </div>
                     </div>
                   </CardContent>
@@ -221,30 +222,30 @@ function PointDetailModal({
   const minutesAgo = lastSeen ? Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000) : null;
 
   const fields: Array<{ label: string; value: string; unit?: string; warn?: boolean }> = r ? [
-    { label: 'P totale', value: fmt(r.active_power_total, 1), unit: 'W' },
-    { label: 'Q totale', value: fmt(r.reactive_power_total, 1), unit: 'var' },
-    { label: 'S totale', value: fmt(r.apparent_power_total, 1), unit: 'VA' },
-    { label: 'P phase A', value: fmt(r.active_power_a, 1), unit: 'W' },
-    { label: 'P phase B', value: fmt(r.active_power_b, 1), unit: 'W' },
-    { label: 'P phase C', value: fmt(r.active_power_c, 1), unit: 'W' },
-    { label: 'Tension A', value: fmt(r.voltage_a, 1), unit: 'V' },
-    { label: 'Tension B', value: fmt(r.voltage_b, 1), unit: 'V' },
-    { label: 'Tension C', value: fmt(r.voltage_c, 1), unit: 'V' },
-    { label: 'Courant A', value: fmt(r.current_a, 2), unit: 'A' },
-    { label: 'Courant B', value: fmt(r.current_b, 2), unit: 'A' },
-    { label: 'Courant C', value: fmt(r.current_c, 2), unit: 'A' },
-    { label: 'Facteur de puissance', value: fmt(r.power_factor_total, 3), warn: r.power_factor_total != null && Number(r.power_factor_total) < 0.85 },
-    { label: 'THD courant A', value: fmt(r.thdi_a, 1), unit: '%' },
-    { label: 'THD courant B', value: fmt(r.thdi_b, 1), unit: '%' },
-    { label: 'THD courant C', value: fmt(r.thdi_c, 1), unit: '%' },
-    { label: 'Énergie import', value: fmt(r.energy_import, 1), unit: 'kWh' },
-    { label: 'Énergie export', value: fmt(r.energy_export, 1), unit: 'kWh' },
+    { label: 'P totale', value: fmt(r.active_power_total), unit: 'kW' },
+    { label: 'Q totale', value: fmt(r.reactive_power_total), unit: 'kvar' },
+    { label: 'S totale', value: fmt(r.apparent_power_total), unit: 'kVA' },
+    { label: 'P phase A', value: fmt(r.active_power_a), unit: 'kW' },
+    { label: 'P phase B', value: fmt(r.active_power_b), unit: 'kW' },
+    { label: 'P phase C', value: fmt(r.active_power_c), unit: 'kW' },
+    { label: 'Tension A', value: fmt(r.voltage_a), unit: 'V' },
+    { label: 'Tension B', value: fmt(r.voltage_b), unit: 'V' },
+    { label: 'Tension C', value: fmt(r.voltage_c), unit: 'V' },
+    { label: 'Courant A', value: fmt(r.current_a), unit: 'A' },
+    { label: 'Courant B', value: fmt(r.current_b), unit: 'A' },
+    { label: 'Courant C', value: fmt(r.current_c), unit: 'A' },
+    { label: 'Facteur de puissance', value: fmt(r.power_factor_total), warn: r.power_factor_total != null && Number(r.power_factor_total) < 0.85 },
+    { label: 'THD courant A', value: fmt(r.thdi_a), unit: '%' },
+    { label: 'THD courant B', value: fmt(r.thdi_b), unit: '%' },
+    { label: 'THD courant C', value: fmt(r.thdi_c), unit: '%' },
+    { label: 'Énergie import', value: fmt(r.energy_import), unit: 'kWh' },
+    { label: 'Énergie export', value: fmt(r.energy_export), unit: 'kWh' },
   ] : [];
 
   const histCols = ['time', 'active_power_total', 'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_import'] as const;
   const histLabels: Record<string, string> = {
-    time: 'Heure', active_power_total: 'P (W)', voltage_a: 'Va', voltage_b: 'Vb', voltage_c: 'Vc',
-    current_a: 'Ia', current_b: 'Ib', current_c: 'Ic', power_factor_total: 'PF', energy_import: 'E imp',
+    time: 'Heure', active_power_total: 'P (kW)', voltage_a: 'Va', voltage_b: 'Vb', voltage_c: 'Vc',
+    current_a: 'Ia', current_b: 'Ib', current_c: 'Ic', power_factor_total: 'PF', energy_import: 'E imp (kWh)',
   };
 
   return (
@@ -297,7 +298,7 @@ function PointDetailModal({
                     <tr key={i} className="border-t hover:bg-muted/20">
                       {histCols.map(c => (
                         <td key={c} className="px-2 py-1 mono">
-                          {c === 'time' ? fmtDT(String(row[c])) : fmt(row[c], c === 'power_factor_total' ? 3 : c === 'active_power_total' || c === 'energy_import' ? 1 : 1)}
+                          {c === 'time' ? fmtDT(String(row[c])) : fmt(row[c])}
                         </td>
                       ))}
                     </tr>
