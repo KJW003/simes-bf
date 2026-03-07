@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { Navigate } from 'react-router-dom';
 import { PageHeader } from '@/components/ui/page-header';
@@ -16,32 +16,54 @@ import api from '@/lib/api';
 import type { ApiOrg, ApiSite, ApiTerrain, ApiMeasurementPoint } from '@/lib/api';
 import { cn } from '@/lib/utils';
 import {
-  Trash2, AlertTriangle, Loader2, CheckCircle2, Database, Filter,
-  Building2, MapPin, Layers, Activity, Search, Calendar, Zap,
+  Trash2, AlertTriangle, Loader2, CheckCircle2,
+  Building2, MapPin, Layers, Activity, Search, Calendar, ChevronRight,
+  ArrowLeft,
 } from 'lucide-react';
 
+/* ═══════════════════════════════════════════════════════════════
+   Step badge helper
+   ═══════════════════════════════════════════════════════════════ */
+function StepNumber({ n, active, done }: { n: number; active: boolean; done: boolean }) {
+  return (
+    <span className={cn(
+      'inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold shrink-0 transition-colors',
+      done  && 'bg-emerald-100 text-emerald-700 border border-emerald-300',
+      active && !done && 'bg-primary text-primary-foreground shadow',
+      !active && !done && 'bg-muted text-muted-foreground border',
+    )}>
+      {done ? '✓' : n}
+    </span>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   Main component
+   ═══════════════════════════════════════════════════════════════ */
 export default function PurgeReadings() {
   const { currentUser } = useAppContext();
-  
-  // ─── Auth check — super admin only ─────────────────────────
+
   if (currentUser.role !== 'platform_super_admin') {
     return <Navigate to="/platform" replace />;
   }
 
-  // ─── Search & filter state ────────────────────────────────
-  const [searchText, setSearchText] = useState('');
-  const [orgFilter, setOrgFilter] = useState('');
-  const [siteFilter, setSiteFilter] = useState('');
-  const [terrainFilter, setTerrainFilter] = useState('');
+  // ── Step 1: cascading hierarchy ───────────────────────────
+  const [selectedOrgId, setSelectedOrgId] = useState('');
+  const [selectedSiteId, setSelectedSiteId] = useState('');
+  const [selectedTerrainId, setSelectedTerrainId] = useState('');
 
-  // ─── Selected points
+  // ── Step 2: points for chosen terrain ─────────────────────
+  const [points, setPoints] = useState<ApiMeasurementPoint[]>([]);
+  const [loadingPoints, setLoadingPoints] = useState(false);
   const [selectedPointIds, setSelectedPointIds] = useState<Set<string>>(new Set());
+  const [pointSearch, setPointSearch] = useState('');
 
-  // ─── Date range
+  // ── Step 3: date range ────────────────────────────────────
+  const [useRange, setUseRange] = useState(false);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
-  // ─── Purge state
+  // ── Purge state ───────────────────────────────────────────
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [purging, setPurging] = useState(false);
   const [result, setResult] = useState<{
@@ -51,115 +73,86 @@ export default function PurgeReadings() {
     range: { from: string | null; to: string | null };
   } | null>(null);
 
-  // ─── Load all data ───────────────────────────────────────
+  // ── Referential data ─────────────────────────────────────
   const { data: orgs = [] } = useOrgs() as { data: ApiOrg[] | undefined };
-  const { data: allSitesRaw = [] } = useAllSites() as { data: (ApiSite & { org_name?: string })[] | undefined };
-  const { data: allTerrainsRaw = [] } = useAllTerrains() as { data: (ApiTerrain & { site_name?: string; org_name?: string; org_id?: string })[] | undefined };
-  const [allPoints, setAllPoints] = useState<ApiMeasurementPoint[]>([]);
-  const [loadingPoints, setLoadingPoints] = useState(false);
+  const { data: allSites = [] } = useAllSites() as { data: (ApiSite & { org_name?: string })[] | undefined };
+  const { data: allTerrains = [] } = useAllTerrains() as { data: (ApiTerrain & { site_name?: string; org_name?: string; org_id?: string })[] | undefined };
 
-  // Load all points from all terrains
-  useEffect(() => {
-    const loadAllPoints = async () => {
-      setLoadingPoints(true);
-      try {
-        const allPts: ApiMeasurementPoint[] = [];
-        for (const terrain of allTerrainsRaw) {
-          try {
-            const pts = await api.getPoints(terrain.id);
-            if (Array.isArray(pts)) {
-              allPts.push(...pts);
-            }
-          } catch {
-            // Silently skip terrains that fail
-          }
-        }
-        setAllPoints(allPts);
-      } finally {
-        setLoadingPoints(false);
-      }
-    };
+  // ── Cascade filtering ─────────────────────────────────────
+  const filteredSites = useMemo(() =>
+    selectedOrgId ? allSites.filter(s => s.organization_id === selectedOrgId) : allSites,
+    [allSites, selectedOrgId]);
 
-    if (allTerrainsRaw.length > 0) {
-      loadAllPoints();
-    } else {
-      setAllPoints([]);
+  const filteredTerrains = useMemo(() => {
+    if (selectedSiteId) return allTerrains.filter(t => t.site_id === selectedSiteId);
+    if (selectedOrgId) return allTerrains.filter(t => t.org_id === selectedOrgId);
+    return allTerrains;
+  }, [allTerrains, selectedOrgId, selectedSiteId]);
+
+  // ── Load points for a terrain ─────────────────────────────
+  const loadPoints = useCallback(async (terrainId: string) => {
+    setSelectedTerrainId(terrainId);
+    setSelectedPointIds(new Set());
+    setPoints([]);
+    setResult(null);
+    if (!terrainId) return;
+    setLoadingPoints(true);
+    try {
+      const pts = await api.getPoints(terrainId);
+      setPoints(Array.isArray(pts) ? pts : []);
+    } catch {
+      setPoints([]);
+    } finally {
+      setLoadingPoints(false);
     }
-  }, [allTerrainsRaw]);
+  }, []);
 
-  // ─── Build terrain and point maps ─────────────────────────
-  const terrainMap = useMemo(() => Object.fromEntries(allTerrainsRaw.map(t => [t.id, t])), [allTerrainsRaw]);
-  const pointTerrainMap = useMemo(() => {
-    const m = new Map<string, string>();
-    allTerrainsRaw.forEach(t => {
-      // Each terrain has points, we'll populate this as we filter
-    });
-    return m;
-  }, [allTerrainsRaw]);
+  // ── Terrain info ──────────────────────────────────────────
+  const terrain = allTerrains.find(t => t.id === selectedTerrainId);
+  const orgName = orgs.find(o => o.id === selectedOrgId)?.name;
+  const siteName = allSites.find(s => s.id === selectedSiteId)?.name;
 
-  // ─── Filter points by search + org/site/terrain ──────────
-  const filteredPoints = useMemo(() => {
-    let filtered = allPoints;
+  // ── Filtered points by search ─────────────────────────────
+  const visiblePoints = useMemo(() => {
+    if (!pointSearch) return points;
+    const lower = pointSearch.toLowerCase();
+    return points.filter(p => p.name.toLowerCase().includes(lower) || (p.measure_category || '').toLowerCase().includes(lower));
+  }, [points, pointSearch]);
 
-    if (searchText) {
-      const lower = searchText.toLowerCase();
-      filtered = filtered.filter(p => p.name.toLowerCase().includes(lower));
-    }
-
-    if (terrainFilter) {
-      filtered = filtered.filter(p => p.terrain_id === terrainFilter);
-    }
-
-    if (siteFilter && !terrainFilter) {
-      const siteTerrainsIds = allTerrainsRaw
-        .filter(t => t.site_id === siteFilter)
-        .map(t => t.id);
-      filtered = filtered.filter(p => siteTerrainsIds.includes(p.terrain_id));
-    }
-
-    if (orgFilter && !siteFilter) {
-      const orgSiteIds = allSitesRaw
-        .filter(s => s.organization_id === orgFilter)
-        .map(s => s.id);
-      const orgTerrainIds = allTerrainsRaw
-        .filter(t => orgSiteIds.includes(t.site_id))
-        .map(t => t.id);
-      filtered = filtered.filter(p => orgTerrainIds.includes(p.terrain_id));
-    }
-
-    return filtered;
-  }, [allPoints, searchText, orgFilter, siteFilter, terrainFilter, allTerrainsRaw, allSitesRaw]);
-
-  // ─── Toggle point selection ──────────────────────────────
-  const togglePoint = (pointId: string) => {
-    const newSet = new Set(selectedPointIds);
-    if (newSet.has(pointId)) {
-      newSet.delete(pointId);
-    } else {
-      newSet.add(pointId);
-    }
-    setSelectedPointIds(newSet);
+  // ── Selection helpers ─────────────────────────────────────
+  const togglePoint = (id: string) => {
+    const next = new Set(selectedPointIds);
+    next.has(id) ? next.delete(id) : next.add(id);
+    setSelectedPointIds(next);
   };
 
-  const toggleAll = () => {
-    if (selectedPointIds.size === filteredPoints.length) {
-      setSelectedPointIds(new Set());
+  const toggleAllVisible = () => {
+    if (visiblePoints.length === 0) return;
+    const allSelected = visiblePoints.every(p => selectedPointIds.has(p.id));
+    if (allSelected) {
+      const next = new Set(selectedPointIds);
+      visiblePoints.forEach(p => next.delete(p.id));
+      setSelectedPointIds(next);
     } else {
-      setSelectedPointIds(new Set(filteredPoints.map(p => p.id)));
+      const next = new Set(selectedPointIds);
+      visiblePoints.forEach(p => next.add(p.id));
+      setSelectedPointIds(next);
     }
   };
 
-  // ─── Purge handler ────────────────────────────────────────
+  // ── Current step ──────────────────────────────────────────
+  const step = !selectedTerrainId ? 1 : selectedPointIds.size === 0 ? 2 : 3;
+
+  // ── Purge handler ─────────────────────────────────────────
   const handlePurge = async () => {
     if (selectedPointIds.size === 0) return;
-
     setPurging(true);
     setResult(null);
     try {
       const res = await api.batchPurgeReadings({
         pointIds: Array.from(selectedPointIds),
-        from: dateFrom ? new Date(dateFrom).toISOString() : undefined,
-        to: dateTo ? new Date(dateTo).toISOString() : undefined,
+        from: useRange && dateFrom ? new Date(dateFrom).toISOString() : undefined,
+        to: useRange && dateTo ? new Date(dateTo).toISOString() : undefined,
       });
       setResult(res);
       setSelectedPointIds(new Set());
@@ -171,325 +164,423 @@ export default function PurgeReadings() {
     }
   };
 
-  const rangeLabel = dateFrom || dateTo
+  const rangeLabel = useRange && (dateFrom || dateTo)
     ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : '∞'} → ${dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : '∞'}`
-    : 'TOUTES les mesures';
+    : 'Depuis le début — tout supprimer';
 
-  const canPurge = selectedPointIds.size > 0;
+  // ── Back handlers ─────────────────────────────────────────
+  const goBackToTerrains = () => {
+    setSelectedTerrainId('');
+    setPoints([]);
+    setSelectedPointIds(new Set());
+    setResult(null);
+  };
 
+  /* ═══════════════════════════════════════════════════════════
+     RENDER
+     ═══════════════════════════════════════════════════════════ */
   return (
     <div className="space-y-6">
       <PageHeader
-        title="Purge en masse des mesures"
-        description="Sélectionner plusieurs points de mesure et supprimer leurs données télémétrie (fonction super admin)"
+        title="Purge des mesures"
+        description="Supprimer les données télémétrie de un ou plusieurs points de mesure"
       />
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* ────────── LEFT: Filters + Selection ────────────– */}
-        <div className="lg:col-span-1 space-y-4">
-          {/* Filters */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Filter className="w-4 h-4" /> Filtres
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              {/* Organisation */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                  <Building2 className="w-3 h-3" /> Organisation
-                </label>
-                <select
-                  value={orgFilter}
-                  onChange={e => { setOrgFilter(e.target.value); setSiteFilter(''); setTerrainFilter(''); }}
-                  className={cn(
-                    'w-full px-2 py-1.5 rounded border text-sm',
-                    'border-input bg-background',
-                    'hover:border-primary/50 focus:border-primary focus:outline-none'
-                  )}
-                >
-                  <option value="">Toutes les orgs</option>
-                  {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
-                </select>
-              </div>
-
-              {/* Site */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                  <MapPin className="w-3 h-3" /> Site
-                </label>
-                <select
-                  value={siteFilter}
-                  onChange={e => { setSiteFilter(e.target.value); setTerrainFilter(''); }}
-                  disabled={!orgFilter}
-                  className={cn(
-                    'w-full px-2 py-1.5 rounded border text-sm',
-                    'border-input bg-background disabled:opacity-50 disabled:cursor-not-allowed',
-                    'hover:border-primary/50 focus:border-primary focus:outline-none'
-                  )}
-                >
-                  <option value="">Tous les sites</option>
-                  {allSitesRaw
-                    .filter(s => !orgFilter || s.organization_id === orgFilter)
-                    .map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
-                </select>
-              </div>
-
-              {/* Terrain */}
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                  <Layers className="w-3 h-3" /> Terrain
-                </label>
-                <select
-                  value={terrainFilter}
-                  onChange={e => setTerrainFilter(e.target.value)}
-                  disabled={!siteFilter && !orgFilter}
-                  className={cn(
-                    'w-full px-2 py-1.5 rounded border text-sm',
-                    'border-input bg-background disabled:opacity-50 disabled:cursor-not-allowed',
-                    'hover:border-primary/50 focus:border-primary focus:outline-none'
-                  )}
-                >
-                  <option value="">Tous les terrains</option>
-                  {allTerrainsRaw
-                    .filter(t => !siteFilter || t.site_id === siteFilter)
-                    .filter(t => !orgFilter || t.org_id === orgFilter)
-                    .map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-              </div>
-
-              {/* Search */}
-              <div className="space-y-1.5 pt-2 border-t">
-                <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                  <Search className="w-3 h-3" /> Recherche
-                </label>
-                <Input
-                  placeholder="Nom du point…"
-                  value={searchText}
-                  onChange={e => setSearchText(e.target.value)}
-                  className="h-8"
-                />
-              </div>
-
-              {/* Selection controls */}
-              <div className="pt-2 border-t space-y-2">
-                <label className="flex items-center gap-2 p-2 rounded hover:bg-muted/50 cursor-pointer text-sm">
-                  <Checkbox
-                    checked={selectedPointIds.size > 0 && selectedPointIds.size === filteredPoints.length}
-                    indeterminate={selectedPointIds.size > 0 && selectedPointIds.size < filteredPoints.length}
-                    onChange={toggleAll}
-                  />
-                  <span className="text-muted-foreground">
-                    {selectedPointIds.size > 0 ? `${selectedPointIds.size} sélectionné(e)s` : 'Tout sélectionner'}
-                  </span>
-                </label>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* ────────── RIGHT: Points List ────────────────────– */}
-        <div className="lg:col-span-2 space-y-4">
-          {/* Points selection */}
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm flex items-center gap-2">
-                <Activity className="w-4 h-4" /> Points ({filteredPoints.length})
-              </CardTitle>
-              <CardDescription>
-                Sélectionner les points à purger ({selectedPointIds.size} sélectionné{selectedPointIds.size !== 1 ? 's' : ''})
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {loadingPoints ? (
-                <div className="py-8 text-center">
-                  <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
-                </div>
-              ) : filteredPoints.length === 0 ? (
-                <div className="py-8 text-center text-sm text-muted-foreground">
-                  {searchText || orgFilter || siteFilter || terrainFilter
-                    ? 'Aucun point ne correspond aux filtres'
-                    : 'Aucun point trouvé'}
-                </div>
-              ) : (
-                <ScrollArea className="h-[500px] pr-4">
-                  <div className="space-y-2">
-                    {filteredPoints.map(point => {
-                      const terrain = terrainMap[point.terrain_id];
-                      const isSelected = selectedPointIds.has(point.id);
-                      return (
-                        <div
-                          key={point.id}
-                          onClick={() => togglePoint(point.id)}
-                          className={cn(
-                            'flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-all',
-                            'hover:border-primary hover:bg-primary/5',
-                            isSelected && 'border-primary bg-primary/10 shadow-sm'
-                          )}
-                        >
-                          <Checkbox checked={isSelected} onChange={() => {}} className="mt-1" />
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <span className="font-medium truncate">{point.name}</span>
-                              {point.status === 'active' && (
-                                <Badge className="text-[10px] bg-emerald-100 text-emerald-700 border-emerald-300">
-                                  Active
-                                </Badge>
-                              )}
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1 space-y-0.5">
-                              {point.measure_category && <div>Catégorie: {point.measure_category}</div>}
-                              {terrain && <div>Terrain: {terrain.name} {terrain.site_name && `(${terrain.site_name})`}</div>}
-                              {point.modbus_addr && <div>Modbus: {point.modbus_addr}</div>}
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Date range + Purge button */}
-          {canPurge && (
-            <Card className="border-red-200/60 bg-red-50/20 animate-fade-in">
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <Calendar className="w-4 h-4" /> Plage de dates (optionnel)
-                </CardTitle>
-                <CardDescription>Vide = supprimer TOUTES les mesures</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-muted-foreground">Date début</label>
-                    <Input type="datetime-local" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
-                  </div>
-                  <div className="space-y-1.5">
-                    <label className="text-xs font-medium text-muted-foreground">Date fin</label>
-                    <Input type="datetime-local" value={dateTo} onChange={e => setDateTo(e.target.value)} />
-                  </div>
-                </div>
-
-                <Button
-                  variant="destructive"
-                  className="w-full"
-                  disabled={!canPurge || purging}
-                  onClick={() => { setResult(null); setConfirmOpen(true); }}
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Purger {selectedPointIds.size} point{selectedPointIds.size !== 1 ? 's' : ''}
-                </Button>
-              </CardContent>
-            </Card>
+      {/* ── Breadcrumb ────────────────────────────────────── */}
+      {selectedOrgId && (
+        <div className="flex items-center gap-1.5 text-xs text-muted-foreground flex-wrap">
+          <Building2 className="w-3 h-3" />
+          <button className="hover:text-foreground underline-offset-2 hover:underline" onClick={() => { setSelectedOrgId(''); setSelectedSiteId(''); goBackToTerrains(); }}>
+            {orgName ?? '…'}
+          </button>
+          {selectedSiteId && (
+            <>
+              <ChevronRight className="w-3 h-3" />
+              <MapPin className="w-3 h-3" />
+              <button className="hover:text-foreground underline-offset-2 hover:underline" onClick={() => { setSelectedSiteId(''); goBackToTerrains(); }}>
+                {siteName ?? '…'}
+              </button>
+            </>
+          )}
+          {selectedTerrainId && terrain && (
+            <>
+              <ChevronRight className="w-3 h-3" />
+              <Layers className="w-3 h-3" />
+              <span className="text-foreground font-medium">{terrain.name}</span>
+            </>
           )}
         </div>
-      </div>
+      )}
 
-      {/* Result summary */}
-      {result && (
-        <Card className="border-emerald-200 bg-emerald-50/50 animate-fade-in">
-          <CardContent className="pt-6">
-            <div className="space-y-4">
-              <div className="flex items-start gap-3">
-                <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5" />
-                <div className="flex-1">
-                  <div className="font-semibold text-emerald-800">
-                    Purge effectuée — {result.points_purged} point{result.points_purged !== 1 ? 's' : ''}
+      {/* ═══════════════════════════════════════════════════════
+          STEP 1 — Choose Terrain (org > site > terrain)
+          ═══════════════════════════════════════════════════════ */}
+      {!selectedTerrainId && (
+        <div className="space-y-4 animate-fade-in">
+          <div className="flex items-center gap-3 mb-2">
+            <StepNumber n={1} active={true} done={false} />
+            <div>
+              <div className="font-semibold text-sm">Choisir un terrain</div>
+              <div className="text-xs text-muted-foreground">Naviguer par organisation → site → terrain</div>
+            </div>
+          </div>
+
+          {/* Org + Site filters */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                <Building2 className="w-3 h-3" /> Organisation
+              </label>
+              <select
+                value={selectedOrgId}
+                onChange={e => { setSelectedOrgId(e.target.value); setSelectedSiteId(''); }}
+                className="w-full px-2 py-2 rounded-lg border text-sm border-input bg-background hover:border-primary/50 focus:border-primary focus:outline-none"
+              >
+                <option value="">Toutes</option>
+                {orgs.map(o => <option key={o.id} value={o.id}>{o.name}</option>)}
+              </select>
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                <MapPin className="w-3 h-3" /> Site
+              </label>
+              <select
+                value={selectedSiteId}
+                onChange={e => setSelectedSiteId(e.target.value)}
+                disabled={!selectedOrgId}
+                className="w-full px-2 py-2 rounded-lg border text-sm border-input bg-background disabled:opacity-50 hover:border-primary/50 focus:border-primary focus:outline-none"
+              >
+                <option value="">Tous</option>
+                {filteredSites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+              </select>
+            </div>
+          </div>
+
+          {/* Terrain grid */}
+          {filteredTerrains.length === 0 ? (
+            <Card>
+              <CardContent className="py-12 text-center text-muted-foreground text-sm">
+                Aucun terrain trouvé{selectedOrgId ? ' pour cette sélection' : ''}
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+              {filteredTerrains.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => loadPoints(t.id)}
+                  className="group relative flex flex-col gap-1 p-4 rounded-xl border bg-card text-left transition-all hover:border-primary hover:shadow-md hover:scale-[1.01]"
+                >
+                  <div className="flex items-center gap-2">
+                    <Layers className="w-4 h-4 text-primary/70 group-hover:text-primary" />
+                    <span className="font-semibold text-sm truncate">{t.name}</span>
                   </div>
-                  <div className="text-xs text-emerald-700/70 mt-0.5">
-                    {result.range.from ? new Date(result.range.from).toLocaleString('fr-FR') : '∞'} → {result.range.to ? new Date(result.range.to).toLocaleString('fr-FR') : '∞'}
+                  <div className="text-[11px] text-muted-foreground space-y-0.5">
+                    {t.site_name && <div className="flex items-center gap-1"><MapPin className="w-3 h-3" />{t.site_name}</div>}
+                    {t.org_name && <div className="flex items-center gap-1"><Building2 className="w-3 h-3" />{t.org_name}</div>}
                   </div>
-                </div>
-              </div>
+                  <ChevronRight className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground/40 group-hover:text-primary" />
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
-              {/* Totals */}
-              <div className="grid grid-cols-3 gap-3">
-                <div className="p-2 rounded bg-white border text-center">
-                  <div className="text-[10px] text-muted-foreground">Readings</div>
-                  <div className="text-lg font-bold text-emerald-700">{result.totals.readings.toLocaleString()}</div>
-                </div>
-                <div className="p-2 rounded bg-white border text-center">
-                  <div className="text-[10px] text-muted-foreground">Agg 15min</div>
-                  <div className="text-lg font-bold text-emerald-700">{result.totals.agg_15m.toLocaleString()}</div>
-                </div>
-                <div className="p-2 rounded bg-white border text-center">
-                  <div className="text-[10px] text-muted-foreground">Agg Daily</div>
-                  <div className="text-lg font-bold text-emerald-700">{result.totals.agg_daily.toLocaleString()}</div>
-                </div>
-              </div>
+      {/* ═══════════════════════════════════════════════════════
+          STEP 2 — Select points + Step 3 — Period + Purge
+          ═══════════════════════════════════════════════════════ */}
+      {selectedTerrainId && (
+        <div className="space-y-5 animate-fade-in">
+          {/* Back button */}
+          <Button variant="ghost" size="sm" onClick={goBackToTerrains} className="gap-1.5 text-muted-foreground hover:text-foreground">
+            <ArrowLeft className="w-4 h-4" /> Changer de terrain
+          </Button>
 
-              {/* Details */}
-              {result.details.length > 0 && (
-                <div className="mt-4 pt-4 border-t">
-                  <div className="text-xs font-semibold text-muted-foreground mb-2">Détail par point:</div>
-                  <div className="space-y-1 text-xs">
-                    {result.details.map((detail, idx) => (
-                      <div key={idx} className="flex justify-between text-muted-foreground">
-                        <span>{detail.point_name}</span>
-                        <span>
-                          {detail.deleted.readings.toLocaleString()} + {detail.deleted.agg_15m} + {detail.deleted.agg_daily}
-                        </span>
+          <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
+            {/* ── Points list (3 cols) ─────────────────────── */}
+            <div className="lg:col-span-3">
+              <Card>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <StepNumber n={2} active={step === 2} done={step > 2} />
+                    <div className="flex-1">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Activity className="w-4 h-4" /> Points de mesure — {terrain?.name}
+                      </CardTitle>
+                      <CardDescription className="mt-0.5">
+                        {selectedPointIds.size > 0
+                          ? <span className="text-primary font-medium">{selectedPointIds.size}/{points.length} sélectionné{selectedPointIds.size > 1 ? 's' : ''}</span>
+                          : `${points.length} point${points.length !== 1 ? 's' : ''} disponible${points.length !== 1 ? 's' : ''}`}
+                      </CardDescription>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  {/* Search + select all */}
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                      <Input
+                        placeholder="Rechercher un point…"
+                        value={pointSearch}
+                        onChange={e => setPointSearch(e.target.value)}
+                        className="h-8 pl-8 text-sm"
+                      />
+                    </div>
+                    <Button variant="outline" size="sm" className="h-8 text-xs shrink-0" onClick={toggleAllVisible}>
+                      {visiblePoints.length > 0 && visiblePoints.every(p => selectedPointIds.has(p.id)) ? 'Tout désélectionner' : 'Tout sélectionner'}
+                    </Button>
+                  </div>
+
+                  {loadingPoints ? (
+                    <div className="py-10 text-center">
+                      <Loader2 className="w-5 h-5 animate-spin mx-auto text-muted-foreground" />
+                      <div className="mt-2 text-xs text-muted-foreground">Chargement des points…</div>
+                    </div>
+                  ) : points.length === 0 ? (
+                    <div className="py-10 text-center text-sm text-muted-foreground">
+                      Aucun point de mesure sur ce terrain
+                    </div>
+                  ) : (
+                    <ScrollArea className="h-[420px]">
+                      <div className="space-y-1.5 pr-3">
+                        {visiblePoints.map(p => {
+                          const checked = selectedPointIds.has(p.id);
+                          return (
+                            <div
+                              key={p.id}
+                              onClick={() => togglePoint(p.id)}
+                              className={cn(
+                                'flex items-center gap-3 px-3 py-2.5 rounded-lg border cursor-pointer transition-all',
+                                'hover:border-primary/50 hover:bg-primary/5',
+                                checked && 'border-primary bg-primary/10 shadow-sm',
+                              )}
+                            >
+                              <Checkbox checked={checked} onCheckedChange={() => togglePoint(p.id)} />
+                              <div className="flex-1 min-w-0">
+                                <span className="text-sm font-medium truncate block">{p.name}</span>
+                                {(p.measure_category || p.modbus_addr) && (
+                                  <div className="flex items-center gap-2 mt-0.5">
+                                    {p.measure_category && <Badge variant="outline" className="text-[9px] py-0">{p.measure_category}</Badge>}
+                                    {p.modbus_addr && <span className="text-[10px] text-muted-foreground">Modbus {p.modbus_addr}</span>}
+                                  </div>
+                                )}
+                              </div>
+                              {p.status === 'active' && (
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" title="Active" />
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    ))}
+                    </ScrollArea>
+                  )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* ── Right panel: period + action (2 cols) ───── */}
+            <div className="lg:col-span-2 space-y-4">
+              {/* Period card */}
+              <Card className={cn(step >= 3 ? 'border-primary/30' : 'opacity-60 pointer-events-none')}>
+                <CardHeader className="pb-3">
+                  <div className="flex items-center gap-3">
+                    <StepNumber n={3} active={step === 3} done={false} />
+                    <div>
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Calendar className="w-4 h-4" /> Période
+                      </CardTitle>
+                      <CardDescription className="mt-0.5">Tout supprimer ou choisir un intervalle</CardDescription>
+                    </div>
                   </div>
-                </div>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  {/* Toggle: all time vs range */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      onClick={() => { setUseRange(false); setDateFrom(''); setDateTo(''); }}
+                      className={cn(
+                        'py-2.5 px-3 rounded-lg border text-sm font-medium transition-all text-center',
+                        !useRange ? 'border-primary bg-primary/10 text-primary shadow-sm' : 'hover:border-primary/40 text-muted-foreground',
+                      )}
+                    >
+                      Tout supprimer
+                    </button>
+                    <button
+                      onClick={() => setUseRange(true)}
+                      className={cn(
+                        'py-2.5 px-3 rounded-lg border text-sm font-medium transition-all text-center',
+                        useRange ? 'border-primary bg-primary/10 text-primary shadow-sm' : 'hover:border-primary/40 text-muted-foreground',
+                      )}
+                    >
+                      Choisir un intervalle
+                    </button>
+                  </div>
+
+                  {useRange && (
+                    <div className="space-y-3 animate-fade-in">
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-muted-foreground">Début (vide = depuis toujours)</label>
+                        <Input type="datetime-local" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+                      </div>
+                      <div className="space-y-1.5">
+                        <label className="text-xs font-medium text-muted-foreground">Fin (vide = jusqu'à maintenant)</label>
+                        <Input type="datetime-local" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Summary + purge button */}
+              {selectedPointIds.size > 0 && (
+                <Card className="border-red-200/60 bg-gradient-to-br from-red-50/30 to-orange-50/20 animate-fade-in">
+                  <CardContent className="pt-5 space-y-4">
+                    <div className="space-y-2 text-sm">
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Points sélectionnés</span>
+                        <Badge variant="secondary" className="font-bold">{selectedPointIds.size}</Badge>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Terrain</span>
+                        <span className="font-medium text-xs">{terrain?.name}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Période</span>
+                        <span className="font-medium text-xs">{useRange && (dateFrom || dateTo) ? rangeLabel : 'Tout'}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Tables</span>
+                        <div className="flex gap-1">
+                          <Badge variant="outline" className="text-[9px]">readings</Badge>
+                          <Badge variant="outline" className="text-[9px]">agg_15m</Badge>
+                          <Badge variant="outline" className="text-[9px]">agg_daily</Badge>
+                        </div>
+                      </div>
+                    </div>
+
+                    <Button
+                      variant="destructive"
+                      className="w-full h-10"
+                      onClick={() => { setResult(null); setConfirmOpen(true); }}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Purger {selectedPointIds.size} point{selectedPointIds.size > 1 ? 's' : ''}
+                    </Button>
+                  </CardContent>
+                </Card>
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══════════════════════════════════════════════════════
+          RESULT SUMMARY
+          ═══════════════════════════════════════════════════════ */}
+      {result && (
+        <Card className="border-emerald-200 bg-emerald-50/50 animate-fade-in">
+          <CardContent className="pt-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <CheckCircle2 className="w-5 h-5 text-emerald-600 mt-0.5 shrink-0" />
+              <div className="flex-1">
+                <div className="font-semibold text-emerald-800">
+                  Purge effectuée — {result.points_purged} point{result.points_purged > 1 ? 's' : ''}
+                </div>
+                <div className="text-xs text-emerald-700/70 mt-0.5">
+                  {result.range.from ? new Date(result.range.from).toLocaleString('fr-FR') : '∞'}
+                  {' → '}
+                  {result.range.to ? new Date(result.range.to).toLocaleString('fr-FR') : '∞'}
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3">
+              <div className="p-3 rounded-lg bg-white border text-center">
+                <div className="text-[10px] text-muted-foreground">Readings</div>
+                <div className="text-xl font-bold text-emerald-700">{result.totals.readings.toLocaleString()}</div>
+              </div>
+              <div className="p-3 rounded-lg bg-white border text-center">
+                <div className="text-[10px] text-muted-foreground">Agg 15min</div>
+                <div className="text-xl font-bold text-emerald-700">{result.totals.agg_15m.toLocaleString()}</div>
+              </div>
+              <div className="p-3 rounded-lg bg-white border text-center">
+                <div className="text-[10px] text-muted-foreground">Agg Daily</div>
+                <div className="text-xl font-bold text-emerald-700">{result.totals.agg_daily.toLocaleString()}</div>
+              </div>
+            </div>
+
+            {result.details.length > 1 && (
+              <div className="pt-3 border-t">
+                <div className="text-xs font-semibold text-muted-foreground mb-2">Détail par point</div>
+                <div className="space-y-1 text-xs max-h-40 overflow-y-auto">
+                  {result.details.map(d => (
+                    <div key={d.point_id} className="flex justify-between text-muted-foreground">
+                      <span className="truncate max-w-[60%]">{d.point_name}</span>
+                      <span className="tabular-nums">
+                        {d.deleted.readings.toLocaleString()} readings / {d.deleted.agg_15m} 15m / {d.deleted.agg_daily} daily
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
 
-      {/* Confirmation Dialog */}
+      {/* ═══════════════════════════════════════════════════════
+          CONFIRM DIALOG
+          ═══════════════════════════════════════════════════════ */}
       <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-red-600">
-              <AlertTriangle className="w-5 h-5" /> Confirmer la suppression en masse
+              <AlertTriangle className="w-5 h-5" /> Confirmer la suppression
             </DialogTitle>
             <DialogDescription>
               Cette action est irréversible. Les données supprimées ne pourront pas être récupérées.
             </DialogDescription>
           </DialogHeader>
 
-          <div className="space-y-3 py-4">
-            <div className="rounded-lg border p-3 space-y-2 text-sm">
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Points à nettoyer</span>
-                <span className="font-semibold">{selectedPointIds.size}</span>
+          <div className="space-y-3 py-2">
+            <div className="rounded-xl border p-4 space-y-2.5 text-sm bg-muted/30">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Points</span>
+                <span className="font-bold">{selectedPointIds.size}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Plage</span>
-                <span className="font-semibold text-xs">{rangeLabel}</span>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Terrain</span>
+                <span className="font-medium">{terrain?.name}</span>
               </div>
-              <div className="flex items-center justify-between">
-                <span className="text-muted-foreground">Tables</span>
-                <div className="flex gap-1">
-                  <Badge variant="outline" className="text-[9px]">readings</Badge>
-                  <Badge variant="outline" className="text-[9px]">agg_15m</Badge>
-                  <Badge variant="outline" className="text-[9px]">agg_daily</Badge>
-                </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Période</span>
+                <span className="font-medium text-xs">{rangeLabel}</span>
               </div>
             </div>
 
-            {!dateFrom && !dateTo && (
-              <div className="flex items-start gap-2 p-2 rounded bg-red-50 border border-red-200 text-red-700 text-xs">
-                <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" />
-                <span><strong>Attention:</strong> Aucune plage définie — <strong>TOUTES</strong> les mesures de ces points seront supprimées.</span>
+            {/* Selected points list preview */}
+            <div className="max-h-32 overflow-y-auto text-xs text-muted-foreground space-y-1 border rounded-lg p-2">
+              {Array.from(selectedPointIds).map(id => {
+                const p = points.find(pp => pp.id === id);
+                return <div key={id} className="truncate">{p?.name ?? id}</div>;
+              })}
+            </div>
+
+            {!useRange && (
+              <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+                <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+                <span><strong>Attention:</strong> TOUTES les mesures historiques seront supprimées définitivement.</span>
               </div>
             )}
           </div>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={purging}>
-              Annuler
-            </Button>
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={purging}>Annuler</Button>
             <Button variant="destructive" onClick={handlePurge} disabled={purging}>
               {purging ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
-              Confirmer la suppression
+              Confirmer
             </Button>
           </DialogFooter>
         </DialogContent>

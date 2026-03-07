@@ -14,7 +14,7 @@ import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import api from '@/lib/api';
 import {
   Activity, Zap, Gauge, Thermometer, ArrowLeft, Download, Loader2,
-  AlertTriangle, CheckCircle2, Trash2,
+  AlertTriangle, CheckCircle2,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
@@ -36,11 +36,7 @@ export default function PointDetails() {
   const { selectedTerrainId } = useAppContext();
   const [tab, setTab] = useState('overview');
   const [range, setRange] = useState<'1D' | '7D' | '1M'>('1D');
-  const [purgeOpen, setPurgeOpen] = useState(false);
-  const [purgeFrom, setPurgeFrom] = useState('');
-  const [purgeTo, setPurgeTo] = useState('');
-  const [purging, setPurging] = useState(false);
-  const [purgeResult, setPurgeResult] = useState<{ readings: number; agg_15m: number; agg_daily: number } | null>(null);
+
 
   const now = useMemo(() => new Date(), []);
   const rangeMs = range === '1D' ? 86400_000 : range === '7D' ? 7 * 86400_000 : 30 * 86400_000;
@@ -109,23 +105,7 @@ export default function PointDetails() {
     return list;
   }, [latest]);
 
-  // ─── Purge readings
-  const handlePurge = async () => {
-    if (!pointId) return;
-    const confirmMsg = purgeFrom || purgeTo
-      ? `Supprimer les mesures${purgeFrom ? ` du ${purgeFrom}` : ''}${purgeTo ? ` au ${purgeTo}` : ''} ?`
-      : 'Supprimer TOUTES les mesures de ce point ?';
-    if (!window.confirm(confirmMsg)) return;
-    setPurging(true);
-    try {
-      const res = await api.purgeReadings(pointId, purgeFrom || undefined, purgeTo || undefined);
-      setPurgeResult(res.deleted);
-    } catch (e: any) {
-      alert('Erreur: ' + (e.message || 'Échec de la suppression'));
-    } finally {
-      setPurging(false);
-    }
-  };
+
 
   // ─── CSV export
   const exportCsv = () => {
@@ -175,7 +155,6 @@ export default function PointDetails() {
               ))}
             </div>
             <Button variant="outline" size="sm" onClick={exportCsv}><Download className="w-4 h-4 mr-1" />CSV</Button>
-            <Button variant="destructive" size="sm" onClick={() => { setPurgeResult(null); setPurgeOpen(true); }}><Trash2 className="w-4 h-4 mr-1" />Purger</Button>
           </div>
         }
       />
@@ -474,46 +453,6 @@ export default function PointDetails() {
         </TabsContent>
       </Tabs>
 
-      {/* Purge dialog */}
-      <Dialog open={purgeOpen} onOpenChange={setPurgeOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-red-600">
-              <Trash2 className="w-5 h-5" /> Purger les mesures
-            </DialogTitle>
-            <DialogDescription>
-              Supprime les lectures (acrel_readings), agrégations 15min et journalières pour ce point.
-              Laissez les dates vides pour tout supprimer.
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-3">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Date début (optionnel)</label>
-              <Input type="datetime-local" value={purgeFrom} onChange={e => setPurgeFrom(e.target.value)} />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground">Date fin (optionnel)</label>
-              <Input type="datetime-local" value={purgeTo} onChange={e => setPurgeTo(e.target.value)} />
-            </div>
-          </div>
-
-          {purgeResult && (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-sm space-y-1">
-              <div className="font-medium text-emerald-800">Suppression effectuée</div>
-              <div className="text-emerald-700">Readings: {purgeResult.readings} — Agg 15m: {purgeResult.agg_15m} — Agg daily: {purgeResult.agg_daily}</div>
-            </div>
-          )}
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setPurgeOpen(false)}>Annuler</Button>
-            <Button variant="destructive" onClick={handlePurge} disabled={purging}>
-              {purging ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Trash2 className="w-4 h-4 mr-1" />}
-              {purgeFrom || purgeTo ? 'Supprimer la plage' : 'Tout supprimer'}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
