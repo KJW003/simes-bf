@@ -159,18 +159,20 @@ async function runProcessHistoricalMessages(payload = {}) {
       };
     }
 
-    const baseUrl = process.env.API_CORE_BASE_URL || "http://localhost:3000";
+    const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     const results = [];
     let processed = 0;
     let failed = 0;
 
     for (const msg of msgs.rows) {
       const payload_raw = msg.payload_raw || {};
-      const time = payload_raw.time || msg.received_at;
+      // IMPORTANT: Use the original message arrival time, NOT current time
+      // This ensures historical messages keep their original timestamps
+      const msgTime = payload_raw.time ? new Date(payload_raw.time).toISOString() : new Date(msg.received_at).toISOString();
 
       // Build ingestion payload
       const ingestPayload = {
-        time,
+        time: msgTime,
         terrain_id,
         source: payload_raw.source ?? {},
         devices: [
@@ -187,7 +189,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       };
 
       try {
-        const resp = await fetch(`${baseUrl}/ingest/acrel`, {
+        const resp = await fetch(`${ingestServiceUrl}/acrel`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(ingestPayload),

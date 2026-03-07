@@ -266,11 +266,13 @@ router.post("/admin/incoming/:id/replay", requireAuth, async (req, res) => {
     if (!pointId) return res.status(409).json({ ok: false, error: "device not mapped to measurement_point yet" });
 
     const payload = row.payload_raw || {};
-    const time = payload.time || row.received_at;
+    // IMPORTANT: Use the original message arrival time, NOT current time
+    // This ensures historical messages keep their original timestamps
+    const msgTime = payload.time ? new Date(payload.time).toISOString() : new Date(row.received_at).toISOString();
 
     // Build ingestion payload in multi-device format expected by /ingest/acrel
     const ingestPayload = {
-      time,
+      time: msgTime,
       terrain_id: terrainId,
       source: payload.source ?? {},
       devices: [
@@ -287,8 +289,8 @@ router.post("/admin/incoming/:id/replay", requireAuth, async (req, res) => {
     };
 
     // Call the ingestion endpoint
-    const baseUrl = process.env.API_CORE_BASE_URL || "http://localhost:3000";
-    const resp = await fetch(`${baseUrl}/ingest/acrel`, {
+    const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
+    const resp = await fetch(`${ingestServiceUrl}/acrel`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(ingestPayload),
@@ -360,18 +362,20 @@ router.post("/admin/devices/:terrain_id/:device_key/process-historical", require
     }
     const gatewayId = gw.rows[0].gateway_id;
 
-    const baseUrl = process.env.API_CORE_BASE_URL || "http://localhost:3000";
+    const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     const results = [];
     let processed = 0;
     let failed = 0;
 
     for (const msg of msgs.rows) {
       const payload = msg.payload_raw || {};
-      const time = payload.time || msg.received_at;
+      // IMPORTANT: Use the original message arrival time, NOT current time
+      // This ensures historical messages keep their original timestamps
+      const msgTime = payload.time ? new Date(payload.time).toISOString() : new Date(msg.received_at).toISOString();
 
       // Build ingestion payload
       const ingestPayload = {
-        time,
+        time: msgTime,
         terrain_id: terrainId,
         source: payload.source ?? {},
         devices: [
@@ -388,7 +392,7 @@ router.post("/admin/devices/:terrain_id/:device_key/process-historical", require
       };
 
       try {
-        const resp = await fetch(`${baseUrl}/ingest/acrel`, {
+        const resp = await fetch(`${ingestServiceUrl}/acrel`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(ingestPayload),
