@@ -4,11 +4,9 @@ import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
-import { cn } from '@/lib/utils';
 import {
   Activity, Zap, Gauge, Thermometer, ArrowLeft, Download, Loader2,
   AlertTriangle, CheckCircle2,

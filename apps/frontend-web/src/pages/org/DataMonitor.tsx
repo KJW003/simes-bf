@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Map, Zap, Activity, Gauge, ChevronRight, Loader2, Radio } from 'lucide-react';
+import { Map as MapIcon, Zap, Activity, Gauge, ChevronRight, Loader2, Radio } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTerrainOverview, useZones } from '@/hooks/useApi';
 
@@ -77,7 +77,7 @@ export default function DataMonitor() {
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
         <KpiCard label="Points de mesure" value={points.length} icon={<Radio className="w-4 h-4" />} />
-        <KpiCard label="Zones" value={zones.length} icon={<Map className="w-4 h-4" />} />
+        <KpiCard label="Zones" value={zones.length} icon={<MapIcon className="w-4 h-4" />} />
         <KpiCard label="Puissance totale" value={fmt(totalPower, 1) + ' kW'} icon={<Zap className="w-4 h-4" />} />
         <KpiCard label="PF moyen" value={(() => {
           const pfs = points.map(p => (p.readings as any)?.power_factor_total).filter((v: any) => v != null).map(Number);
@@ -90,7 +90,7 @@ export default function DataMonitor() {
         <Card key={String(zone.id)}>
           <CardHeader className="pb-2 flex-row items-center justify-between">
             <CardTitle className="text-base font-medium flex items-center gap-2">
-              <Map className="w-4 h-4 text-primary" />
+              <MapIcon className="w-4 h-4 text-primary" />
               {String(zone.name)}
               <Badge variant="outline" className="text-[10px] ml-1">{zonePoints.length} points</Badge>
             </CardTitle>
@@ -194,7 +194,7 @@ export default function DataMonitor() {
       {zones.length === 0 && points.length === 0 && (
         <Card className="border-dashed">
           <CardContent className="py-8 flex flex-col items-center text-center space-y-2">
-            <Map className="w-6 h-6 text-muted-foreground" />
+            <MapIcon className="w-6 h-6 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">Aucune zone ni point configuré pour ce terrain.</p>
           </CardContent>
         </Card>
