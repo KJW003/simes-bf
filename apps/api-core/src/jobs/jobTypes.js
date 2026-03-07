@@ -5,4 +5,5 @@ module.exports = {
   ROI: "roi",
   REPORT: "report",
   AGGREGATE: "telemetry.aggregate",
+  PROCESS_HISTORICAL_MESSAGES: "telemetry.process_historical_messages",
 };

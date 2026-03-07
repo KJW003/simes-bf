@@ -399,6 +399,9 @@ export const api = {
 
   // ── Pipeline Health ──
   getPipelineHealth: () => request<{ ok: boolean; components: any[]; checked_at: string }>('/health/pipeline'),
+
+  /** Base URL for raw fetch calls (e.g. file downloads) */
+  baseURL: BASE,
 };
 
 export default api;

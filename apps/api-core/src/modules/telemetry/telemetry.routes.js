@@ -2,6 +2,14 @@ const express = require("express");
 const router = express.Router();
 const { corePool, telemetryPool } = require("../../config/db");
 
+// Try to require Excel library for report exports
+let ExcelJS;
+try {
+  ExcelJS = require("exceljs");
+} catch (e) {
+  console.warn("[telemetry-routes] ExcelJS not available, Excel export will not work. Install with: npm install exceljs");
+}
+
 // ─── Shared Acrel column list (DRY) ────────────────────────
 const ACREL_METRIC_COLS = [
   "voltage_a", "voltage_b", "voltage_c", "voltage_ab", "voltage_bc", "voltage_ca",
@@ -252,6 +260,103 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
     });
   } catch (e) {
     console.error("[telemetry/overview]", e.message, e.stack);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── Point Report Export (Excel) ────────────────────────────
+// GET /reports/point/:pointId/excel
+// Exports all acrel_readings for a measurement point to Excel
+router.get("/reports/point/:pointId/excel", async (req, res) => {
+  try {
+    if (!ExcelJS) {
+      return res.status(503).json({
+        ok: false,
+        error: "Excel export not available. Install exceljs: npm install exceljs"
+      });
+    }
+
+    const { pointId } = req.params;
+    const limit = parseInt(req.query.limit) || 1000; // max records to export
+    const days = parseInt(req.query.days) || 30; // default last 30 days
+
+    // Get point details
+    const ptRes = await corePool.query(
+      `SELECT id, name, measure_category, terrain_id FROM measurement_points WHERE id = $1`,
+      [pointId]
+    );
+    if (!ptRes.rows.length) {
+      return res.status(404).json({ ok: false, error: "measurement_point not found" });
+    }
+    const point = ptRes.rows[0];
+
+    // Fetch acrel_readings for this point (last N days, sorted newest first)
+    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const sqlReadings = `
+      SELECT ${ACREL_COLS_SQL}, time, point_id
+      FROM acrel_readings
+      WHERE point_id = $1 AND time >= $2
+      ORDER BY time DESC
+      LIMIT $3
+    `;
+    const readings = await telemetryPool.query(sqlReadings, [pointId, fromTime, limit]);
+
+    if (!readings.rows.length) {
+      return res.json({
+        ok: true,
+        message: "No readings found for this point in the specified time range",
+        point_id: pointId,
+        days
+      });
+    }
+
+    // Create workbook & worksheet
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet("Readings");
+
+    // Header row with point info
+    const infoRow = sheet.addRow([
+      `Measurement Point: ${point.name}`,
+      `Category: ${point.measure_category}`,
+      `Records: ${readings.rows.length}`,
+      `Period: last ${days} days`
+    ]);
+    infoRow.font = { bold: true, size: 12 };
+    infoRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0E0E0" } };
+
+    // Empty row
+    sheet.addRow([]);
+
+    // Column headers (all acrel fields)
+    const headers = ["Time", ...ACREL_METRIC_COLS];
+    const headerRow = sheet.addRow(headers);
+    headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } };
+
+    // Data rows
+    for (const row of readings.rows) {
+      const values = [
+        row.time ? new Date(row.time).toISOString() : "",
+        ...ACREL_METRIC_COLS.map(col => Number(row[col]) || null),
+      ];
+      sheet.addRow(values);
+    }
+
+    // Adjust column widths
+    sheet.columns.forEach((col, idx) => {
+      col.width = idx === 0 ? 25 : 14; // Time column wider, others fixed
+    });
+
+    // Set file response
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="simes-point-${point.id}-${new Date().toISOString().slice(0, 10)}.xlsx"`
+    );
+
+    await workbook.xlsx.write(res);
+  } catch (e) {
+    console.error("[telemetry/reports/point/excel]", e.message, e.stack);
     res.status(500).json({ ok: false, error: e.message });
   }
 });

@@ -971,9 +971,21 @@ export function WidgetBoard() {
                         <div>
                           <div className="text-sm font-medium">{def.title}</div>
                           <div className="text-xs text-muted-foreground">
-                            {item.config.dataSource.type === 'POINT' ? 'Point' :
-                             item.config.dataSource.type === 'CATEGORY_AGG' ? (ENERGY_SOURCE_LABELS[item.config.dataSource.categoryFilter as keyof typeof ENERGY_SOURCE_LABELS] ?? 'Catégorie') :
-                             item.config.dataSource.type === 'ZONE_AGG' ? 'Zone' : 'Terrain'} · {sizeLabelMap[item.size]}
+                            {(() => {
+                              const ds = item.config.dataSource;
+                              if (ds.type === 'POINT') {
+                                const pt = resolverCtx.points?.find(p => String(p.id) === ds.refId);
+                                return pt ? String(pt.name) : 'Point';
+                              }
+                              if (ds.type === 'CATEGORY_AGG') {
+                                return ENERGY_SOURCE_LABELS[ds.categoryFilter as keyof typeof ENERGY_SOURCE_LABELS] ?? 'Catégorie';
+                              }
+                              if (ds.type === 'ZONE_AGG') {
+                                const z = resolverCtx.zones?.find(z => String(z.id) === ds.refId);
+                                return z ? `Zone : ${String(z.name)}` : 'Zone';
+                              }
+                              return 'Terrain';
+                            })()} · {sizeLabelMap[item.size]}
                           </div>
                         </div>
                       </div>

@@ -377,6 +377,15 @@ export function useUpdateZone() {
   });
 }
 
+export function useCreateZone() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ terrainId, name, description }: { terrainId: string; name: string; description?: string }) =>
+      api.createZone(terrainId, name, description),
+    onSuccess: (_d, vars) => { qc.invalidateQueries({ queryKey: ['zones', vars.terrainId] }); },
+  });
+}
+
 export function useDeleteZone() {
   const qc = useQueryClient();
   return useMutation({

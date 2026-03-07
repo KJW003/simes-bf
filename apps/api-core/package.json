@@ -16,6 +16,7 @@
     "bullmq": "^5.69.3",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
+    "exceljs": "^4.4.0",
     "express": "^5.2.1",
     "ioredis": "^5.9.3",
     "jsonwebtoken": "^9.0.3",

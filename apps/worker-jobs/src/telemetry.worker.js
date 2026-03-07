@@ -121,6 +121,113 @@ async function runAggregate(payload = {}) {
   };
 }
 
+async function runProcessHistoricalMessages(payload = {}) {
+  // Fetch all incoming_messages for a newly-mapped device and replay them to /ingest/acrel
+  const { device_key, terrain_id, point_id } = payload;
+  if (!device_key || !terrain_id || !point_id) {
+    return { ok: false, error: "device_key, terrain_id, and point_id required" };
+  }
+
+  // Import corePool locally within the worker context (or use shared db)
+  // For now, assume we have access via the worker context
+  // In a production setup, you'd want to pass the coreDb connection
+  let corePool;
+  try {
+    corePool = require("../../../apps/api-core/src/config/db").corePool;
+  } catch (e) {
+    return { ok: false, error: "cannot connect to core database" };
+  }
+
+  try {
+    // Find all incoming_messages for this device
+    const msgs = await corePool.query(
+      `SELECT id, received_at, payload_raw, modbus_addr, dev_eui
+       FROM incoming_messages
+       WHERE device_key = $1
+         AND (status = 'mapped' OR status = 'unmapped')
+         AND payload_raw IS NOT NULL
+       ORDER BY received_at ASC`,
+      [device_key]
+    );
+
+    if (!msgs.rows.length) {
+      return {
+        ok: true,
+        message: "No messages to process",
+        device_key, terrain_id, point_id,
+        processed: 0,
+      };
+    }
+
+    const baseUrl = process.env.API_CORE_BASE_URL || "http://localhost:3000";
+    const results = [];
+    let processed = 0;
+    let failed = 0;
+
+    for (const msg of msgs.rows) {
+      const payload_raw = msg.payload_raw || {};
+      const time = payload_raw.time || msg.received_at;
+
+      // Build ingestion payload
+      const ingestPayload = {
+        time,
+        terrain_id,
+        source: payload_raw.source ?? {},
+        devices: [
+          {
+            device: {
+              modbus_addr: msg.modbus_addr ?? payload_raw?.device?.modbus_addr ?? null,
+              lora_dev_eui: msg.dev_eui ?? payload_raw?.device?.lora_dev_eui ?? null,
+              rssi_lora: payload_raw?.device?.rssi_lora ?? null,
+            },
+            metrics: payload_raw.metrics ?? {},
+            raw: payload_raw,
+          },
+        ],
+      };
+
+      try {
+        const resp = await fetch(`${baseUrl}/ingest/acrel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ingestPayload),
+          timeout: 10000,
+        });
+
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          failed++;
+          results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
+          continue;
+        }
+
+        // Mark message as mapped
+        await corePool.query(
+          `UPDATE incoming_messages
+           SET status = 'mapped', mapped_terrain_id = $2, mapped_point_id = $3
+           WHERE id = $1`,
+          [msg.id, terrain_id, point_id]
+        ).catch(() => {});
+
+        processed++;
+        results.push({ message_id: msg.id, ok: true, ingested: true });
+      } catch (e) {
+        failed++;
+        results.push({ message_id: msg.id, ok: false, error: e.message });
+      }
+    }
+
+    return {
+      ok: true,
+      device_key, terrain_id, point_id,
+      summary: { total: msgs.rows.length, processed, failed },
+      results: results.slice(0, 20), // Return first 20 to avoid huge response
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 new Worker(
   "telemetry",
   async (job) => {
@@ -167,6 +274,22 @@ new Worker(
         if (runId) {
           await insertJobResult(runId, job.name, summary);
           await setRunStatus(runId, "success", {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.process_historical_messages: replay unmapped/buffered messages ──
+      if (job.name === "telemetry.process_historical_messages") {
+        const summary = await runProcessHistoricalMessages(payload);
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          const status = summary.ok ? "success" : "failed";
+          await setRunStatus(runId, status, {
             finished_at: new Date().toISOString(),
             result: summary
           });

@@ -6,9 +6,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Map as MapIcon, Zap, Activity, Gauge, ChevronRight, Loader2, Radio } from 'lucide-react';
-import { cn } from '@/lib/utils';
-import { useTerrainOverview, useZones } from '@/hooks/useApi';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Map as MapIcon, Zap, Activity, Gauge, ChevronRight, Loader2, Radio, Plus, Pencil, Trash2 } from 'lucide-react';
+import { useTerrainOverview, useZones, useCreateZone, useUpdateZone, useDeleteZone } from '@/hooks/useApi';
+import api from '@/lib/api';
 
 const fmt = (v: any, decimals = 2) => v != null && v !== '' ? Number(v).toFixed(decimals) : '—';
 
@@ -18,6 +21,20 @@ export default function DataMonitor() {
 
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(terrainId);
   const { data: zonesData, isLoading: loadZ } = useZones(terrainId);
+
+  const createZone = useCreateZone();
+  const updateZone = useUpdateZone();
+  const deleteZone = useDeleteZone();
+
+  // Zone CRUD dialog state
+  const [zoneDialogOpen, setZoneDialogOpen] = useState(false);
+  const [editingZone, setEditingZone] = useState<Record<string, any> | null>(null);
+  const [zoneName, setZoneName] = useState('');
+  const [zoneDesc, setZoneDesc] = useState('');
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  // Assign-to-zone state
+  const [assigningPointId, setAssigningPointId] = useState<string | null>(null);
+  const [assignTargetZone, setAssignTargetZone] = useState<string>('');
 
   const points = useMemo(() => (overviewData?.points ?? []) as Array<Record<string, any>>, [overviewData]);
   const zones = useMemo(() => (zonesData ?? []) as Array<Record<string, any>>, [zonesData]);
@@ -70,7 +87,12 @@ export default function DataMonitor() {
         title={"Terrain — " + (selectedTerrain?.name ?? '')}
         description={"Concentrateur " + (selectedTerrain?.gatewayId ?? '—')}
         actions={
-          <Link to="/points"><Button variant="outline" size="sm"><Activity className="w-4 h-4 mr-1" />Tous les points</Button></Link>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" onClick={() => { setEditingZone(null); setZoneName(''); setZoneDesc(''); setZoneDialogOpen(true); }}>
+              <Plus className="w-4 h-4 mr-1" />Créer une zone
+            </Button>
+            <Link to="/points"><Button variant="outline" size="sm"><Activity className="w-4 h-4 mr-1" />Tous les points</Button></Link>
+          </div>
         }
       />
 
@@ -94,55 +116,30 @@ export default function DataMonitor() {
               {String(zone.name)}
               <Badge variant="outline" className="text-[10px] ml-1">{zonePoints.length} points</Badge>
             </CardTitle>
-            <Link to={`/terrain/${terrainId}/zones/${zone.id}`}>
-              <Button variant="ghost" size="sm">Voir zone <ChevronRight className="w-4 h-4 ml-1" /></Button>
-            </Link>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => {
+                setEditingZone(zone);
+                setZoneName(String(zone.name));
+                setZoneDesc(String(zone.description ?? ''));
+                setZoneDialogOpen(true);
+              }}><Pencil className="w-3.5 h-3.5" /></Button>
+              <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => setDeleteConfirmId(String(zone.id))}>
+                <Trash2 className="w-3.5 h-3.5" />
+              </Button>
+              <Link to={`/terrain/${terrainId}/zones/${zone.id}`}>
+                <Button variant="ghost" size="sm">Voir zone <ChevronRight className="w-4 h-4 ml-1" /></Button>
+              </Link>
+            </div>
           </CardHeader>
-          <CardContent>
-            {zonePoints.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Aucun point assigné à cette zone</p>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="data-table text-xs w-full">
-                  <thead>
-                    <tr>
-                      <th className="py-2 px-2">Point</th>
-                      <th className="py-2 px-2">Catégorie</th>
-                      <th className="py-2 px-2 text-right">P (kW)</th>
-                      <th className="py-2 px-2 text-right">PF</th>
-                      <th className="py-2 px-2 text-right">Va (V)</th>
-                      <th className="py-2 px-2 text-right">Ia (A)</th>
-                      <th className="py-2 px-2 text-right">E imp (kWh)</th>
-                      <th className="py-2 px-2"></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {zonePoints.map(p => {
-                      const r = p.readings as Record<string, any> | undefined;
-                      return (
-                        <tr key={String(p.id)} className="hover:bg-muted/30 transition-colors">
-                          <td className="py-1.5 px-2 font-medium">{String(p.name)}</td>
-                          <td className="py-1.5 px-2"><Badge variant="outline" className="text-[9px]">{String(p.measure_category ?? '—')}</Badge></td>
-                          <td className="py-1.5 px-2 text-right mono">{fmt(r?.active_power_total)}</td>
-                          <td className={cn('py-1.5 px-2 text-right mono', r?.power_factor_total != null && Number(r.power_factor_total) < 0.85 && 'text-amber-600 font-medium')}>{fmt(r?.power_factor_total, 3)}</td>
-                          <td className="py-1.5 px-2 text-right mono">{fmt(r?.voltage_a, 1)}</td>
-                          <td className="py-1.5 px-2 text-right mono">{fmt(r?.current_a, 2)}</td>
-                          <td className="py-1.5 px-2 text-right mono">{fmt(r?.energy_import, 1)}</td>
-                          <td className="py-1.5 px-2">
-                            <Link to={`/points/${p.id}`}><Button variant="ghost" size="sm" className="h-6 text-xs">Détail</Button></Link>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
+          {zone.description && (
+            <CardContent className="pt-0 pb-3">
+              <p className="text-xs text-muted-foreground">{String(zone.description)}</p>
+            </CardContent>
+          )}
         </Card>
       ))}
 
-      {/* Unassigned points */}
+      {/* Unassigned points — simplified list with assign action */}
       {zoneMap.unassigned.length > 0 && (
         <Card className="border-dashed">
           <CardHeader className="pb-2">
@@ -153,38 +150,45 @@ export default function DataMonitor() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="overflow-x-auto">
-              <table className="data-table text-xs w-full">
-                <thead>
-                  <tr>
-                    <th className="py-2 px-2">Point</th>
-                    <th className="py-2 px-2">Catégorie</th>
-                    <th className="py-2 px-2 text-right">P (kW)</th>
-                    <th className="py-2 px-2 text-right">PF</th>
-                    <th className="py-2 px-2 text-right">Va (V)</th>
-                    <th className="py-2 px-2 text-right">Ia (A)</th>
-                    <th className="py-2 px-2"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {zoneMap.unassigned.map(p => {
-                    const r = p.readings as Record<string, any> | undefined;
-                    return (
-                      <tr key={String(p.id)} className="hover:bg-muted/30 transition-colors">
-                        <td className="py-1.5 px-2 font-medium">{String(p.name)}</td>
-                        <td className="py-1.5 px-2"><Badge variant="outline" className="text-[9px]">{String(p.measure_category ?? '—')}</Badge></td>
-                        <td className="py-1.5 px-2 text-right mono">{fmt(r?.active_power_total)}</td>
-                        <td className={cn('py-1.5 px-2 text-right mono', r?.power_factor_total != null && Number(r.power_factor_total) < 0.85 && 'text-amber-600 font-medium')}>{fmt(r?.power_factor_total, 3)}</td>
-                        <td className="py-1.5 px-2 text-right mono">{fmt(r?.voltage_a, 1)}</td>
-                        <td className="py-1.5 px-2 text-right mono">{fmt(r?.current_a, 2)}</td>
-                        <td className="py-1.5 px-2">
-                          <Link to={`/points/${p.id}`}><Button variant="ghost" size="sm" className="h-6 text-xs">Détail</Button></Link>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="space-y-1">
+              {zoneMap.unassigned.map(p => (
+                <div key={String(p.id)} className="flex items-center justify-between py-1.5 px-2 rounded hover:bg-muted/30 transition-colors text-sm">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium">{String(p.name)}</span>
+                    <Badge variant="outline" className="text-[9px]">{String(p.measure_category ?? '—')}</Badge>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    {zones.length > 0 && (
+                      assigningPointId === String(p.id) ? (
+                        <div className="flex items-center gap-1">
+                          <Select value={assignTargetZone} onValueChange={setAssignTargetZone}>
+                            <SelectTrigger className="h-7 text-xs w-[140px]">
+                              <SelectValue placeholder="Zone…" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {zones.map(z => (
+                                <SelectItem key={String(z.id)} value={String(z.id)}>{String(z.name)}</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button size="sm" className="h-7 text-xs" disabled={!assignTargetZone} onClick={async () => {
+                            await api.assignZone(String(p.id), assignTargetZone);
+                            setAssigningPointId(null);
+                            setAssignTargetZone('');
+                            window.location.reload();
+                          }}>OK</Button>
+                          <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setAssigningPointId(null); setAssignTargetZone(''); }}>✕</Button>
+                        </div>
+                      ) : (
+                        <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setAssigningPointId(String(p.id))}>
+                          Assigner
+                        </Button>
+                      )
+                    )}
+                    <Link to={`/points/${p.id}`}><Button variant="ghost" size="sm" className="h-6 text-xs">Détail</Button></Link>
+                  </div>
+                </div>
+              ))}
             </div>
           </CardContent>
         </Card>
@@ -196,9 +200,55 @@ export default function DataMonitor() {
           <CardContent className="py-8 flex flex-col items-center text-center space-y-2">
             <MapIcon className="w-6 h-6 text-muted-foreground" />
             <p className="text-sm text-muted-foreground">Aucune zone ni point configuré pour ce terrain.</p>
+            <Button variant="outline" size="sm" onClick={() => { setEditingZone(null); setZoneName(''); setZoneDesc(''); setZoneDialogOpen(true); }}>
+              <Plus className="w-4 h-4 mr-1" />Créer une zone
+            </Button>
           </CardContent>
         </Card>
       )}
+
+      {/* Create / Edit zone dialog */}
+      <Dialog open={zoneDialogOpen} onOpenChange={setZoneDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{editingZone ? 'Modifier la zone' : 'Créer une zone'}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <Input placeholder="Nom de la zone" value={zoneName} onChange={e => setZoneName(e.target.value)} />
+            <Input placeholder="Description (optionnel)" value={zoneDesc} onChange={e => setZoneDesc(e.target.value)} />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setZoneDialogOpen(false)}>Annuler</Button>
+            <Button disabled={!zoneName.trim() || createZone.isPending || updateZone.isPending} onClick={async () => {
+              if (editingZone) {
+                await updateZone.mutateAsync({ zoneId: String(editingZone.id), name: zoneName.trim(), description: zoneDesc.trim() || undefined });
+              } else {
+                await createZone.mutateAsync({ terrainId: terrainId!, name: zoneName.trim(), description: zoneDesc.trim() || undefined });
+              }
+              setZoneDialogOpen(false);
+            }}>
+              {editingZone ? 'Enregistrer' : 'Créer'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete zone confirmation dialog */}
+      <Dialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Supprimer la zone ?</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Les points de mesure assignés à cette zone seront désassignés mais pas supprimés.</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Annuler</Button>
+            <Button variant="destructive" disabled={deleteZone.isPending} onClick={async () => {
+              await deleteZone.mutateAsync(deleteConfirmId!);
+              setDeleteConfirmId(null);
+            }}>Supprimer</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -3,6 +3,8 @@ const router = express.Router();
 const {corePool} = require("../../config/db");
 const { makeDeviceKey } = require("../../shared/acrel");
 const { requireAuth } = require("../../shared/auth-middleware");
+const { telemetryQueue } = require("../../jobs/queues");
+const JobTypes = require("../../jobs/jobTypes");
 
 // 1) Inject a fake "MQTT" message (for tomorrow tests / UI dev)
 router.post("/admin/incoming/sandbox", requireAuth, async (req, res) => {
@@ -215,6 +217,18 @@ router.put("/admin/devices/:deviceKey/map", requireAuth, async (req, res) => {
       [deviceKey, point_id, terrain_id]
     );
 
+    // Enqueue job to process historical messages for this device
+    try {
+      await telemetryQueue.add(
+        JobTypes.PROCESS_HISTORICAL_MESSAGES,
+        { device_key: deviceKey, terrain_id, point_id },
+        { attempts: 1 }
+      );
+    } catch (jobErr) {
+      console.warn("Failed to enqueue PROCESS_HISTORICAL_MESSAGES job:", jobErr);
+      // Don't fail the entire request if job enqueue fails
+    }
+
     res.json({ ok: true, device: up.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -292,6 +306,125 @@ router.post("/admin/incoming/:id/replay", requireAuth, async (req, res) => {
     );
 
     res.json({ ok: true, replayed: true, ingest: data });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 5b) Process historical messages: replay all incoming_messages for a mapped device
+// POST /admin/devices/:terrain_id/:device_key/process-historical
+// Transforms unmapped/buffered messages into acrel_readings after device is mapped
+router.post("/admin/devices/:terrain_id/:device_key/process-historical", requireAuth, async (req, res) => {
+  try {
+    const { terrain_id: terrainId, device_key: deviceKey } = req.params;
+
+    // Resolve point_id from device_registry
+    const deviceReg = await corePool.query(
+      `SELECT point_id FROM device_registry WHERE terrain_id = $1 AND device_key = $2`,
+      [terrainId, deviceKey]
+    );
+    if (!deviceReg.rows.length) {
+      return res.status(404).json({ ok: false, error: "device not mapped to measurement_point" });
+    }
+    const pointId = deviceReg.rows[0].point_id;
+
+    // Find all incoming_messages for this device that have a payload but weren't ingested
+    // (status='mapped' or 'unmapped' but mapped_point_id is set)
+    const msgs = await corePool.query(
+      `SELECT id, received_at, payload_raw, modbus_addr, dev_eui
+       FROM incoming_messages
+       WHERE device_key = $1
+         AND (status = 'mapped' OR (status = 'unmapped' AND mapped_point_id = $2))
+         AND payload_raw IS NOT NULL
+       ORDER BY received_at ASC`,
+      [deviceKey, pointId]
+    );
+
+    if (!msgs.rows.length) {
+      return res.json({
+        ok: true,
+        message: "No messages to process",
+        terrain_id: terrainId,
+        device_key: deviceKey,
+        processed: 0,
+      });
+    }
+
+    // Gateway must be mapped to terrain
+    const gw = await corePool.query(
+      `SELECT gateway_id FROM gateway_registry WHERE terrain_id = $1`,
+      [terrainId]
+    );
+    if (!gw.rows.length) {
+      return res.status(409).json({ ok: false, error: "gateway not mapped to terrain" });
+    }
+    const gatewayId = gw.rows[0].gateway_id;
+
+    const baseUrl = process.env.API_CORE_BASE_URL || "http://localhost:3000";
+    const results = [];
+    let processed = 0;
+    let failed = 0;
+
+    for (const msg of msgs.rows) {
+      const payload = msg.payload_raw || {};
+      const time = payload.time || msg.received_at;
+
+      // Build ingestion payload
+      const ingestPayload = {
+        time,
+        terrain_id: terrainId,
+        source: payload.source ?? {},
+        devices: [
+          {
+            device: {
+              modbus_addr: msg.modbus_addr ?? payload?.device?.modbus_addr ?? null,
+              lora_dev_eui: msg.dev_eui ?? payload?.device?.lora_dev_eui ?? null,
+              rssi_lora: payload?.device?.rssi_lora ?? null,
+            },
+            metrics: payload.metrics ?? {},
+            raw: payload,
+          },
+        ],
+      };
+
+      try {
+        const resp = await fetch(`${baseUrl}/ingest/acrel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ingestPayload),
+        });
+
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          failed++;
+          results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
+          continue;
+        }
+
+        // Mark message as mapped
+        await corePool.query(
+          `UPDATE incoming_messages
+           SET status = 'mapped', mapped_terrain_id = $2, mapped_point_id = $3
+           WHERE id = $1`,
+          [msg.id, terrainId, pointId]
+        ).catch(() => {});
+
+        processed++;
+        results.push({ message_id: msg.id, ok: true, ingested: true });
+      } catch (e) {
+        failed++;
+        results.push({ message_id: msg.id, ok: false, error: e.message });
+      }
+    }
+
+    res.json({
+      ok: true,
+      terrain_id: terrainId,
+      device_key: deviceKey,
+      point_id: pointId,
+      summary: { total: msgs.rows.length, processed, failed },
+      results: results.slice(0, 20), // Return first 20 results to avoid huge response
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
