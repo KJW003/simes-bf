@@ -128,19 +128,11 @@ async function runProcessHistoricalMessages(payload = {}) {
     return { ok: false, error: "device_key, terrain_id, and point_id required" };
   }
 
-  // Import corePool locally within the worker context (or use shared db)
-  // For now, assume we have access via the worker context
-  // In a production setup, you'd want to pass the coreDb connection
-  let corePool;
   try {
-    corePool = require("../../../apps/api-core/src/config/db").corePool;
-  } catch (e) {
-    return { ok: false, error: "cannot connect to core database" };
-  }
+    console.log(`[process-historical] Processing messages for device ${device_key} terrain ${terrain_id}`);
 
-  try {
     // Find all incoming_messages for this device
-    const msgs = await corePool.query(
+    const msgs = await db.query(
       `SELECT id, received_at, payload_raw, modbus_addr, dev_eui
        FROM incoming_messages
        WHERE device_key = $1
@@ -151,6 +143,7 @@ async function runProcessHistoricalMessages(payload = {}) {
     );
 
     if (!msgs.rows.length) {
+      console.log(`[process-historical] No messages found for device ${device_key}`);
       return {
         ok: true,
         message: "No messages to process",
@@ -159,6 +152,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       };
     }
 
+    console.log(`[process-historical] Found ${msgs.rows.length} messages to process`);
     const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     const results = [];
     let processed = 0;
@@ -167,10 +161,8 @@ async function runProcessHistoricalMessages(payload = {}) {
     for (const msg of msgs.rows) {
       const payload_raw = msg.payload_raw || {};
       // IMPORTANT: Use the original message arrival time, NOT current time
-      // This ensures historical messages keep their original timestamps
       const msgTime = payload_raw.time ? new Date(payload_raw.time).toISOString() : new Date(msg.received_at).toISOString();
 
-      // Build ingestion payload
       const ingestPayload = {
         time: msgTime,
         terrain_id,
@@ -193,157 +185,145 @@ async function runProcessHistoricalMessages(payload = {}) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(ingestPayload),
-          timeout: 10000,
         });
 
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
+          console.error(`[process-historical] Ingest failed for msg ${msg.id}: ${data.error || resp.status}`);
           failed++;
           results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
           continue;
         }
 
-        // Mark message as mapped
-        await corePool.query(
-          `UPDATE incoming_messages
-           SET status = 'mapped', mapped_terrain_id = $2, mapped_point_id = $3
-           WHERE id = $1`,
-          [msg.id, terrain_id, point_id]
-        ).catch(() => {});
+        // Mark as ingested and remove from incoming_messages
+        await db.query(`DELETE FROM incoming_messages WHERE id = $1`, [msg.id]).catch(() => {});
 
         processed++;
         results.push({ message_id: msg.id, ok: true, ingested: true });
       } catch (e) {
+        console.error(`[process-historical] Error for msg ${msg.id}: ${e.message}`);
         failed++;
         results.push({ message_id: msg.id, ok: false, error: e.message });
       }
     }
 
+    const summary = { total: msgs.rows.length, processed, failed };
+    console.log(`[process-historical] Done:`, JSON.stringify(summary));
+
     return {
       ok: true,
       device_key, terrain_id, point_id,
-      summary: { total: msgs.rows.length, processed, failed },
-      results: results.slice(0, 20), // Return first 20 to avoid huge response
+      summary,
+      results: results.slice(0, 20),
     };
   } catch (e) {
+    console.error(`[process-historical] Fatal error: ${e.message}`);
     return { ok: false, error: e.message };
   }
 }
 
+// Background cleanup: find mapped messages whose devices exist in device_registry
+// and re-send them to the ingestion service to create actual acrel_readings.
 async function runCleanupUnmappedMessages(payload = {}) {
   try {
-    // Find mapped messages (to re-verify they were processed)
+    console.log("[cleanup] Starting cleanup of mapped messages...");
+
+    // Find mapped messages + join device_registry to get terrain_id and point_id
+    // NOTE: device_registry has point_id directly (no separate point_registry table)
     const messages = await db.query(
-      `SELECT DISTINCT im.id, im.gateway_id, im.device_key, im.payload_raw, im.received_at,
-              dr.terrain_id, dr.id as device_id, pr.point_id
+      `SELECT im.id, im.device_key, im.payload_raw, im.received_at,
+              im.mapped_terrain_id, im.mapped_point_id,
+              dr.terrain_id, dr.point_id
        FROM incoming_messages im
        JOIN device_registry dr ON dr.device_key = im.device_key
-       LEFT JOIN point_registry pr ON pr.device_id = dr.id
-       WHERE (im.status = 'mapped')
-         AND dr.device_key IS NOT NULL
+       WHERE im.status = 'mapped'
+       ORDER BY im.received_at ASC
        LIMIT $1`,
       [payload.limit || 500]
     );
 
     if (!messages.rows.length) {
-      return {
-        ok: true,
-        message: "No messages found to process",
-        processed: 0,
-      };
+      console.log("[cleanup] No mapped messages found - nothing to do");
+      return { ok: true, message: "No mapped messages to process", processed: 0 };
     }
 
+    console.log(`[cleanup] Found ${messages.rows.length} mapped messages to process`);
+
     const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
-    const results = [];
     let processed = 0;
     let failed = 0;
+    const errors = [];
 
     for (const msg of messages.rows) {
       try {
         const payload_raw = msg.payload_raw || {};
-        
-        // For mapped messages, check if readings were actually created
-        let shouldReprocess = msg.status === 'unmapped';
-        if (msg.status === 'mapped' && msg.point_id && telemetryDb) {
-          // Check if readings exist within ±1 hour window of message timestamp
-          const msgTime = payload_raw.time 
-            ? new Date(payload_raw.time) 
-            : new Date(msg.received_at);
-          const windowStart = new Date(msgTime.getTime() - 60 * 60 * 1000);
-          const windowEnd = new Date(msgTime.getTime() + 60 * 60 * 1000);
+        const terrainId = msg.terrain_id || msg.mapped_terrain_id;
 
-          const readingCheck = await telemetryDb.query(
-            `SELECT COUNT(*) as count FROM acrel_readings 
-             WHERE point_id = $1 AND time >= $2 AND time <= $3`,
-            [msg.point_id, windowStart.toISOString(), windowEnd.toISOString()]
-          );
-
-          shouldReprocess = parseInt(readingCheck.rows[0]?.count || 0) === 0;
+        if (!terrainId) {
+          console.warn(`[cleanup] Skipping msg ${msg.id}: no terrain_id`);
+          failed++;
+          errors.push({ id: msg.id, error: "no terrain_id" });
+          continue;
         }
 
-        if (!shouldReprocess) {
-          continue; // Skip - already has readings
-        }
-
-        // IMPORTANT: Use the original message arrival time, NOT current time
-        const msgTime = payload_raw.time 
-          ? new Date(payload_raw.time).toISOString() 
+        // IMPORTANT: Use original message arrival time, NOT current time
+        const msgTime = payload_raw.time
+          ? new Date(payload_raw.time).toISOString()
           : new Date(msg.received_at).toISOString();
 
-        // Build ingestion payload
         const ingestPayload = {
           time: msgTime,
-          terrain_id: msg.terrain_id,
+          terrain_id: terrainId,
           source: payload_raw.source ?? {},
-          devices: [
-            {
-              device: {
-                modbus_addr: payload_raw?.device?.modbus_addr ?? null,
-                lora_dev_eui: payload_raw?.device?.lora_dev_eui ?? null,
-                rssi_lora: payload_raw?.device?.rssi_lora ?? null,
-              },
-              metrics: payload_raw.metrics ?? {},
-              raw: payload_raw,
+          devices: [{
+            device: {
+              modbus_addr: payload_raw?.device?.modbus_addr ?? null,
+              lora_dev_eui: payload_raw?.device?.lora_dev_eui ?? null,
+              rssi_lora: payload_raw?.device?.rssi_lora ?? null,
             },
-          ],
+            metrics: payload_raw.metrics ?? {},
+            raw: payload_raw,
+          }],
         };
+
+        console.log(`[cleanup] Processing msg ${msg.id} (device: ${msg.device_key}, time: ${msgTime})`);
 
         const resp = await fetch(`${ingestServiceUrl}/acrel`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(ingestPayload),
-          timeout: 10000,
         });
 
         const data = await resp.json().catch(() => ({}));
+
         if (!resp.ok) {
+          console.error(`[cleanup] Ingestion failed for msg ${msg.id}:`, data.error || resp.status);
           failed++;
-          results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
+          errors.push({ id: msg.id, error: data.error || `HTTP ${resp.status}` });
           continue;
         }
 
-        // Mark message as mapped
-        await db.query(
-          `UPDATE incoming_messages
-           SET status = 'mapped', mapped_terrain_id = $2, mapped_point_id = $3
-           WHERE id = $1`,
-          [msg.id, msg.terrain_id, msg.point_id || null]
-        ).catch(() => {});
-
+        // Success: delete message from incoming_messages (no more "mapped" lingering)
+        await db.query(`DELETE FROM incoming_messages WHERE id = $1`, [msg.id]);
         processed++;
-        results.push({ message_id: msg.id, ok: true, ingested: true });
+        console.log(`[cleanup] ✓ msg ${msg.id} ingested and removed`);
       } catch (e) {
+        console.error(`[cleanup] Error processing msg ${msg.id}: ${e.message}`);
         failed++;
-        results.push({ message_id: msg.id, ok: false, error: e.message });
+        errors.push({ id: msg.id, error: e.message });
       }
     }
 
+    const summary = { total: messages.rows.length, processed, failed };
+    console.log(`[cleanup] Done:`, JSON.stringify(summary));
+
     return {
       ok: true,
-      summary: { total: messages.rows.length, processed, failed },
-      results: results.slice(0, 20), // Return first 20 to avoid huge response
+      summary,
+      errors: errors.length > 0 ? errors.slice(0, 20) : undefined,
     };
   } catch (e) {
+    console.error("[cleanup] Fatal error:", e.message);
     return { ok: false, error: e.message };
   }
 }

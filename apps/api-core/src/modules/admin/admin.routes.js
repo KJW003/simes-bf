@@ -776,17 +776,15 @@ router.post("/admin/incoming/reconcile", requireAuth, async (req, res) => {
 // This catches historical messages from before the mapping feature was implemented
 router.post("/incoming/process-unmapped", async (req, res) => {
   try {
-    const { telemetryQueue } = require("../../jobs/queues");
-    
     // Find unmapped messages whose devices are now mapped
+    // device_registry has point_id directly
     const messages = await corePool.query(
-      `SELECT DISTINCT im.id, im.gateway_id, im.device_key, im.payload_raw, im.received_at,
-              dr.terrain_id, pr.point_id
+      `SELECT im.id, im.gateway_id, im.device_key, im.payload_raw, im.received_at,
+              dr.terrain_id, dr.point_id
        FROM incoming_messages im
        JOIN device_registry dr ON dr.device_key = im.device_key
-       LEFT JOIN point_registry pr ON pr.device_id = dr.id
        WHERE im.status = 'unmapped'
-         AND dr.device_key IS NOT NULL
+       ORDER BY im.received_at ASC
        LIMIT 5000`
     );
 
@@ -797,23 +795,31 @@ router.post("/incoming/process-unmapped", async (req, res) => {
 
     for (const msg of messages.rows) {
       try {
-        const payload = JSON.parse(msg.payload_raw);
+        const payload = typeof msg.payload_raw === 'string'
+          ? JSON.parse(msg.payload_raw)
+          : (msg.payload_raw || {});
         
         // IMPORTANT: Use the original message arrival time, NOT current time
-        // This ensures historical messages keep their original timestamps
         const msgTime = payload.time 
           ? new Date(payload.time).toISOString() 
           : new Date(msg.received_at).toISOString();
 
-        // Transform to acrel format and send to ingestion service
+        // Build payload in /acrel expected format
         const acrelPayload = {
-          sn: payload.sn || msg.device_key,
-          meter_type: payload.meter_type,
           time: msgTime,
-          data: payload.data || {},
+          terrain_id: msg.terrain_id,
+          source: payload.source ?? {},
+          devices: [{
+            device: {
+              modbus_addr: payload?.device?.modbus_addr ?? null,
+              lora_dev_eui: payload?.device?.lora_dev_eui ?? null,
+              rssi_lora: payload?.device?.rssi_lora ?? null,
+            },
+            metrics: payload.metrics ?? {},
+            raw: payload,
+          }],
         };
 
-        // Send to ingestion service /acrel endpoint
         const response = await fetch(`${ingestServiceUrl}/acrel`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -821,16 +827,12 @@ router.post("/incoming/process-unmapped", async (req, res) => {
         });
 
         if (!response.ok) {
-          throw new Error(`Ingestion service returned ${response.status}`);
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.error || `Ingestion service returned ${response.status}`);
         }
 
-        // Mark message as mapped after successful processing
-        await corePool.query(
-          `UPDATE incoming_messages 
-           SET status = 'mapped', mapped_terrain_id = $1, mapped_point_id = $2
-           WHERE id = $3`,
-          [msg.terrain_id, msg.point_id || null, msg.id]
-        );
+        // Delete message after successful processing
+        await corePool.query(`DELETE FROM incoming_messages WHERE id = $1`, [msg.id]);
 
         enqueued++;
       } catch (err) {
@@ -844,7 +846,7 @@ router.post("/incoming/process-unmapped", async (req, res) => {
       processed: messages.rows.length,
       enqueued,
       failed,
-      errors: errors.length > 0 ? errors.slice(0, 10) : undefined, // Return first 10 errors
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -852,17 +854,15 @@ router.post("/incoming/process-unmapped", async (req, res) => {
 });
 
 // POST /admin/cleanup-unmapped-messages
-// Immediately trigger cleanup of unmapped + orphaned mapped messages
-// Processes messages that don't have corresponding readings in acrel_readings
+// Immediately trigger cleanup of mapped messages without readings
 router.post("/cleanup-unmapped-messages", async (req, res) => {
   try {
     const { telemetryQueue } = require("../../jobs/queues");
 
-    // Enqueue immediate cleanup job (no delay)
     const job = await telemetryQueue.add(
       "telemetry.cleanup_unmapped_messages",
-      { limit: 1000 }, // Process more per run since it's manual
-      { priority: 10 } // High priority
+      { payload: { limit: 1000 } },
+      { priority: 10 }
     );
 
     res.json({
