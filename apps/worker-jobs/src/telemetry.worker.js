@@ -6,11 +6,50 @@ if (!connection) {
   return;
 }
 
+// ─── Logging helper ───────────────────────────────────────────
+const fs = require("fs");
+const path = require("path");
+const LOG_DIR = "/app/logs";
+const LOG_FILE = path.join(LOG_DIR, "cleanup.log");
+
+function ensureLogDir() {
+  try {
+    if (!fs.existsSync(LOG_DIR)) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+  } catch (e) {
+    // Log dir creation failed, will just use console
+  }
+}
+
+function log(prefix, msg) {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${prefix}: ${msg}`;
+  console.log(line);
+  try {
+    if (fs.existsSync(LOG_DIR) || fs.existsSync(path.dirname(LOG_FILE))) {
+      fs.appendFileSync(LOG_FILE, line + "\n", { flag: "a" });
+    }
+  } catch (e) {
+    // File logging failed, console is already logged
+  }
+}
+
+// Call once on startup
+ensureLogDir();
+
+
 function isIso(s) {
   return typeof s === "string" && !Number.isNaN(Date.parse(s));
 }
 
 async function runAggregate(payload = {}) {
+  if (!telemetryDb) {
+    const msg = "telemetryDb not available - aggregation cannot run";
+    log("runAggregate", `✗ ${msg}`);
+    throw new Error(msg);
+  }
+
   // Fenêtre par défaut: last 24h
   const now = new Date();
   const defaultFrom = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -79,6 +118,7 @@ async function runAggregate(payload = {}) {
   `;
 
   const r15 = await telemetryDb.query(sql15m, params);
+  log("runAggregate", `15m aggregation: ${r15.rowCount} rows affected`);
   // r15.rowCount = nombre de lignes insert/update
 
   // 2) daily aggregation
@@ -113,12 +153,14 @@ async function runAggregate(payload = {}) {
   `;
 
   const rDay = await telemetryDb.query(sqlDaily, params);
+  log("runAggregate", `Daily aggregation: ${rDay.rowCount} rows affected`);
 
-  return {
+  const result = {
     window: { from: from.toISOString(), to: to.toISOString() },
     filters: { site_id: siteId, terrain_id: terrainId, point_id: pointId },
     upserted: { agg_15m: r15.rowCount, agg_daily: rDay.rowCount }
   };
+  return result;
 }
 
 async function runProcessHistoricalMessages(payload = {}) {
@@ -129,7 +171,7 @@ async function runProcessHistoricalMessages(payload = {}) {
   }
 
   try {
-    console.log(`[process-historical] Processing messages for device ${device_key} terrain ${terrain_id}`);
+    log("process-historical", `Processing messages for device ${device_key} terrain ${terrain_id}`);
 
     // Find all incoming_messages for this device
     const msgs = await db.query(
@@ -143,7 +185,7 @@ async function runProcessHistoricalMessages(payload = {}) {
     );
 
     if (!msgs.rows.length) {
-      console.log(`[process-historical] No messages found for device ${device_key}`);
+      log("process-historical", `No messages found for device ${device_key}`);
       return {
         ok: true,
         message: "No messages to process",
@@ -152,7 +194,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       };
     }
 
-    console.log(`[process-historical] Found ${msgs.rows.length} messages to process`);
+    log("process-historical", `Found ${msgs.rows.length} messages to process`);
     const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     const results = [];
     let processed = 0;
@@ -189,7 +231,7 @@ async function runProcessHistoricalMessages(payload = {}) {
 
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          console.error(`[process-historical] Ingest failed for msg ${msg.id}: ${data.error || resp.status}`);
+          log("process-historical", `✗ Ingest failed for msg ${msg.id}: ${data.error || resp.status}`);
           failed++;
           results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
           continue;
@@ -201,14 +243,14 @@ async function runProcessHistoricalMessages(payload = {}) {
         processed++;
         results.push({ message_id: msg.id, ok: true, ingested: true });
       } catch (e) {
-        console.error(`[process-historical] Error for msg ${msg.id}: ${e.message}`);
+        log("process-historical", `✗ Error for msg ${msg.id}: ${e.message}`);
         failed++;
         results.push({ message_id: msg.id, ok: false, error: e.message });
       }
     }
 
     const summary = { total: msgs.rows.length, processed, failed };
-    console.log(`[process-historical] Done:`, JSON.stringify(summary));
+    log("process-historical", `Done: ${JSON.stringify(summary)}`);
 
     return {
       ok: true,
@@ -217,7 +259,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       results: results.slice(0, 20),
     };
   } catch (e) {
-    console.error(`[process-historical] Fatal error: ${e.message}`);
+    log("process-historical", `✗ Fatal error: ${e.message}`);
     return { ok: false, error: e.message };
   }
 }
@@ -226,7 +268,7 @@ async function runProcessHistoricalMessages(payload = {}) {
 // and re-send them to the ingestion service to create actual acrel_readings.
 async function runCleanupUnmappedMessages(payload = {}) {
   try {
-    console.log("[cleanup] Starting cleanup of mapped messages...");
+    log("cleanup", "Starting cleanup of mapped messages...");
 
     // Find mapped messages + join device_registry to get terrain_id and point_id
     // NOTE: device_registry has point_id directly (no separate point_registry table)
@@ -243,11 +285,11 @@ async function runCleanupUnmappedMessages(payload = {}) {
     );
 
     if (!messages.rows.length) {
-      console.log("[cleanup] No mapped messages found - nothing to do");
+      log("cleanup", "No mapped messages found - nothing to do");
       return { ok: true, message: "No mapped messages to process", processed: 0 };
     }
 
-    console.log(`[cleanup] Found ${messages.rows.length} mapped messages to process`);
+    log("cleanup", `Found ${messages.rows.length} mapped messages to process`);
 
     const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     let processed = 0;
@@ -260,7 +302,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
         const terrainId = msg.terrain_id || msg.mapped_terrain_id;
 
         if (!terrainId) {
-          console.warn(`[cleanup] Skipping msg ${msg.id}: no terrain_id`);
+          log("cleanup", `Skipping msg ${msg.id}: no terrain_id`);
           failed++;
           errors.push({ id: msg.id, error: "no terrain_id" });
           continue;
@@ -286,7 +328,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
           }],
         };
 
-        console.log(`[cleanup] Processing msg ${msg.id} (device: ${msg.device_key}, time: ${msgTime})`);
+        log("cleanup", `Processing msg ${msg.id} (device: ${msg.device_key}, time: ${msgTime})`);
 
         const resp = await fetch(`${ingestServiceUrl}/acrel`, {
           method: "POST",
@@ -297,7 +339,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
         const data = await resp.json().catch(() => ({}));
 
         if (!resp.ok) {
-          console.error(`[cleanup] Ingestion failed for msg ${msg.id}:`, data.error || resp.status);
+          log("cleanup", `✗ Ingestion failed for msg ${msg.id}: ${data.error || resp.status}`);
           failed++;
           errors.push({ id: msg.id, error: data.error || `HTTP ${resp.status}` });
           continue;
@@ -306,16 +348,16 @@ async function runCleanupUnmappedMessages(payload = {}) {
         // Success: delete message from incoming_messages (no more "mapped" lingering)
         await db.query(`DELETE FROM incoming_messages WHERE id = $1`, [msg.id]);
         processed++;
-        console.log(`[cleanup] ✓ msg ${msg.id} ingested and removed`);
+        log("cleanup", `✓ msg ${msg.id} ingested and removed`);
       } catch (e) {
-        console.error(`[cleanup] Error processing msg ${msg.id}: ${e.message}`);
+        log("cleanup", `✗ Error processing msg ${msg.id}: ${e.message}`);
         failed++;
         errors.push({ id: msg.id, error: e.message });
       }
     }
 
     const summary = { total: messages.rows.length, processed, failed };
-    console.log(`[cleanup] Done:`, JSON.stringify(summary));
+    log("cleanup", `Done: ${JSON.stringify(summary)}`);
 
     return {
       ok: true,
@@ -323,7 +365,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
       errors: errors.length > 0 ? errors.slice(0, 20) : undefined,
     };
   } catch (e) {
-    console.error("[cleanup] Fatal error:", e.message);
+    log("cleanup", `✗ Fatal error: ${e.message}`);
     return { ok: false, error: e.message };
   }
 }
@@ -338,9 +380,15 @@ new Worker(
     // for the specific point that just received data.
     if (job.name === "acrel.ingested") {
       const { pointId, terrainId, siteId, orgId, time } = job.data || {};
-      if (!pointId) return { ok: true, skipped: "no pointId" };
+      
+      if (!pointId) {
+        log("acrel.ingested", `Skipped: no pointId in job data`);
+        return { ok: true, skipped: "no pointId" };
+      }
 
       try {
+        log("acrel.ingested", `Starting aggregation for point ${pointId}, time ${time}`);
+        
         // Aggregate the 15-minute bucket that contains this reading
         const readingTime = new Date(time || Date.now());
         const bucketStart = new Date(readingTime);
@@ -355,10 +403,12 @@ new Worker(
           site_id: siteId,
         });
 
+        log("acrel.ingested", `✓ Aggregation done for point ${pointId}: ${JSON.stringify(summary.upserted)}`);
         return { ok: true, summary };
       } catch (e) {
-        console.error("[telemetry-worker] acrel.ingested error:", e.message);
-        return { ok: false, error: e.message };
+        log("acrel.ingested", `✗ Aggregation failed for point ${pointId}: ${e.message}`);
+        // THROW to tell BullMQ this job failed
+        throw e;
       }
     }
 

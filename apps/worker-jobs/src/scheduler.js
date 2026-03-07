@@ -1,20 +1,51 @@
 const { Queue } = require("bullmq");
 const { connection } = require("./shared");
+const fs = require("fs");
+const path = require("path");
+
+// ─── File logging ──────────────────────────────────────────
+const LOG_DIR = "/app/logs";
+const LOG_FILE = path.join(LOG_DIR, "scheduler.log");
+
+function ensureLogDir() {
+  try {
+    if (!fs.existsSync(LOG_DIR)) {
+      fs.mkdirSync(LOG_DIR, { recursive: true });
+    }
+  } catch (e) {
+    // Log dir creation failed
+  }
+}
+
+function log(prefix, msg) {
+  const ts = new Date().toISOString();
+  const line = `[${ts}] ${prefix}: ${msg}`;
+  console.log(line);
+  try {
+    fs.appendFileSync(LOG_FILE, line + "\n", { flag: "a" });
+  } catch (e) {
+    // File logging failed, console is already logged
+  }
+}
+
+ensureLogDir();
 
 if (!connection) {
-  console.warn("[scheduler] Redis not available – repeatable jobs disabled.");
+  log("scheduler", "⚠ Redis not available – repeatable jobs disabled.");
   module.exports = { setupScheduler: async () => {} };
 } else {
   const telemetryQueue = new Queue("telemetry", { connection });
 
   async function setupScheduler() {
     try {
+      log("scheduler", "Initializing cleanup job scheduler...");
+
       // Remove old cleanup jobs if they exist
       const jobs = await telemetryQueue.getRepeatableJobs();
       for (const job of jobs) {
         if (job.name === "telemetry.cleanup_unmapped_messages") {
           await telemetryQueue.removeRepeatableByKey(job.key);
-          console.log("[scheduler] Removed old cleanup job:", job.key);
+          log("scheduler", `Removed old cleanup job: ${job.key}`);
         }
       }
 
@@ -32,9 +63,9 @@ if (!connection) {
         }
       );
 
-      console.log("[scheduler] ✓ Cleanup job scheduled: runs every 2 minutes");
+      log("scheduler", "✓ Cleanup job scheduled: runs every 2 minutes");
     } catch (e) {
-      console.error("[scheduler] Failed to setup cleanup job:", e.message);
+      log("scheduler", `✗ Failed to setup cleanup job: ${e.message}`);
     }
   }
 

@@ -876,4 +876,67 @@ router.post("/cleanup-unmapped-messages", async (req, res) => {
   }
 });
 
+// GET /admin/logs/cleanup
+// View worker cleanup logs (for troubleshooting)
+router.get("/logs/cleanup", requireAuth, async (req, res) => {
+  try {
+    const fs = require("fs");
+    const path = require("path");
+    const logFile = "/app/logs/cleanup.log";
+
+    if (!fs.existsSync(logFile)) {
+      return res.json({
+        ok: true,
+        message: "No cleanup logs yet",
+        logs: [],
+      });
+    }
+
+    const content = fs.readFileSync(logFile, "utf-8");
+    const lines = content.split("\n").filter(line => line.trim());
+    const lastN = parseInt(req.query.last || "50", 10);
+    const recent = lines.slice(Math.max(0, lines.length - lastN));
+
+    res.json({
+      ok: true,
+      total_lines: lines.length,
+      returned: recent.length,
+      logs: recent,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// GET /admin/logs/scheduler
+// View scheduler logs
+router.get("/logs/scheduler", requireAuth, async (req, res) => {
+  try {
+    const fs = require("fs");
+    const logFile = "/app/logs/scheduler.log";
+
+    if (!fs.existsSync(logFile)) {
+      return res.json({
+        ok: true,
+        message: "No scheduler logs yet",
+        logs: [],
+      });
+    }
+
+    const content = fs.readFileSync(logFile, "utf-8");
+    const lines = content.split("\n").filter(line => line.trim());
+    const lastN = parseInt(req.query.last || "50", 10);
+    const recent = lines.slice(Math.max(0, lines.length - lastN));
+
+    res.json({
+      ok: true,
+      total_lines: lines.length,
+      returned: recent.length,
+      logs: recent,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
