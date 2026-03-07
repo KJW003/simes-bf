@@ -78,7 +78,7 @@ export default function DataMonitor() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
         <KpiCard label="Points de mesure" value={points.length} icon={<Radio className="w-4 h-4" />} />
         <KpiCard label="Zones" value={zones.length} icon={<Map className="w-4 h-4" />} />
-        <KpiCard label="Puissance totale" value={fmt(totalPower / 1000, 1) + ' kW'} icon={<Zap className="w-4 h-4" />} />
+        <KpiCard label="Puissance totale" value={fmt(totalPower, 1) + ' kW'} icon={<Zap className="w-4 h-4" />} />
         <KpiCard label="PF moyen" value={(() => {
           const pfs = points.map(p => (p.readings as any)?.power_factor_total).filter((v: any) => v != null).map(Number);
           return pfs.length ? fmt(pfs.reduce((s: number, v: number) => s + v, 0) / pfs.length, 3) : '—';
@@ -105,7 +105,7 @@ export default function DataMonitor() {
               <div className="overflow-x-auto">
                 <table className="data-table text-xs w-full">
                   <thead>
-                    <tr className="bg-muted/50">
+                    <tr>
                       <th className="py-2 px-2">Point</th>
                       <th className="py-2 px-2">Catégorie</th>
                       <th className="py-2 px-2 text-right">P (kW)</th>
@@ -156,7 +156,7 @@ export default function DataMonitor() {
             <div className="overflow-x-auto">
               <table className="data-table text-xs w-full">
                 <thead>
-                  <tr className="bg-muted/50">
+                  <tr>
                     <th className="py-2 px-2">Point</th>
                     <th className="py-2 px-2">Catégorie</th>
                     <th className="py-2 px-2 text-right">P (kW)</th>

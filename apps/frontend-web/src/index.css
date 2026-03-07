@@ -193,7 +193,7 @@
   }
 
   .data-table th {
-    @apply text-left font-medium text-muted-foreground uppercase text-[11px] tracking-wider py-3 px-4 border-b bg-muted/30;
+    @apply text-left font-medium text-muted-foreground uppercase text-[11px] tracking-wider py-3 px-4 border-b bg-muted;
   }
 
   .data-table td {

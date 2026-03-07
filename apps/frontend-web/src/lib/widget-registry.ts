@@ -484,7 +484,7 @@ export const widgetDefinitions: WidgetDefinition[] = [
       defaultConfig: {
         scopeType: 'CATEGORY',
         dataSource: { type: 'CATEGORY_AGG', refId: '', categoryFilter: 'LOAD' },
-        metrics: ['P'],
+        metrics: ['P', 'Q', 'S', 'V', 'I', 'PF', 'THD'],
         timeRange: { mode: 'FOLLOW_PAGE', value: '1D' },
         display: { viewMode: 'CHART', multiMetricMode: 'TABS' },
       },

@@ -182,7 +182,7 @@ function MetricChart({
             type="number"
             scale="time"
           />
-          <YAxis hide={size === 'sm'} tick={{ fontSize: 10 }} width={40} stroke="hsl(var(--muted-foreground))" />
+          <YAxis hide={size === 'sm'} tick={{ fontSize: 10 }} width={40} stroke="hsl(var(--muted-foreground))" domain={['auto', 'auto']} />
           <ChartTooltip
             formatter={(val: number) => [`${val.toFixed(2)} ${unit}`, displayLabel]}
             labelFormatter={(ts: number) => fmtDateTime(ts)}
@@ -575,7 +575,7 @@ function MultiMetricWidget({
                 type="number"
                 scale="time"
               />
-              <YAxis hide={size === 'sm'} tick={{ fontSize: 10 }} width={40} stroke="hsl(var(--muted-foreground))" />
+              <YAxis hide={size === 'sm'} tick={{ fontSize: 10 }} width={40} stroke="hsl(var(--muted-foreground))" domain={['auto', 'auto']} />
               <ChartTooltip
                 formatter={(val: number, name: string) => [`${Number(val).toFixed(2)} ${getUnit(name)}`, getLabel(name)]}
                 labelFormatter={(ts: number) => fmtDateTime(ts)}
