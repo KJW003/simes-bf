@@ -232,14 +232,14 @@ async function runProcessHistoricalMessages(payload = {}) {
 
 async function runCleanupUnmappedMessages(payload = {}) {
   try {
-    // Find unmapped messages that now have mapped devices
+    // Find mapped messages (to re-verify they were processed)
     const messages = await db.query(
       `SELECT DISTINCT im.id, im.gateway_id, im.device_key, im.payload_raw, im.received_at,
               dr.terrain_id, dr.id as device_id, pr.point_id
        FROM incoming_messages im
        JOIN device_registry dr ON dr.device_key = im.device_key
        LEFT JOIN point_registry pr ON pr.device_id = dr.id
-       WHERE im.status = 'unmapped'
+       WHERE (im.status = 'mapped')
          AND dr.device_key IS NOT NULL
        LIMIT $1`,
       [payload.limit || 500]
@@ -248,7 +248,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
     if (!messages.rows.length) {
       return {
         ok: true,
-        message: "No unmapped messages found for mapped devices",
+        message: "No messages found to process",
         processed: 0,
       };
     }
@@ -262,8 +262,30 @@ async function runCleanupUnmappedMessages(payload = {}) {
       try {
         const payload_raw = msg.payload_raw || {};
         
+        // For mapped messages, check if readings were actually created
+        let shouldReprocess = msg.status === 'unmapped';
+        if (msg.status === 'mapped' && msg.point_id && telemetryDb) {
+          // Check if readings exist within ±1 hour window of message timestamp
+          const msgTime = payload_raw.time 
+            ? new Date(payload_raw.time) 
+            : new Date(msg.received_at);
+          const windowStart = new Date(msgTime.getTime() - 60 * 60 * 1000);
+          const windowEnd = new Date(msgTime.getTime() + 60 * 60 * 1000);
+
+          const readingCheck = await telemetryDb.query(
+            `SELECT COUNT(*) as count FROM acrel_readings 
+             WHERE point_id = $1 AND time >= $2 AND time <= $3`,
+            [msg.point_id, windowStart.toISOString(), windowEnd.toISOString()]
+          );
+
+          shouldReprocess = parseInt(readingCheck.rows[0]?.count || 0) === 0;
+        }
+
+        if (!shouldReprocess) {
+          continue; // Skip - already has readings
+        }
+
         // IMPORTANT: Use the original message arrival time, NOT current time
-        // This ensures historical messages keep their original timestamps
         const msgTime = payload_raw.time 
           ? new Date(payload_raw.time).toISOString() 
           : new Date(msg.received_at).toISOString();

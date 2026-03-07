@@ -851,4 +851,29 @@ router.post("/incoming/process-unmapped", async (req, res) => {
   }
 });
 
+// POST /admin/cleanup-unmapped-messages
+// Immediately trigger cleanup of unmapped + orphaned mapped messages
+// Processes messages that don't have corresponding readings in acrel_readings
+router.post("/cleanup-unmapped-messages", async (req, res) => {
+  try {
+    const { telemetryQueue } = require("../../jobs/queues");
+
+    // Enqueue immediate cleanup job (no delay)
+    const job = await telemetryQueue.add(
+      "telemetry.cleanup_unmapped_messages",
+      { limit: 1000 }, // Process more per run since it's manual
+      { priority: 10 } // High priority
+    );
+
+    res.json({
+      ok: true,
+      message: "Cleanup job enqueued",
+      jobId: job.id,
+      queue: "telemetry",
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 module.exports = router;
