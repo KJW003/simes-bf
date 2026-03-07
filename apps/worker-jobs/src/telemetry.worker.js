@@ -1,5 +1,6 @@
 const { Worker } = require("bullmq");
 const { connection, setRunStatus, insertJobResult, telemetryDb, db } = require("./shared");
+const { auditLog } = require("./audit-log");
 
 if (!connection) {
   console.warn("[telemetry-worker] Skipped – no Redis connection.");
@@ -346,6 +347,9 @@ async function runCheckStaleDevices(payload = {}) {
       );
       created++;
       log("stale-check", `+ Created ${severity} incident for ${dev.device_key} (${minutesSilent}m)`);
+      auditLog(severity === 'critical' ? 'error' : 'warn', 'worker',
+        `Appareil silencieux détecté: ${deviceLabel} (${minutesSilent}min)`,
+        { device_key: dev.device_key, minutes_silent: minutesSilent, severity });
     }
 
     // 2) Auto-resolve incidents for devices that came back online
@@ -368,9 +372,13 @@ async function runCheckStaleDevices(payload = {}) {
 
     const summary = { stale_found: staleDevices.rows.length, created, escalated, resolved };
     log("stale-check", `Done: ${JSON.stringify(summary)}`);
+    if (created > 0 || escalated > 0 || resolved > 0) {
+      auditLog('info', 'worker', `Stale check: ${created} créé(s), ${escalated} escaladé(s), ${resolved} résolu(s)`, summary);
+    }
     return { ok: true, summary };
   } catch (e) {
     log("stale-check", `✗ Fatal error: ${e.message}`);
+    auditLog('error', 'worker', `Stale device check failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
 }
@@ -469,6 +477,9 @@ async function runCleanupUnmappedMessages(payload = {}) {
 
     const summary = { total: messages.rows.length, processed, failed };
     log("cleanup", `Done: ${JSON.stringify(summary)}`);
+    if (processed > 0 || failed > 0) {
+      auditLog('info', 'worker', `Cleanup: ${processed} traité(s), ${failed} échec(s) sur ${messages.rows.length}`, summary);
+    }
 
     return {
       ok: true,
@@ -477,6 +488,325 @@ async function runCleanupUnmappedMessages(payload = {}) {
     };
   } catch (e) {
     log("cleanup", `✗ Fatal error: ${e.message}`);
+    auditLog('error', 'worker', `Cleanup failed: ${e.message}`, { error: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
+// ─── Aggregation gap checker ────────────────────────────────
+// Detects points that have readings but missing aggregation buckets
+async function runCheckAggregationGaps(payload = {}) {
+  if (!telemetryDb) throw new Error("telemetryDb not available");
+  if (!db) throw new Error("Core DB not available");
+
+  const LOOKBACK_HOURS = payload.lookback_hours || 6;
+
+  try {
+    log("agg-gaps", `Checking aggregation gaps (lookback=${LOOKBACK_HOURS}h)`);
+
+    // Find points that have readings in the last N hours but missing 15m agg buckets
+    const gaps = await telemetryDb.query(`
+      WITH reading_buckets AS (
+        SELECT point_id,
+               time_bucket('15 minutes', time) AS bucket,
+               count(*)::int AS reading_count
+        FROM acrel_readings
+        WHERE time > now() - interval '${LOOKBACK_HOURS} hours'
+        GROUP BY point_id, bucket
+      ),
+      agg_buckets AS (
+        SELECT point_id, bucket_start AS bucket
+        FROM acrel_agg_15m
+        WHERE bucket_start > now() - interval '${LOOKBACK_HOURS} hours'
+      )
+      SELECT rb.point_id, rb.bucket, rb.reading_count
+      FROM reading_buckets rb
+      LEFT JOIN agg_buckets ab ON ab.point_id = rb.point_id AND ab.bucket = rb.bucket
+      WHERE ab.bucket IS NULL
+        AND rb.bucket < now() - interval '20 minutes'
+      ORDER BY rb.bucket DESC
+      LIMIT 100
+    `);
+
+    if (gaps.rows.length === 0) {
+      log("agg-gaps", "No aggregation gaps found");
+      return { ok: true, summary: { gaps_found: 0, repaired: 0 } };
+    }
+
+    log("agg-gaps", `Found ${gaps.rows.length} missing aggregation bucket(s)`);
+
+    // Auto-repair: re-run aggregation for each gap
+    let repaired = 0;
+    const pointBuckets = {};
+    for (const gap of gaps.rows) {
+      const key = gap.point_id;
+      if (!pointBuckets[key]) pointBuckets[key] = [];
+      pointBuckets[key].push(gap.bucket);
+    }
+
+    for (const [pointId, buckets] of Object.entries(pointBuckets)) {
+      try {
+        const earliest = new Date(Math.min(...buckets.map(b => new Date(b).getTime())));
+        const latest = new Date(Math.max(...buckets.map(b => new Date(b).getTime() + 15 * 60 * 1000)));
+
+        await runAggregate({
+          from: earliest.toISOString(),
+          to: latest.toISOString(),
+          point_id: pointId,
+        });
+        repaired += buckets.length;
+        log("agg-gaps", `✓ Repaired ${buckets.length} bucket(s) for point ${pointId}`);
+      } catch (e) {
+        log("agg-gaps", `✗ Repair failed for point ${pointId}: ${e.message}`);
+      }
+    }
+
+    const summary = { gaps_found: gaps.rows.length, repaired, points_affected: Object.keys(pointBuckets).length };
+    log("agg-gaps", `Done: ${JSON.stringify(summary)}`);
+
+    if (gaps.rows.length > 0) {
+      auditLog(repaired < gaps.rows.length ? 'warn' : 'info', 'worker',
+        `Aggregation gaps: ${gaps.rows.length} trouvé(s), ${repaired} réparé(s)`, summary);
+    }
+
+    return { ok: true, summary };
+  } catch (e) {
+    log("agg-gaps", `✗ Fatal error: ${e.message}`);
+    auditLog('error', 'worker', `Aggregation gap check failed: ${e.message}`, { error: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
+// ─── Queue health checker ───────────────────────────────────
+// Monitors BullMQ queue status and creates incidents for anomalies
+async function runCheckQueueHealth(payload = {}) {
+  if (!db) throw new Error("Core DB not available");
+
+  const { connection: redis } = require("./shared");
+  if (!redis) return { ok: true, summary: { message: "Redis not available" } };
+
+  const FAILED_THRESHOLD = payload.failed_threshold || 20;
+  const STUCK_THRESHOLD_MIN = payload.stuck_threshold_min || 15;
+
+  try {
+    log("queue-health", "Checking BullMQ queue health");
+
+    const queues = ["telemetry", "ai", "reports"];
+    const issues = [];
+
+    for (const q of queues) {
+      const waiting = await redis.llen(`bull:${q}:wait`);
+      const active = await redis.llen(`bull:${q}:active`);
+      const failed = await redis.zcard(`bull:${q}:failed`);
+
+      // Check for excessive failed jobs
+      if (failed > FAILED_THRESHOLD) {
+        issues.push({
+          queue: q, severity: failed > FAILED_THRESHOLD * 3 ? "critical" : "warning",
+          issue: "excessive_failures", detail: `${failed} failed jobs`,
+          metrics: { waiting, active, failed },
+        });
+      }
+
+      // Check for stuck active jobs (active > 0 with nothing completing)
+      if (active > 5) {
+        issues.push({
+          queue: q, severity: "warning",
+          issue: "stuck_active", detail: `${active} active jobs possibly stuck`,
+          metrics: { waiting, active, failed },
+        });
+      }
+
+      // Check for backlog
+      if (waiting > 100) {
+        issues.push({
+          queue: q, severity: waiting > 500 ? "critical" : "warning",
+          issue: "backlog", detail: `${waiting} jobs waiting`,
+          metrics: { waiting, active, failed },
+        });
+      }
+
+      log("queue-health", `Queue ${q}: waiting=${waiting} active=${active} failed=${failed}`);
+    }
+
+    // Create/update incidents for issues
+    let created = 0;
+    for (const issue of issues) {
+      const existing = await db.query(
+        `SELECT id FROM incidents
+         WHERE source = 'queue_health_monitor'
+           AND status IN ('open', 'acknowledged')
+           AND metadata->>'queue' = $1
+           AND metadata->>'issue' = $2
+         LIMIT 1`,
+        [issue.queue, issue.issue]
+      );
+
+      if (existing.rows.length === 0) {
+        await db.query(
+          `INSERT INTO incidents (id, title, description, severity, status, source, metadata)
+           VALUES (gen_random_uuid(), $1, $2, $3, 'open', 'queue_health_monitor', $4)`,
+          [
+            `Queue ${issue.queue}: ${issue.issue}`,
+            `Queue "${issue.queue}" — ${issue.detail}`,
+            issue.severity,
+            JSON.stringify({ queue: issue.queue, issue: issue.issue, ...issue.metrics }),
+          ]
+        );
+        created++;
+        log("queue-health", `+ Created ${issue.severity} incident for ${issue.queue}/${issue.issue}`);
+      }
+    }
+
+    // Auto-resolve issues that are no longer present
+    const queueNames = queues.map(q => `'${q}'`).join(",");
+    const autoResolved = await db.query(
+      `UPDATE incidents SET status = 'resolved', resolved_at = NOW(), updated_at = NOW(),
+              description = description || ' — Auto-résolu.'
+       WHERE source = 'queue_health_monitor'
+         AND status IN ('open', 'acknowledged')
+         AND metadata->>'queue' NOT IN (${issues.map(i => `'${i.queue}'`).join(",") || "'__none__'"})
+       RETURNING id`
+    );
+
+    const summary = { issues_found: issues.length, created, resolved: autoResolved.rowCount };
+    log("queue-health", `Done: ${JSON.stringify(summary)}`);
+
+    if (issues.length > 0) {
+      auditLog('warn', 'worker', `Queue health: ${issues.length} problème(s) détecté(s)`, summary);
+    }
+
+    return { ok: true, summary };
+  } catch (e) {
+    log("queue-health", `✗ Fatal error: ${e.message}`);
+    auditLog('error', 'worker', `Queue health check failed: ${e.message}`, { error: e.message });
+    return { ok: false, error: e.message };
+  }
+}
+
+// ─── Pipeline heartbeat ─────────────────────────────────────
+// Periodic full pipeline status check with DB logging
+async function runPipelineHeartbeat(payload = {}) {
+  if (!db) throw new Error("Core DB not available");
+
+  try {
+    log("heartbeat", "Running pipeline heartbeat check");
+
+    const checks = {};
+
+    // 1) Core DB
+    try {
+      const r = await db.query("SELECT NOW() as now, count(*)::int as users FROM users");
+      checks.core_db = { status: "up", users: r.rows[0].users };
+    } catch (e) {
+      checks.core_db = { status: "down", error: e.message };
+    }
+
+    // 2) Telemetry DB
+    if (telemetryDb) {
+      try {
+        const r = await telemetryDb.query(`
+          SELECT count(*)::int AS readings_1h, max(time) AS latest_reading
+          FROM acrel_readings WHERE time > now() - interval '1 hour'
+        `);
+        const throughput = r.rows[0].readings_1h;
+        checks.telemetry_db = {
+          status: throughput > 0 ? "up" : "warning",
+          readings_last_hour: throughput,
+          latest_reading: r.rows[0].latest_reading,
+        };
+      } catch (e) {
+        checks.telemetry_db = { status: "down", error: e.message };
+      }
+    } else {
+      checks.telemetry_db = { status: "disabled" };
+    }
+
+    // 3) Device activity
+    try {
+      const r = await db.query(`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE last_seen_at > now() - interval '30 minutes')::int AS active,
+               count(*) FILTER (WHERE last_seen_at <= now() - interval '30 minutes')::int AS stale,
+               count(*) FILTER (WHERE last_seen_at IS NULL)::int AS never_seen
+        FROM device_registry
+      `);
+      checks.devices = r.rows[0];
+    } catch (e) {
+      checks.devices = { error: e.message };
+    }
+
+    // 4) Pending messages
+    try {
+      const r = await db.query(`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE status = 'unmapped')::int AS unmapped,
+               count(*) FILTER (WHERE status = 'mapped')::int AS mapped
+        FROM incoming_messages
+      `);
+      checks.pending_messages = r.rows[0];
+    } catch (e) {
+      checks.pending_messages = { error: e.message };
+    }
+
+    // 5) Open incidents
+    try {
+      const r = await db.query(`
+        SELECT count(*)::int AS total,
+               count(*) FILTER (WHERE severity = 'critical')::int AS critical,
+               count(*) FILTER (WHERE severity = 'warning')::int AS warning
+        FROM incidents WHERE status IN ('open', 'acknowledged')
+      `);
+      checks.open_incidents = r.rows[0];
+    } catch (e) {
+      checks.open_incidents = { error: e.message };
+    }
+
+    // Determine overall status
+    const hasDown = Object.values(checks).some(c => c.status === "down");
+    const hasWarning = Object.values(checks).some(c => c.status === "warning");
+    const overall = hasDown ? "degraded" : hasWarning ? "warning" : "healthy";
+
+    log("heartbeat", `Pipeline status: ${overall}`);
+    auditLog('info', 'system', `Pipeline heartbeat: ${overall}`, checks);
+
+    // Create incident if pipeline is degraded
+    if (hasDown) {
+      const downComponents = Object.entries(checks)
+        .filter(([_, v]) => v.status === "down")
+        .map(([k]) => k);
+
+      const existing = await db.query(
+        `SELECT id FROM incidents
+         WHERE source = 'pipeline_heartbeat' AND status IN ('open', 'acknowledged')
+         LIMIT 1`
+      );
+
+      if (existing.rows.length === 0) {
+        await db.query(
+          `INSERT INTO incidents (id, title, description, severity, status, source, metadata)
+           VALUES (gen_random_uuid(), $1, $2, 'critical', 'open', 'pipeline_heartbeat', $3)`,
+          [
+            `Pipeline dégradée: ${downComponents.join(", ")}`,
+            `Composant(s) en panne: ${downComponents.join(", ")}. Intervention nécessaire.`,
+            JSON.stringify(checks),
+          ]
+        );
+        auditLog('error', 'system', `Pipeline dégradée: ${downComponents.join(", ")} en panne`, checks);
+      }
+    } else {
+      // Auto-resolve pipeline incident if everything is back up
+      await db.query(
+        `UPDATE incidents SET status = 'resolved', resolved_at = NOW(), updated_at = NOW(),
+                description = description || ' — Auto-résolu: pipeline rétablie.'
+         WHERE source = 'pipeline_heartbeat' AND status IN ('open', 'acknowledged')`
+      );
+    }
+
+    return { ok: true, overall, checks };
+  } catch (e) {
+    log("heartbeat", `✗ Fatal error: ${e.message}`);
+    auditLog('error', 'system', `Pipeline heartbeat failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
 }
@@ -518,6 +848,7 @@ new Worker(
         return { ok: true, summary };
       } catch (e) {
         log("acrel.ingested", `✗ Aggregation failed for point ${pointId}: ${e.message}`);
+        auditLog('error', 'worker', `Aggregation failed for point ${pointId}: ${e.message}`, { pointId, error: e.message });
         // THROW to tell BullMQ this job failed
         throw e;
       }
@@ -578,6 +909,54 @@ new Worker(
       // ── telemetry.check_stale_devices: periodic stale device check ──
       if (job.name === "telemetry.check_stale_devices") {
         const summary = await runCheckStaleDevices(payload || {});
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          const status = summary.ok ? "success" : "failed";
+          await setRunStatus(runId, status, {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.check_aggregation_gaps: periodic aggregation gap detection + auto-repair ──
+      if (job.name === "telemetry.check_aggregation_gaps") {
+        const summary = await runCheckAggregationGaps(payload || {});
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          const status = summary.ok ? "success" : "failed";
+          await setRunStatus(runId, status, {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.check_queue_health: periodic BullMQ queue monitoring ──
+      if (job.name === "telemetry.check_queue_health") {
+        const summary = await runCheckQueueHealth(payload || {});
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          const status = summary.ok ? "success" : "failed";
+          await setRunStatus(runId, status, {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.pipeline_heartbeat: periodic pipeline health logging ──
+      if (job.name === "telemetry.pipeline_heartbeat") {
+        const summary = await runPipelineHeartbeat(payload || {});
 
         if (runId) {
           await insertJobResult(runId, job.name, summary);

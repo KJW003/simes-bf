@@ -412,6 +412,30 @@ export const api = {
     );
   },
 
+  // ── Batch purge multiple points ──
+  batchPurgeReadings: (data: { pointIds: string[]; from?: string; to?: string }) =>
+    request<{
+      ok: boolean;
+      points_purged: number;
+      details: Array<{
+        point_id: string;
+        point_name: string;
+        deleted: { readings: number; agg_15m: number; agg_daily: number };
+      }>;
+      totals: { readings: number; agg_15m: number; agg_daily: number };
+      range: { from: string | null; to: string | null };
+    }>('/admin/readings/batch-purge', { method: 'POST', body: JSON.stringify(data) }),
+
+  // ── Pipeline Repair Actions ──
+  repairAggregations: (data: { from: string; to: string; point_id?: string; terrain_id?: string; site_id?: string }) =>
+    request<{ ok: boolean; message: string }>('/admin/pipeline/repair-aggregations', { method: 'POST', body: JSON.stringify(data) }),
+  retryFailedJobs: (queue?: string, limit?: number) =>
+    request<{ ok: boolean; queue: string; retried: number; total_failed: number }>('/admin/pipeline/retry-failed-jobs', { method: 'POST', body: JSON.stringify({ queue, limit }) }),
+  flushFailedJobs: (queue?: string) =>
+    request<{ ok: boolean; queue: string; removed: number }>('/admin/pipeline/flush-failed-jobs', { method: 'POST', body: JSON.stringify({ queue }) }),
+  reprocessUnmapped: (limit?: number) =>
+    request<{ ok: boolean; message: string }>('/admin/pipeline/reprocess-unmapped', { method: 'POST', body: JSON.stringify({ limit }) }),
+
   /** Base URL for raw fetch calls (e.g. file downloads) */
   baseURL: BASE,
 };

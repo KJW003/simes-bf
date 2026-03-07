@@ -4,6 +4,7 @@ const {corePool, telemetryPool} = require("../../config/db");
 const { makeDeviceKey } = require("../../shared/acrel");
 const { requireAuth } = require("../../shared/auth-middleware");
 const { telemetryQueue } = require("../../jobs/queues");
+const { auditLog } = require("../../shared/audit-log");
 const JobTypes = require("../../jobs/jobTypes");
 
 // 1) Inject a fake "MQTT" message (for tomorrow tests / UI dev)
@@ -1012,6 +1013,11 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
     );
 
     console.log(`[PURGE] point=${pointName} (${pointId}) from=${from || 'ALL'} to=${to || 'ALL'} → readings=${rReadings.rowCount} agg15m=${r15m.rowCount} aggDaily=${rDay.rowCount}`);
+    auditLog('warn', 'api', `Purge données: ${pointName} (${rReadings.rowCount} readings, ${r15m.rowCount} agg15m, ${rDay.rowCount} daily)`, {
+      point_id: pointId, point_name: pointName,
+      from: from || null, to: to || null,
+      deleted: { readings: rReadings.rowCount, agg_15m: r15m.rowCount, agg_daily: rDay.rowCount },
+    }, req.userId || null);
 
     res.json({
       ok: true,
@@ -1025,6 +1031,230 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
     });
   } catch (e) {
     console.error("[PURGE] Error:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ─── BATCH DELETE readings for multiple points (with optional date range) ────
+// POST /admin/readings/batch-purge
+// Body: { pointIds: string[], from?: string, to?: string }
+router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
+  const { pointIds = [], from, to } = req.body || {};
+
+  if (!Array.isArray(pointIds) || pointIds.length === 0) {
+    return res.status(400).json({ ok: false, error: "pointIds array is required and non-empty" });
+  }
+  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+
+  try {
+    // Verify all points exist
+    const pointCheck = await corePool.query(
+      `SELECT id, name FROM measurement_points WHERE id = ANY($1)`,
+      [pointIds]
+    );
+    const foundPoints = pointCheck.rows;
+    if (foundPoints.length === 0) {
+      return res.status(404).json({ ok: false, error: "No valid points found" });
+    }
+    const pointMap = Object.fromEntries(foundPoints.map(p => [p.id, p.name]));
+
+    const results = [];
+    let totalReadings = 0;
+    let totalAgg15m = 0;
+    let totalAggDaily = 0;
+
+    // Purge each point
+    for (const pointId of foundPoints.map(p => p.id)) {
+      const conditions = ["point_id = $1"];
+      const params = [pointId];
+      let paramIdx = 2;
+
+      if (from) {
+        conditions.push(`time >= $${paramIdx}`);
+        params.push(from);
+        paramIdx++;
+      }
+      if (to) {
+        conditions.push(`time <= $${paramIdx}`);
+        params.push(to);
+        paramIdx++;
+      }
+
+      const where = conditions.join(" AND ");
+
+      // Delete from acrel_readings
+      const rReadings = await telemetryPool.query(
+        `DELETE FROM acrel_readings WHERE ${where}`,
+        params
+      );
+
+      // Delete from acrel_agg_15m
+      const agg15Conditions = conditions.map(c => c.replace(/\btime\b/g, "bucket_start"));
+      const r15m = await telemetryPool.query(
+        `DELETE FROM acrel_agg_15m WHERE ${agg15Conditions.join(" AND ")}`,
+        params
+      );
+
+      // Delete from acrel_agg_daily
+      const aggDayConditions = ["point_id = $1"];
+      const dayParams = [pointId];
+      let dayIdx = 2;
+      if (from) {
+        aggDayConditions.push(`day >= ($${dayIdx})::date`);
+        dayParams.push(from);
+        dayIdx++;
+      }
+      if (to) {
+        aggDayConditions.push(`day <= ($${dayIdx})::date`);
+        dayParams.push(to);
+        dayIdx++;
+      }
+      const rDay = await telemetryPool.query(
+        `DELETE FROM acrel_agg_daily WHERE ${aggDayConditions.join(" AND ")}`,
+        dayParams
+      );
+
+      const pointName = pointMap[pointId];
+      const result = {
+        point_id: pointId,
+        point_name: pointName,
+        deleted: {
+          readings: rReadings.rowCount,
+          agg_15m: r15m.rowCount,
+          agg_daily: rDay.rowCount,
+        },
+      };
+      results.push(result);
+
+      totalReadings += rReadings.rowCount;
+      totalAgg15m += r15m.rowCount;
+      totalAggDaily += rDay.rowCount;
+
+      auditLog('warn', 'api', `Batch purge (${foundPoints.length} points): ${pointName} (${rReadings.rowCount} readings, ${r15m.rowCount} agg15m, ${rDay.rowCount} daily)`, {
+        point_id: pointId,
+        from: from || null,
+        to: to || null,
+      }, req.userId || null);
+    }
+
+    console.log(`[BATCH-PURGE] ${foundPoints.length} points from=${from || 'ALL'} to=${to || 'ALL'} → total readings=${totalReadings} agg15m=${totalAgg15m} daily=${totalAggDaily}`);
+
+    res.json({
+      ok: true,
+      points_purged: foundPoints.length,
+      details: results,
+      totals: {
+        readings: totalReadings,
+        agg_15m: totalAgg15m,
+        agg_daily: totalAggDaily,
+      },
+      range: { from: from || null, to: to || null },
+    });
+  } catch (e) {
+    console.error("[BATCH-PURGE] Error:", e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Pipeline repair actions
+// ═══════════════════════════════════════════════════════════════
+
+// POST /admin/pipeline/repair-aggregations — force re-aggregation for a time window
+router.post("/admin/pipeline/repair-aggregations", requireAuth, async (req, res) => {
+  try {
+    const { from, to, point_id, terrain_id, site_id } = req.body || {};
+    if (!from || !to) {
+      return res.status(400).json({ ok: false, error: "from and to are required (ISO dates)" });
+    }
+
+    const jobData = {
+      payload: { from, to, point_id: point_id || null, terrain_id: terrain_id || null, site_id: site_id || null },
+    };
+
+    await telemetryQueue.add("telemetry.aggregate", jobData, { attempts: 1 });
+    auditLog('info', 'api', `Réagrégation lancée: ${from} → ${to}`, jobData.payload, req.userId || null);
+
+    res.json({ ok: true, message: "Aggregation job queued", job: jobData.payload });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /admin/pipeline/retry-failed-jobs — clean failed jobs from BullMQ queue
+router.post("/admin/pipeline/retry-failed-jobs", requireAuth, async (req, res) => {
+  try {
+    const { queue = "telemetry", limit = 50 } = req.body || {};
+
+    // Get failed jobs and retry them
+    const { Queue } = require("bullmq");
+    const redis = require("../../config/redis");
+    if (!redis) return res.status(503).json({ ok: false, error: "Redis not available" });
+
+    const q = new Queue(queue, { connection: redis });
+    const failed = await q.getFailed(0, limit);
+
+    let retried = 0;
+    for (const job of failed) {
+      try {
+        await job.retry();
+        retried++;
+      } catch (e) {
+        // job may have been removed already
+      }
+    }
+
+    auditLog('info', 'api', `Retry ${retried}/${failed.length} failed jobs in queue "${queue}"`, { queue, retried, total: failed.length }, req.userId || null);
+
+    res.json({ ok: true, queue, retried, total_failed: failed.length });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /admin/pipeline/flush-failed-jobs — remove all failed jobs from a queue
+router.post("/admin/pipeline/flush-failed-jobs", requireAuth, async (req, res) => {
+  try {
+    const { queue = "telemetry" } = req.body || {};
+
+    const { Queue } = require("bullmq");
+    const redis = require("../../config/redis");
+    if (!redis) return res.status(503).json({ ok: false, error: "Redis not available" });
+
+    const q = new Queue(queue, { connection: redis });
+    const failed = await q.getFailed(0, 1000);
+
+    let removed = 0;
+    for (const job of failed) {
+      try {
+        await job.remove();
+        removed++;
+      } catch (e) { /* ignore */ }
+    }
+
+    auditLog('warn', 'api', `Flushed ${removed} failed jobs from queue "${queue}"`, { queue, removed }, req.userId || null);
+
+    res.json({ ok: true, queue, removed });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /admin/pipeline/reprocess-unmapped — trigger cleanup of unmapped messages now
+router.post("/admin/pipeline/reprocess-unmapped", requireAuth, async (req, res) => {
+  try {
+    const { limit = 500 } = req.body || {};
+
+    await telemetryQueue.add(
+      "telemetry.cleanup_unmapped_messages",
+      { payload: { limit } },
+      { attempts: 1 }
+    );
+
+    auditLog('info', 'api', `Reprocess unmapped messages lancé (limit=${limit})`, { limit }, req.userId || null);
+
+    res.json({ ok: true, message: "Cleanup job queued", limit });
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });

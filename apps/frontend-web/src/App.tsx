@@ -63,7 +63,7 @@ function AppRoutes() {
             <Route path="/platform/devices" element={<Devices />} />
             <Route path="/platform/pipeline" element={<PipelineHealth />} />
             <Route path="/platform/logs" element={<Logs />} />
-            <Route path="/platform/purge" element={<PurgeReadings />} />
+            {isPlatformUser && <Route path="/platform/purge" element={<PurgeReadings />} />}
             <Route path="/platform/admin" element={<Administration />} />
           </>
         ) : (

@@ -1,6 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const { requireAuth } = require('./shared/auth-middleware');
+const { auditLog } = require('./shared/audit-log');
 
 const authRoutes = require('./modules/auth/auth.routes');
 const healthRoutes = require('./modules/health/health.routes');
@@ -32,6 +33,16 @@ app.use((req, res, next) => {
     const ms = Date.now() - start;
     if (req.path !== '/health') {
       console.log(`${req.method} ${req.path} ${res.statusCode} ${ms}ms`);
+      // Log errors and slow requests to audit_logs
+      if (res.statusCode >= 500) {
+        auditLog('error', 'api', `${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`, {
+          method: req.method, path: req.path, status: res.statusCode, ms,
+        }, req.userId || null);
+      } else if (res.statusCode >= 400) {
+        auditLog('warn', 'api', `${req.method} ${req.path} → ${res.statusCode} (${ms}ms)`, {
+          method: req.method, path: req.path, status: res.statusCode, ms,
+        }, req.userId || null);
+      }
     }
   });
   next();
@@ -58,6 +69,9 @@ app.use("/test-listener", listenerRoutes);
 // ── Global error handler ────────────────────────────────────
 app.use((err, req, res, next) => {
   console.error(`[ERROR] ${req.method} ${req.path}:`, err.message);
+  auditLog('error', 'api', `Unhandled error: ${req.method} ${req.path} — ${err.message}`, {
+    method: req.method, path: req.path, stack: (err.stack || '').slice(0, 500),
+  }, req.userId || null);
   const status = err.status || err.statusCode || 500;
   res.status(status).json({
     ok: false,

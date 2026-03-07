@@ -87,6 +87,69 @@ if (!connection) {
       );
 
       log("scheduler", "✓ Stale device check scheduled: runs every 5 minutes (warn=30m, crit=60m)");
+
+      // ── Aggregation gap check: every 15 minutes ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.check_aggregation_gaps") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log("scheduler", `Removed old agg-gap job: ${job.key}`);
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.check_aggregation_gaps",
+        { payload: { lookback_hours: 6 } },
+        {
+          repeat: { pattern: "*/15 * * * *" },
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 1,
+        }
+      );
+
+      log("scheduler", "✓ Aggregation gap check scheduled: runs every 15 minutes");
+
+      // ── Queue health check: every 10 minutes ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.check_queue_health") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log("scheduler", `Removed old queue-health job: ${job.key}`);
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.check_queue_health",
+        { payload: { failed_threshold: 20, stuck_threshold_min: 15 } },
+        {
+          repeat: { pattern: "*/10 * * * *" },
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 1,
+        }
+      );
+
+      log("scheduler", "✓ Queue health check scheduled: runs every 10 minutes");
+
+      // ── Pipeline heartbeat: every 10 minutes ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.pipeline_heartbeat") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log("scheduler", `Removed old heartbeat job: ${job.key}`);
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.pipeline_heartbeat",
+        { payload: {} },
+        {
+          repeat: { pattern: "*/10 * * * *" },
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 1,
+        }
+      );
+
+      log("scheduler", "✓ Pipeline heartbeat scheduled: runs every 10 minutes");
     } catch (e) {
       log("scheduler", `✗ Failed to setup cleanup job: ${e.message}`);
     }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
+import { useAppContext } from '@/contexts/AppContext';
 import {
   LayoutDashboard,
   AlertOctagon,
@@ -77,6 +78,9 @@ function NavSection({ title, children }: { title: string; children: React.ReactN
 }
 
 export function PlatformSidebar() {
+  const { currentUser } = useAppContext();
+  const isSuperAdmin = currentUser.role === 'platform_super_admin';
+
   return (
     <aside className="w-56 bg-sidebar border-r border-sidebar-border flex flex-col">
       <ScrollArea className="flex-1 py-4">
@@ -106,10 +110,12 @@ export function PlatformSidebar() {
             <NavItem to="/platform/logs" icon={FileSearch} label="Logs" />
           </NavSection>
 
-          <NavSection title="Administration">
-            <NavItem to="/platform/purge" icon={Trash2} label="Purge données" />
-            <NavItem to="/platform/admin" icon={Settings} label="Configuration" />
-          </NavSection>
+          {isSuperAdmin && (
+            <NavSection title="Administration">
+              <NavItem to="/platform/purge" icon={Trash2} label="Purge en masse" />
+              <NavItem to="/platform/admin" icon={Settings} label="Configuration" />
+            </NavSection>
+          )}
         </nav>
       </ScrollArea>
     </aside>

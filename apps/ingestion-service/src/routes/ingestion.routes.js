@@ -11,6 +11,7 @@ const {
   isIsoDateString,
 } = require("../shared/acrel");
 const { isUG67Batch, normalizeUG67 } = require("../shared/ug67-normalizer");
+const { auditLog } = require("../shared/audit-log");
 
 // ─────────────────────────────────────────────────────────────
 // POST /milesight
@@ -89,6 +90,8 @@ router.post("/milesight", async (req, res) => {
         );
         buffered.push(ins.rows[0]);
       }
+
+      auditLog('warn', `Gateway ${gatewayId} non mappée: ${buffered.length} message(s) mis en buffer`, { gateway_id: gatewayId, count: buffered.length });
 
       return res.status(202).json({
         ok: true,
@@ -208,6 +211,7 @@ router.post("/milesight", async (req, res) => {
     });
   } catch (e) {
     console.error("[INGEST/MILESIGHT] ERROR:", e);
+    auditLog('error', `Ingestion Milesight erreur: ${e.message}`, { error: e.message });
     res.status(500).json({ ok: false, error: e.message });
   }
 });

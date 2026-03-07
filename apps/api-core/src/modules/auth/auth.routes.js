@@ -9,6 +9,7 @@ const jwt = require("jsonwebtoken");
 const { corePool } = require("../../config/db");
 const { jwtSecret } = require("../../config/env");
 const { requireAuth } = require("../../shared/auth-middleware");
+const { auditLog } = require("../../shared/audit-log");
 
 const router = express.Router();
 
@@ -68,6 +69,7 @@ router.post("/auth/login", async (req, res) => {
           `UPDATE users SET failed_attempts = $1, locked_until = $2 WHERE id = $3`,
           [nextFailed, lockUntil, user.id]
         );
+        auditLog('warn', 'api', `Compte verrouillé après ${MAX_FAILED} tentatives: ${email}`, { email, locked_until: lockUntil }, user.id);
         return res.status(401).json({ ok: false, reason: "locked", locked_until: lockUntil });
       }
 
@@ -107,6 +109,7 @@ router.post("/auth/login", async (req, res) => {
     return res.json({ ok: true, token, user: userResponse });
   } catch (e) {
     console.error("[auth/login]", e.message);
+    auditLog('error', 'api', `Login error: ${e.message}`, { error: e.message });
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
