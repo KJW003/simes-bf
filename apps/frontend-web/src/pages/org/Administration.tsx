@@ -208,6 +208,7 @@ function ReferentialTab() {
       <Dialog open={showCreateOrg} onOpenChange={setShowCreateOrg}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Nouvelle organisation</DialogTitle></DialogHeader>
+          <DialogDescription className="sr-only">Créer une nouvelle organisation</DialogDescription>
           <div className="space-y-2">
             <Label>Nom</Label>
             <Input value={newOrgName} onChange={(e) => setNewOrgName(e.target.value)} placeholder="Ex: SONABEL" />
@@ -223,6 +224,7 @@ function ReferentialTab() {
       <Dialog open={showCreateSite} onOpenChange={setShowCreateSite}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Nouveau site</DialogTitle></DialogHeader>
+          <DialogDescription className="sr-only">Créer un nouveau site</DialogDescription>
           <div className="space-y-2">
             <Label>Nom</Label>
             <Input value={newSiteName} onChange={(e) => setNewSiteName(e.target.value)} placeholder="Ex: Ouagadougou Centre" />
@@ -240,6 +242,7 @@ function ReferentialTab() {
       <Dialog open={showCreateTerrain} onOpenChange={setShowCreateTerrain}>
         <DialogContent className="sm:max-w-sm">
           <DialogHeader><DialogTitle>Nouveau terrain</DialogTitle></DialogHeader>
+          <DialogDescription className="sr-only">Créer un nouveau terrain</DialogDescription>
           <div className="space-y-2">
             <Label>Nom</Label>
             <Input value={newTerrainName} onChange={(e) => setNewTerrainName(e.target.value)} placeholder="Ex: Bâtiment A" />
