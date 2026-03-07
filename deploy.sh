@@ -104,6 +104,29 @@ docker exec -i simes-telemetry-db psql \
   < "$SCHEMA_DIR/schema-telemetry.sql"
 ok "telemetry-db schema applied."
 
+# ── Run core migrations ──────────────────────────────────────
+info "Applying core-db migrations..."
+for mig in "$SCHEMA_DIR"/migrations/*.sql; do
+  [ -f "$mig" ] || continue
+  mig_name=$(basename "$mig")
+  info "  → $mig_name"
+  docker exec -i simes-core-db psql \
+    -U "${CORE_DB_USER}" \
+    -d "${CORE_DB_NAME}" \
+    < "$mig" 2>&1 || warn "Migration $mig_name had warnings (may already be applied)"
+done
+ok "Core migrations applied."
+
+# ── Wait for api-core to be healthy ──────────────────────────
+info "Waiting for api-core to be healthy..."
+RETRIES=20
+until docker inspect --format='{{.State.Health.Status}}' simes-api-core 2>/dev/null | grep -q 'healthy'; do
+  RETRIES=$((RETRIES - 1))
+  if [ $RETRIES -le 0 ]; then warn "api-core did not become healthy in time (may still be starting)."; break; fi
+  sleep 3
+done
+if [ $RETRIES -gt 0 ]; then ok "api-core is healthy."; fi
+
 # ── Summary ──────────────────────────────────────────────────
 echo ""
 ok "═══════════════════════════════════════════════════"
