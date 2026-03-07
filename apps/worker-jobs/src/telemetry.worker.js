@@ -1,5 +1,5 @@
 const { Worker } = require("bullmq");
-const { connection, setRunStatus, insertJobResult, telemetryDb } = require("./shared");
+const { connection, setRunStatus, insertJobResult, telemetryDb, db } = require("./shared");
 
 if (!connection) {
   console.warn("[telemetry-worker] Skipped – no Redis connection.");
@@ -230,6 +230,102 @@ async function runProcessHistoricalMessages(payload = {}) {
   }
 }
 
+async function runCleanupUnmappedMessages(payload = {}) {
+  try {
+    // Find unmapped messages that now have mapped devices
+    const messages = await db.query(
+      `SELECT DISTINCT im.id, im.gateway_id, im.device_key, im.payload_raw, im.received_at,
+              dr.terrain_id, dr.id as device_id, pr.point_id
+       FROM incoming_messages im
+       JOIN device_registry dr ON dr.device_key = im.device_key
+       LEFT JOIN point_registry pr ON pr.device_id = dr.id
+       WHERE im.status = 'unmapped'
+         AND dr.device_key IS NOT NULL
+       LIMIT $1`,
+      [payload.limit || 500]
+    );
+
+    if (!messages.rows.length) {
+      return {
+        ok: true,
+        message: "No unmapped messages found for mapped devices",
+        processed: 0,
+      };
+    }
+
+    const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
+    const results = [];
+    let processed = 0;
+    let failed = 0;
+
+    for (const msg of messages.rows) {
+      try {
+        const payload_raw = msg.payload_raw || {};
+        
+        // IMPORTANT: Use the original message arrival time, NOT current time
+        // This ensures historical messages keep their original timestamps
+        const msgTime = payload_raw.time 
+          ? new Date(payload_raw.time).toISOString() 
+          : new Date(msg.received_at).toISOString();
+
+        // Build ingestion payload
+        const ingestPayload = {
+          time: msgTime,
+          terrain_id: msg.terrain_id,
+          source: payload_raw.source ?? {},
+          devices: [
+            {
+              device: {
+                modbus_addr: payload_raw?.device?.modbus_addr ?? null,
+                lora_dev_eui: payload_raw?.device?.lora_dev_eui ?? null,
+                rssi_lora: payload_raw?.device?.rssi_lora ?? null,
+              },
+              metrics: payload_raw.metrics ?? {},
+              raw: payload_raw,
+            },
+          ],
+        };
+
+        const resp = await fetch(`${ingestServiceUrl}/acrel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(ingestPayload),
+          timeout: 10000,
+        });
+
+        const data = await resp.json().catch(() => ({}));
+        if (!resp.ok) {
+          failed++;
+          results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
+          continue;
+        }
+
+        // Mark message as mapped
+        await db.query(
+          `UPDATE incoming_messages
+           SET status = 'mapped', mapped_terrain_id = $2, mapped_point_id = $3
+           WHERE id = $1`,
+          [msg.id, msg.terrain_id, msg.point_id || null]
+        ).catch(() => {});
+
+        processed++;
+        results.push({ message_id: msg.id, ok: true, ingested: true });
+      } catch (e) {
+        failed++;
+        results.push({ message_id: msg.id, ok: false, error: e.message });
+      }
+    }
+
+    return {
+      ok: true,
+      summary: { total: messages.rows.length, processed, failed },
+      results: results.slice(0, 20), // Return first 20 to avoid huge response
+    };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+}
+
 new Worker(
   "telemetry",
   async (job) => {
@@ -287,6 +383,22 @@ new Worker(
       // ── telemetry.process_historical_messages: replay unmapped/buffered messages ──
       if (job.name === "telemetry.process_historical_messages") {
         const summary = await runProcessHistoricalMessages(payload);
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          const status = summary.ok ? "success" : "failed";
+          await setRunStatus(runId, status, {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.cleanup_unmapped_messages: auto-process unmapped messages from mapped devices ──
+      if (job.name === "telemetry.cleanup_unmapped_messages") {
+        const summary = await runCleanupUnmappedMessages(payload);
 
         if (runId) {
           await insertJobResult(runId, job.name, summary);

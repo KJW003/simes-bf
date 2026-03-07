@@ -229,51 +229,6 @@ router.put("/admin/devices/:deviceKey/map", requireAuth, async (req, res) => {
       // Don't fail the entire request if job enqueue fails
     }
 
-    // Auto-process any remaining unmapped messages for this newly-mapped device
-    try {
-      const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
-      const unmappedMsgs = await corePool.query(
-        `SELECT id, payload_raw, received_at FROM incoming_messages
-         WHERE device_key = $1 AND status = 'unmapped'
-         LIMIT 1000`,
-        [deviceKey]
-      );
-
-      for (const msg of unmappedMsgs.rows) {
-        try {
-          const payload = JSON.parse(msg.payload_raw);
-          const msgTime = payload.time 
-            ? new Date(payload.time).toISOString() 
-            : new Date(msg.received_at).toISOString();
-
-          const acrelPayload = {
-            sn: payload.sn || deviceKey,
-            meter_type: payload.meter_type,
-            time: msgTime,
-            data: payload.data || {},
-          };
-
-          const response = await fetch(`${ingestServiceUrl}/acrel`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(acrelPayload),
-          });
-
-          if (response.ok) {
-            await corePool.query(
-              `UPDATE incoming_messages SET status = 'mapped', mapped_terrain_id = $1, mapped_point_id = $2 WHERE id = $3`,
-              [terrain_id, point_id, msg.id]
-            );
-          }
-        } catch (err) {
-          console.warn(`Failed to process unmapped message ${msg.id}:`, err.message);
-        }
-      }
-    } catch (err) {
-      console.warn("Auto-process unmapped messages failed:", err.message);
-      // Don't fail the device mapping if background processing fails
-    }
-
     res.json({ ok: true, device: up.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
