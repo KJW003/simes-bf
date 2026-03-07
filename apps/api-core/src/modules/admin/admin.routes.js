@@ -229,6 +229,51 @@ router.put("/admin/devices/:deviceKey/map", requireAuth, async (req, res) => {
       // Don't fail the entire request if job enqueue fails
     }
 
+    // Auto-process any remaining unmapped messages for this newly-mapped device
+    try {
+      const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
+      const unmappedMsgs = await corePool.query(
+        `SELECT id, payload_raw, received_at FROM incoming_messages
+         WHERE device_key = $1 AND status = 'unmapped'
+         LIMIT 1000`,
+        [deviceKey]
+      );
+
+      for (const msg of unmappedMsgs.rows) {
+        try {
+          const payload = JSON.parse(msg.payload_raw);
+          const msgTime = payload.time 
+            ? new Date(payload.time).toISOString() 
+            : new Date(msg.received_at).toISOString();
+
+          const acrelPayload = {
+            sn: payload.sn || deviceKey,
+            meter_type: payload.meter_type,
+            time: msgTime,
+            data: payload.data || {},
+          };
+
+          const response = await fetch(`${ingestServiceUrl}/acrel`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(acrelPayload),
+          });
+
+          if (response.ok) {
+            await corePool.query(
+              `UPDATE incoming_messages SET status = 'mapped', mapped_terrain_id = $1, mapped_point_id = $2 WHERE id = $3`,
+              [terrain_id, point_id, msg.id]
+            );
+          }
+        } catch (err) {
+          console.warn(`Failed to process unmapped message ${msg.id}:`, err.message);
+        }
+      }
+    } catch (err) {
+      console.warn("Auto-process unmapped messages failed:", err.message);
+      // Don't fail the device mapping if background processing fails
+    }
+
     res.json({ ok: true, device: up.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
@@ -765,6 +810,86 @@ router.post("/admin/incoming/reconcile", requireAuth, async (req, res) => {
       ok: true,
       reconciled_mapped: mapped.rowCount ?? 0,
       reconciled_unmapped: unmapped.rowCount ?? 0,
+    });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /admin/incoming/process-unmapped
+// Process all unmapped messages that now have mapped devices
+// This catches historical messages from before the mapping feature was implemented
+router.post("/incoming/process-unmapped", async (req, res) => {
+  try {
+    const { telemetryQueue } = require("../../jobs/queues");
+    
+    // Find unmapped messages whose devices are now mapped
+    const messages = await corePool.query(
+      `SELECT DISTINCT im.id, im.gateway_id, im.device_key, im.payload_raw, im.received_at,
+              dr.terrain_id, pr.point_id
+       FROM incoming_messages im
+       JOIN device_registry dr ON dr.device_key = im.device_key
+       LEFT JOIN point_registry pr ON pr.device_id = dr.id
+       WHERE im.status = 'unmapped'
+         AND dr.device_key IS NOT NULL
+       LIMIT 5000`
+    );
+
+    const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
+    let enqueued = 0;
+    let failed = 0;
+    const errors = [];
+
+    for (const msg of messages.rows) {
+      try {
+        const payload = JSON.parse(msg.payload_raw);
+        
+        // IMPORTANT: Use the original message arrival time, NOT current time
+        // This ensures historical messages keep their original timestamps
+        const msgTime = payload.time 
+          ? new Date(payload.time).toISOString() 
+          : new Date(msg.received_at).toISOString();
+
+        // Transform to acrel format and send to ingestion service
+        const acrelPayload = {
+          sn: payload.sn || msg.device_key,
+          meter_type: payload.meter_type,
+          time: msgTime,
+          data: payload.data || {},
+        };
+
+        // Send to ingestion service /acrel endpoint
+        const response = await fetch(`${ingestServiceUrl}/acrel`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(acrelPayload),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Ingestion service returned ${response.status}`);
+        }
+
+        // Mark message as mapped after successful processing
+        await corePool.query(
+          `UPDATE incoming_messages 
+           SET status = 'mapped', mapped_terrain_id = $1, mapped_point_id = $2
+           WHERE id = $3`,
+          [msg.terrain_id, msg.point_id || null, msg.id]
+        );
+
+        enqueued++;
+      } catch (err) {
+        failed++;
+        errors.push({ message_id: msg.id, error: err.message });
+      }
+    }
+
+    res.json({
+      ok: true,
+      processed: messages.rows.length,
+      enqueued,
+      failed,
+      errors: errors.length > 0 ? errors.slice(0, 10) : undefined, // Return first 10 errors
     });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
