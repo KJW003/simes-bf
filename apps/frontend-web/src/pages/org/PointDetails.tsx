@@ -41,7 +41,7 @@ const PARAM_GROUPS = [
   { label: 'THD courant', keys: ['thdi_a', 'thdi_b', 'thdi_c'] },
   { label: 'THD tension', keys: ['thdu_a', 'thdu_b', 'thdu_c'] },
   { label: 'Énergie', keys: ['energy_import', 'energy_export'] },
-  { label: 'Autres', keys: ['frequency', 'alarm_state', 'voltage_unbalance'] },
+  { label: 'Autres', keys: ['alarm_state', 'voltage_unbalance'] },
 ];
 
 /** Expandable parameters panel replacing gauges */
@@ -179,8 +179,7 @@ export default function PointDetails() {
       thdu_a: num(r.thdu_a), thdu_b: num(r.thdu_b), thdu_c: num(r.thdu_c),
       // Énergie
       energy_import: num(r.energy_import), energy_export: num(r.energy_export),
-      // Fréquence
-      frequency: num(r.frequency),
+
     })).reverse(),
     [readings],
   );
@@ -268,7 +267,6 @@ export default function PointDetails() {
         <KpiCard label="Courant A" value={fmt(latest?.current_a) + ' A'} icon={<Activity className="w-4 h-4" />} />
         <KpiCard label="PF total" value={fmt(latest?.power_factor_total)} icon={<Zap className="w-4 h-4" />}
           variant={latest?.power_factor_total != null && Number(latest.power_factor_total) < 0.85 ? 'warning' : 'default'} />
-        <KpiCard label="Fréquence" value={fmt(latest?.frequency) + ' Hz'} icon={<Activity className="w-4 h-4" />} />
       </div>
 
       {/* Expandable parameters */}
@@ -450,7 +448,6 @@ export default function PointDetails() {
                       <th>PF</th>
                       <th>THDi A</th><th>THDi B</th><th>THDi C</th>
                       <th>THDu A</th><th>THDu B</th><th>THDu C</th>
-                      <th>Freq</th>
                       <th>E imp.</th><th>E exp.</th>
                     </tr>
                   </thead>
@@ -477,7 +474,6 @@ export default function PointDetails() {
                         <td className="mono">{fmt(r.thdu_a)}</td>
                         <td className="mono">{fmt(r.thdu_b)}</td>
                         <td className="mono">{fmt(r.thdu_c)}</td>
-                        <td className="mono">{fmt(r.frequency)}</td>
                         <td className="mono">{fmt(r.energy_import)}</td>
                         <td className="mono">{fmt(r.energy_export)}</td>
                       </tr>

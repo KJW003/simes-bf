@@ -87,7 +87,7 @@ export default function Reports() {
     if (!readings.length) return;
     const columns = ['time', 'point_id', 'active_power_total', 'reactive_power_total', 'apparent_power_total',
       'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c',
-      'power_factor_total', 'energy_import', 'energy_export', 'thdi_a', 'thdi_b', 'thdi_c', 'frequency'];
+      'power_factor_total', 'energy_import', 'energy_export', 'thdi_a', 'thdi_b', 'thdi_c'];
     const header = columns.join(',') + '\n';
     const rows = [...readings]
       .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())

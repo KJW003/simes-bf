@@ -152,27 +152,40 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       latestPower.rows[0]?.time || null
     );
 
-    // Energy today (from raw readings, per-point delta then sum)
+    // Energy today (from raw readings, per-point delta then sum — Load meters only)
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    const energyToday = await telemetryPool.query(
-      `SELECT
-         SUM(delta_import) AS import_kwh,
-         SUM(delta_export) AS export_kwh
-       FROM (
-         SELECT point_id,
-                GREATEST(MAX(energy_import) - MIN(energy_import), 0) AS delta_import,
-                GREATEST(MAX(energy_export) - MIN(energy_export), 0) AS delta_export
-         FROM acrel_readings
-         WHERE terrain_id = $1 AND time >= $2
-         GROUP BY point_id
-       ) sub`,
-      [terrainId, todayStart.toISOString()]
+    // Get Load-type point IDs from core DB
+    const loadPts = await corePool.query(
+      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'LOAD'`,
+      [terrainId]
     );
+    const loadIds = loadPts.rows.map(r => r.id);
 
-    const importKwh = Number(energyToday.rows[0]?.import_kwh || 0);
-    const exportKwh = Number(energyToday.rows[0]?.export_kwh || 0);
+    let importKwh = 0;
+    let exportKwh = 0;
+
+    if (loadIds.length > 0) {
+      const energyToday = await telemetryPool.query(
+        `SELECT
+           SUM(delta_import) AS import_kwh,
+           SUM(delta_export) AS export_kwh
+         FROM (
+           SELECT point_id,
+                  GREATEST(MAX(energy_import) - MIN(energy_import), 0) AS delta_import,
+                  GREATEST(MAX(energy_export) - MIN(energy_export), 0) AS delta_export
+           FROM acrel_readings
+           WHERE terrain_id = $1 AND time >= $2
+             AND point_id = ANY($3)
+           GROUP BY point_id
+         ) sub`,
+        [terrainId, todayStart.toISOString(), loadIds]
+      );
+
+      importKwh = Number(energyToday.rows[0]?.import_kwh || 0);
+      exportKwh = Number(energyToday.rows[0]?.export_kwh || 0);
+    }
 
     res.json({
       ok: true,

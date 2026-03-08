@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
@@ -11,9 +11,11 @@ import {
 import {
   Zap, Activity, Clock, Radio, Loader2, Leaf, TrendingUp,
   DollarSign, AlertTriangle, Bell,
-  Settings2, CalendarDays,
+  Settings2, CalendarDays, CheckCircle2, GripVertical, X, Eye, EyeOff,
+  Maximize2, Minimize2,
 } from 'lucide-react';
 import { useDashboard, useReadings, useTerrainOverview, useIncidentStats } from '@/hooks/useApi';
+import { useAlarmEngine, loadRules, saveRules } from '@/hooks/useAlarmEngine';
 import { WidgetBoard } from '@/components/widgets/WidgetBoard';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -323,7 +325,7 @@ function DailyCostWidget({ terrainId }: { terrainId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={250}>
+        <ResponsiveContainer width="100%" height={180}>
           <BarChart data={dailyCost}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
             <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -377,7 +379,7 @@ function CarbonWidget({ terrainId }: { terrainId: string }) {
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={250}>
+        <ResponsiveContainer width="100%" height={180}>
           <AreaChart data={dailyCarbon}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
             <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
@@ -393,58 +395,19 @@ function CarbonWidget({ terrainId }: { terrainId: string }) {
   );
 }
 
-/** Alarm Widget */
+/** Alarm Widget — evaluates ONLY configured rules + device bitflags */
 function AlarmWidget({ terrainId }: { terrainId: string }) {
-  const { data: overviewData } = useTerrainOverview(terrainId);
-  const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
+  const { activeAlarms, resolvedAlarms, alarmsByDay, stats, clearHistory } = useAlarmEngine(terrainId);
   const [selectedDay, setSelectedDay] = useState<string | null>(null);
+  const [showResolved, setShowResolved] = useState(false);
 
-  const { alarmsByDay, todayAlarms, allAlarms } = useMemo(() => {
-    const alarms: Array<{ point: string; type: string; time: string; severity: 'warning' | 'critical'; day: string }> = [];
+  const todayLabel = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
 
-    for (const p of points) {
-      const r = p.readings;
-      if (!r) continue;
-      const time = r.time ? String(r.time) : new Date().toISOString();
-      const day = new Date(time).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-
-      const alarmState = r.alarm_state != null ? Number(r.alarm_state) : 0;
-      if (alarmState > 0) {
-        const types: Array<{ type: string; severity: 'warning' | 'critical' }> = [];
-        if (alarmState & 1) types.push({ type: 'Surtension', severity: 'critical' });
-        if (alarmState & 2) types.push({ type: 'Sous-tension', severity: 'critical' });
-        if (alarmState & 4) types.push({ type: 'Surintensité', severity: 'critical' });
-        if (alarmState & 8) types.push({ type: 'Perte de phase', severity: 'critical' });
-        if (alarmState & 16) types.push({ type: 'THD élevé', severity: 'warning' });
-        if (alarmState & 32) types.push({ type: 'PF faible', severity: 'warning' });
-        if (types.length === 0) types.push({ type: `Alarme code ${alarmState}`, severity: 'warning' });
-        for (const t of types) alarms.push({ point: String(p.name), time, day, ...t });
-      }
-
-      // Quality-based warnings
-      const pf = r.power_factor_total != null ? Number(r.power_factor_total) : null;
-      if (pf != null && pf < 0.85 && pf > 0) {
-        alarms.push({ point: String(p.name), type: `PF faible (${pf.toFixed(2)})`, time, day, severity: 'warning' });
-      }
-      const thd = r.thdi_a != null ? Number(r.thdi_a) : null;
-      if (thd != null && thd > 8) {
-        alarms.push({ point: String(p.name), type: `THD élevé (${thd.toFixed(1)}%)`, time, day, severity: thd > 20 ? 'critical' : 'warning' });
-      }
-    }
-
-    const byDay = new Map<string, number>();
-    for (const a of alarms) byDay.set(a.day, (byDay.get(a.day) ?? 0) + 1);
-
-    const today = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-    return {
-      alarmsByDay: Array.from(byDay.entries()).map(([day, count]) => ({ day, count })),
-      todayAlarms: alarms.filter(a => a.day === today),
-      allAlarms: alarms,
-    };
-  }, [points]);
-
-  const displayAlarms = selectedDay ? allAlarms.filter(a => a.day === selectedDay) : todayAlarms;
-  const displayLabel = selectedDay ?? new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+  const displayAlarms = useMemo(() => {
+    const base = showResolved ? resolvedAlarms : activeAlarms;
+    if (!selectedDay) return base;
+    return base.filter(a => new Date(a.triggeredAt).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }) === selectedDay);
+  }, [activeAlarms, resolvedAlarms, selectedDay, showResolved]);
 
   return (
     <Card>
@@ -452,40 +415,74 @@ function AlarmWidget({ terrainId }: { terrainId: string }) {
         <CardTitle className="text-base font-medium flex items-center gap-2">
           <Bell className="w-4 h-4 text-red-500" />
           Alarmes
-          {todayAlarms.length > 0 && <Badge className="bg-red-500 text-white text-[10px]">{todayAlarms.length} aujourd'hui</Badge>}
+          {stats.active > 0 && <Badge className="bg-red-500 text-white text-[10px]">{stats.active} actives</Badge>}
+          {stats.resolved > 0 && <Badge className="bg-green-600 text-white text-[10px]">{stats.resolved} résolues</Badge>}
         </CardTitle>
       </CardHeader>
       <CardContent>
+        {/* Active/Resolved toggle */}
+        <div className="flex items-center gap-2 mb-3">
+          <Button size="sm" variant={!showResolved ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setShowResolved(false)}>
+            <AlertTriangle className="w-3 h-3 mr-1" /> Actives ({stats.active})
+          </Button>
+          <Button size="sm" variant={showResolved ? 'default' : 'outline'} className="h-7 text-xs" onClick={() => setShowResolved(true)}>
+            <CheckCircle2 className="w-3 h-3 mr-1" /> Résolues ({stats.resolved})
+          </Button>
+          {stats.total > 0 && (
+            <button onClick={clearHistory} className="ml-auto text-[10px] text-muted-foreground hover:text-destructive">Effacer l'historique</button>
+          )}
+        </div>
         <div className="flex gap-4">
+          {/* Day sidebar */}
           <div className="w-36 shrink-0 border-r pr-3 space-y-1 max-h-64 overflow-y-auto">
             <div className="text-[10px] font-semibold text-muted-foreground uppercase mb-2">Par jour</div>
             {alarmsByDay.length === 0 && <div className="text-xs text-muted-foreground">Aucune alarme</div>}
-            {alarmsByDay.map(({ day, count }) => (
+            {alarmsByDay.map(({ day, active, resolved, total }) => (
               <button
                 key={day}
                 onClick={() => setSelectedDay(day === selectedDay ? null : day)}
                 className={`w-full flex items-center justify-between px-2 py-1.5 rounded text-xs transition-colors ${day === selectedDay ? 'bg-primary/10 text-primary font-medium' : 'hover:bg-muted/50'}`}
               >
                 <span>{day}</span>
-                <Badge variant={day === selectedDay ? 'default' : 'outline'} className="text-[10px] h-5">{count}</Badge>
+                <span className="flex items-center gap-1">
+                  {active > 0 && <Badge className="bg-red-500 text-white text-[10px] h-5">{active}</Badge>}
+                  {resolved > 0 && <Badge className="bg-green-600 text-white text-[10px] h-5">{resolved}</Badge>}
+                </span>
               </button>
             ))}
           </div>
+          {/* Alarm list */}
           <div className="flex-1 max-h-64 overflow-y-auto space-y-1.5">
-            <div className="text-xs font-medium text-muted-foreground mb-2">Alarmes du {displayLabel}</div>
+            <div className="text-xs font-medium text-muted-foreground mb-2">
+              {showResolved ? 'Alarmes résolues' : 'Alarmes actives'}{selectedDay ? ` — ${selectedDay}` : ''}
+            </div>
             {displayAlarms.length === 0 && <div className="text-sm text-muted-foreground py-4 text-center">Aucune alarme</div>}
-            {displayAlarms.map((a, i) => (
-              <div key={i} className={`flex items-center gap-2 px-3 py-2 rounded text-sm border ${a.severity === 'critical' ? 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950' : 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950'}`}>
-                <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${a.severity === 'critical' ? 'text-red-500' : 'text-amber-500'}`} />
-                <div className="flex-1 min-w-0">
-                  <div className="font-medium truncate">{a.point}</div>
-                  <div className="text-xs text-muted-foreground">{a.type}</div>
+            {displayAlarms.map((a) => {
+              const isResolved = a.resolvedAt !== null;
+              return (
+                <div key={a.id} className={`flex items-center gap-2 px-3 py-2 rounded text-sm border ${isResolved ? 'border-green-200 bg-green-50 dark:border-green-900 dark:bg-green-950' : a.severity === 'critical' ? 'border-red-200 bg-red-50 dark:border-red-900 dark:bg-red-950' : 'border-amber-200 bg-amber-50 dark:border-amber-900 dark:bg-amber-950'}`}>
+                  {isResolved
+                    ? <CheckCircle2 className="w-3.5 h-3.5 shrink-0 text-green-600" />
+                    : <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${a.severity === 'critical' ? 'text-red-500' : 'text-amber-500'}`} />
+                  }
+                  <div className="flex-1 min-w-0">
+                    <div className="font-medium truncate">{a.pointName}</div>
+                    <div className="text-xs text-muted-foreground">{a.type}</div>
+                  </div>
+                  <div className="text-right shrink-0 space-y-0.5">
+                    <div className="text-[10px] text-muted-foreground">
+                      {new Date(a.triggeredAt).toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                    {isResolved && (
+                      <div className="text-[10px] text-green-600">
+                        Résolu {new Date(a.resolvedAt!).toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                      </div>
+                    )}
+                  </div>
+                  <Badge variant="outline" className="text-[9px] shrink-0">{a.source === 'device' ? 'HW' : 'Règle'}</Badge>
                 </div>
-                <span className="text-[10px] text-muted-foreground shrink-0">
-                  {new Date(a.time).toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       </CardContent>
@@ -493,14 +490,16 @@ function AlarmWidget({ terrainId }: { terrainId: string }) {
   );
 }
 
-/** Alarm Configuration Panel */
+/** Alarm Configuration Panel — with per-device rules */
 function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
-  const [rules, setRules] = useState<Array<{ id: number; condition: string; element: string; value: string; active: boolean }>>(() => {
-    try { const s = localStorage.getItem('simes_alarm_rules'); return s ? JSON.parse(s) : []; } catch { return []; }
-  });
+  const { data: overviewData } = useTerrainOverview(terrainId);
+  const devicePoints = (overviewData?.points ?? []) as Array<Record<string, any>>;
+
+  const [rules, setRules] = useState<Array<{ id: number; condition: string; element: string; value: string; active: boolean; pointId?: string | null }>>(() => loadRules());
   const [newCondition, setNewCondition] = useState('>');
   const [newElement, setNewElement] = useState('');
   const [newValue, setNewValue] = useState('');
+  const [newPointId, setNewPointId] = useState('');
 
   // Device status thresholds (shared with SiteMapWidget via simes-map-config)
   const [staleMin, setStaleMin] = useState(() => {
@@ -518,12 +517,22 @@ function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
   };
 
   const parameters = ['active_power_total', 'reactive_power_total', 'voltage_a', 'voltage_b', 'voltage_c',
-    'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_import', 'frequency', 'thdi_a'];
+    'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_import', 'thdi_a'];
 
-  const saveRules = (updated: typeof rules) => { setRules(updated); localStorage.setItem('simes_alarm_rules', JSON.stringify(updated)); };
-  const addRule = () => { if (!newElement || !newValue) return; saveRules([...rules, { id: Date.now(), condition: newCondition, element: newElement, value: newValue, active: true }]); setNewElement(''); setNewValue(''); };
-  const toggleRule = (id: number) => saveRules(rules.map(r => r.id === id ? { ...r, active: !r.active } : r));
-  const deleteRule = (id: number) => saveRules(rules.filter(r => r.id !== id));
+  const doSaveRules = (updated: typeof rules) => { setRules(updated); saveRules(updated); };
+  const addRule = () => {
+    if (!newElement || !newValue) return;
+    doSaveRules([...rules, { id: Date.now(), condition: newCondition, element: newElement, value: newValue, active: true, pointId: newPointId || null }]);
+    setNewElement(''); setNewValue(''); setNewPointId('');
+  };
+  const toggleRule = (id: number) => doSaveRules(rules.map(r => r.id === id ? { ...r, active: !r.active } : r));
+  const deleteRule = (id: number) => doSaveRules(rules.filter(r => r.id !== id));
+
+  const getPointName = (pid: string | null | undefined) => {
+    if (!pid) return 'Tous';
+    const pt = devicePoints.find(p => String(p.id) === pid);
+    return pt ? String(pt.name) : pid;
+  };
 
   return (
     <Card>
@@ -537,7 +546,7 @@ function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
         {/* Device status thresholds */}
         <div className="p-3 border rounded-lg bg-muted/30 space-y-2">
           <div className="text-xs font-medium text-muted-foreground mb-1">Statut des appareils (dernière donnée reçue)</div>
-          <div className="flex items-center gap-3 text-xs">
+          <div className="flex items-center gap-3 text-xs flex-wrap">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-green-500" /> En ligne</span>
             <span className="text-muted-foreground">&lt;</span>
             <input type="number" min={1} value={staleMin} onChange={e => { const v = Number(e.target.value); setStaleMin(v); saveStatusThresholds(v, offlineMin); }} className="h-7 w-16 rounded border px-2 text-xs bg-background text-center" />
@@ -552,15 +561,12 @@ function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
         {/* Parameter-based alarm rules */}
         <div className="flex flex-wrap items-end gap-2 p-3 border rounded-lg bg-muted/30">
           <div className="space-y-1">
-            <label className="text-[10px] font-medium text-muted-foreground">Condition</label>
-            <Select value={newCondition} onValueChange={setNewCondition}>
-              <SelectTrigger className="w-20 h-8 text-xs"><SelectValue /></SelectTrigger>
+            <label className="text-[10px] font-medium text-muted-foreground">Appareil</label>
+            <Select value={newPointId || '_all'} onValueChange={v => setNewPointId(v === '_all' ? '' : v)}>
+              <SelectTrigger className="w-44 h-8 text-xs"><SelectValue placeholder="Tous" /></SelectTrigger>
               <SelectContent>
-                <SelectItem value=">">&gt;</SelectItem>
-                <SelectItem value="<">&lt;</SelectItem>
-                <SelectItem value=">=">&ge;</SelectItem>
-                <SelectItem value="<=">&le;</SelectItem>
-                <SelectItem value="==">=</SelectItem>
+                <SelectItem value="_all">Tous les appareils</SelectItem>
+                {devicePoints.map(p => <SelectItem key={String(p.id)} value={String(p.id)}>{String(p.name)}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -574,18 +580,32 @@ function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
             </Select>
           </div>
           <div className="space-y-1">
+            <label className="text-[10px] font-medium text-muted-foreground">Condition</label>
+            <Select value={newCondition} onValueChange={setNewCondition}>
+              <SelectTrigger className="w-20 h-8 text-xs"><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value=">">&gt;</SelectItem>
+                <SelectItem value="<">&lt;</SelectItem>
+                <SelectItem value=">=">&ge;</SelectItem>
+                <SelectItem value="<=">&le;</SelectItem>
+                <SelectItem value="==">=</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1">
             <label className="text-[10px] font-medium text-muted-foreground">Valeur seuil</label>
             <input type="number" step="any" value={newValue} onChange={e => setNewValue(e.target.value)} className="h-8 w-24 rounded border px-2 text-xs bg-background" placeholder="ex: 0.7" />
           </div>
           <Button size="sm" className="h-8 text-xs" onClick={addRule} disabled={!newElement || !newValue}>+ Ajouter</Button>
         </div>
-        {rules.length === 0 && <div className="text-sm text-muted-foreground text-center py-4">Aucune règle configurée</div>}
+        {rules.length === 0 && <div className="text-sm text-muted-foreground text-center py-4">Aucune règle configurée — les alarmes ne se déclencheront que sur les codes matériels (alarm_state)</div>}
         <div className="space-y-1.5 max-h-48 overflow-y-auto">
           {rules.map(rule => (
             <div key={rule.id} className={`flex items-center gap-3 px-3 py-2 rounded border text-sm ${rule.active ? '' : 'opacity-50'}`}>
-              <button onClick={() => toggleRule(rule.id)} className={`w-4 h-4 rounded-sm border ${rule.active ? 'bg-primary border-primary' : 'border-muted-foreground/40'}`}>
+              <button onClick={() => toggleRule(rule.id)} className={`w-4 h-4 rounded-sm border shrink-0 ${rule.active ? 'bg-primary border-primary' : 'border-muted-foreground/40'}`}>
                 {rule.active && <span className="text-primary-foreground text-[10px] flex items-center justify-center">✓</span>}
               </button>
+              <Badge variant="outline" className="text-[9px] shrink-0">{getPointName(rule.pointId)}</Badge>
               <code className="text-xs bg-muted px-1.5 py-0.5 rounded">{rule.element.replace(/_/g, ' ')} {rule.condition} {rule.value}</code>
               <span className="flex-1" />
               <button onClick={() => deleteRule(rule.id)} className="text-xs text-destructive hover:underline">Supprimer</button>
@@ -599,11 +619,76 @@ function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
 
 /* PointsMapWidget is now <SiteMapWidget> from @/components/widgets/SiteMapWidget */
 
+/* ── Dashboard Section Layout System ── */
+interface SectionLayout {
+  id: string;
+  visible: boolean;
+  width: 'half' | 'full';
+}
+
+const SECTION_DEFS: Array<{ id: string; label: string; defaultWidth: 'half' | 'full' }> = [
+  { id: 'kpis', label: 'KPIs temps réel', defaultWidth: 'full' },
+  { id: 'load-curve', label: 'Courbe de charge', defaultWidth: 'full' },
+  { id: 'map', label: 'Carte du site', defaultWidth: 'full' },
+  { id: 'alarms', label: 'Alarmes', defaultWidth: 'half' },
+  { id: 'alarm-config', label: 'Config. alarmes', defaultWidth: 'half' },
+  { id: 'daily-cost', label: 'Coût journalier', defaultWidth: 'half' },
+  { id: 'carbon', label: 'Empreinte carbone', defaultWidth: 'half' },
+  { id: 'power-peaks', label: 'Pics de puissance', defaultWidth: 'full' },
+  { id: 'widget-board', label: 'Widgets personnalisés', defaultWidth: 'full' },
+];
+
+const LAYOUT_KEY = 'simes_dashboard_section_layout';
+
+function loadSectionLayout(): SectionLayout[] {
+  try {
+    const s = localStorage.getItem(LAYOUT_KEY);
+    if (s) {
+      const parsed = JSON.parse(s) as SectionLayout[];
+      // Ensure all sections exist (add new ones if missing)
+      const ids = new Set(parsed.map(p => p.id));
+      for (const def of SECTION_DEFS) {
+        if (!ids.has(def.id)) parsed.push({ id: def.id, visible: true, width: def.defaultWidth });
+      }
+      return parsed;
+    }
+  } catch { /* fall through */ }
+  return SECTION_DEFS.map(d => ({ id: d.id, visible: true, width: d.defaultWidth }));
+}
+
+function saveSectionLayout(layout: SectionLayout[]) {
+  localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+}
+
+function SectionWrapper({ id, label, width, onRemove, onToggleWidth, children }: {
+  id: string; label: string; width: 'half' | 'full';
+  onRemove: () => void; onToggleWidth: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className={width === 'full' ? 'col-span-2' : 'col-span-2 lg:col-span-1'}>
+      <div className="group relative">
+        <div className="absolute -top-2 right-2 z-10 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-background/80 rounded px-1 py-0.5 border shadow-sm">
+          <button onClick={onToggleWidth} className="p-1 text-muted-foreground hover:text-foreground" title="Changer la taille">
+            {width === 'full' ? <Minimize2 className="w-3 h-3" /> : <Maximize2 className="w-3 h-3" />}
+          </button>
+          <button onClick={onRemove} className="p-1 text-muted-foreground hover:text-destructive" title="Masquer">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const { selectedTerrain, selectedSite, selectedTerrainId, aggregatedView } = useAppContext();
   const [datePreset, setDatePreset] = useState<'today' | 'yesterday' | '7d' | '30d' | 'custom'>('today');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
+  const [sectionLayout, setSectionLayout] = useState<SectionLayout[]>(loadSectionLayout);
+  const [showLayoutPanel, setShowLayoutPanel] = useState(false);
 
   const { from, to } = useMemo(() => {
     const now = new Date();
@@ -616,12 +701,56 @@ export default function Dashboard() {
     }
   }, [datePreset, customFrom, customTo]);
 
+  const updateLayout = useCallback((updater: (prev: SectionLayout[]) => SectionLayout[]) => {
+    setSectionLayout(prev => {
+      const next = updater(prev);
+      saveSectionLayout(next);
+      return next;
+    });
+  }, []);
+
+  const hideSection = useCallback((id: string) => {
+    updateLayout(prev => prev.map(s => s.id === id ? { ...s, visible: false } : s));
+  }, [updateLayout]);
+
+  const toggleWidth = useCallback((id: string) => {
+    updateLayout(prev => prev.map(s => s.id === id ? { ...s, width: s.width === 'full' ? 'half' : 'full' } : s));
+  }, [updateLayout]);
+
+  const toggleVisibility = useCallback((id: string) => {
+    updateLayout(prev => prev.map(s => s.id === id ? { ...s, visible: !s.visible } : s));
+  }, [updateLayout]);
+
+  const resetLayout = useCallback(() => {
+    const fresh = SECTION_DEFS.map(d => ({ id: d.id, visible: true, width: d.defaultWidth }));
+    setSectionLayout(fresh);
+    saveSectionLayout(fresh);
+  }, []);
+
+  const hiddenCount = sectionLayout.filter(s => !s.visible).length;
+
   const title = aggregatedView
     ? 'Site: ' + (selectedSite?.name ?? 'Site')
     : selectedTerrain?.name ?? 'Tableau de bord';
   const description = aggregatedView
     ? 'Vue agrégée sur ' + (selectedSite?.terrainsCount ?? 0) + ' terrain(s)'
     : 'Monitoring temps réel — ' + (selectedTerrain?.pointsCount ?? 0) + ' points';
+
+  const renderSection = (id: string) => {
+    if (!selectedTerrainId) return null;
+    switch (id) {
+      case 'kpis': return <LiveKPIs terrainId={selectedTerrainId} />;
+      case 'load-curve': return <UnifiedLoadCurve terrainId={selectedTerrainId} from={from} to={to} />;
+      case 'map': return <SiteMapWidget terrainId={selectedTerrainId} />;
+      case 'alarms': return <AlarmWidget terrainId={selectedTerrainId} />;
+      case 'alarm-config': return <AlarmConfigPanel terrainId={selectedTerrainId} />;
+      case 'daily-cost': return <DailyCostWidget terrainId={selectedTerrainId} />;
+      case 'carbon': return <CarbonWidget terrainId={selectedTerrainId} />;
+      case 'power-peaks': return <PowerPeaksTable terrainId={selectedTerrainId} from={from} to={to} />;
+      case 'widget-board': return <WidgetBoard />;
+      default: return null;
+    }
+  };
 
   return (
     <div className="space-y-6">
@@ -644,9 +773,7 @@ export default function Dashboard() {
 
       {selectedTerrainId && (
         <>
-          <LiveKPIs terrainId={selectedTerrainId} />
-
-          {/* Date range */}
+          {/* Date range + layout controls */}
           <Card>
             <CardContent className="p-3 flex flex-wrap items-center gap-2">
               <CalendarDays className="w-4 h-4 text-muted-foreground" />
@@ -661,26 +788,57 @@ export default function Dashboard() {
                   <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)} className="h-7 rounded border px-2 text-xs bg-background" />
                 </div>
               )}
+              <div className="ml-auto flex items-center gap-1">
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setShowLayoutPanel(!showLayoutPanel)}>
+                  {showLayoutPanel ? <EyeOff className="w-3 h-3 mr-1" /> : <Eye className="w-3 h-3 mr-1" />}
+                  Sections{hiddenCount > 0 && ` (${hiddenCount} masquées)`}
+                </Button>
+                <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={resetLayout}>Réinitialiser</Button>
+              </div>
             </CardContent>
           </Card>
 
-          <UnifiedLoadCurve terrainId={selectedTerrainId} from={from} to={to} />
+          {/* Section visibility panel */}
+          {showLayoutPanel && (
+            <Card>
+              <CardContent className="p-3 flex flex-wrap items-center gap-2">
+                {sectionLayout.map(s => {
+                  const def = SECTION_DEFS.find(d => d.id === s.id);
+                  return (
+                    <Button
+                      key={s.id}
+                      size="sm"
+                      variant={s.visible ? 'default' : 'outline'}
+                      className="h-7 text-xs"
+                      onClick={() => toggleVisibility(s.id)}
+                    >
+                      {s.visible ? <Eye className="w-3 h-3 mr-1" /> : <EyeOff className="w-3 h-3 mr-1" />}
+                      {def?.label ?? s.id}
+                    </Button>
+                  );
+                })}
+              </CardContent>
+            </Card>
+          )}
 
-          <SiteMapWidget terrainId={selectedTerrainId} />
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <AlarmWidget terrainId={selectedTerrainId} />
-            <AlarmConfigPanel terrainId={selectedTerrainId} />
+          {/* Dashboard sections in configurable grid */}
+          <div className="grid grid-cols-2 gap-4">
+            {sectionLayout.filter(s => s.visible).map(s => {
+              const def = SECTION_DEFS.find(d => d.id === s.id);
+              return (
+                <SectionWrapper
+                  key={s.id}
+                  id={s.id}
+                  label={def?.label ?? s.id}
+                  width={s.width}
+                  onRemove={() => hideSection(s.id)}
+                  onToggleWidth={() => toggleWidth(s.id)}
+                >
+                  {renderSection(s.id)}
+                </SectionWrapper>
+              );
+            })}
           </div>
-
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            <DailyCostWidget terrainId={selectedTerrainId} />
-            <CarbonWidget terrainId={selectedTerrainId} />
-          </div>
-
-          <PowerPeaksTable terrainId={selectedTerrainId} from={from} to={to} />
-
-          <WidgetBoard />
 
           <div className="flex items-center justify-between">
             <h3 className="text-sm font-semibold flex items-center gap-2">

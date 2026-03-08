@@ -16,6 +16,7 @@ import {
   Calculator,
   ShieldCheck,
   MapPin,
+  X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -82,12 +83,20 @@ function NavSection({ title, children }: { title: string; children: React.ReactN
   );
 }
 
-export function OrgSidebar() {
+export function OrgSidebar({ onClose }: { onClose?: () => void } = {}) {
   const { currentUser, selectedTerrain, hasSolar } = useAppContext();
   const role = currentUser.role;
 
   return (
     <aside className="w-56 bg-sidebar border-r border-sidebar-border flex flex-col">
+      {onClose && (
+        <div className="flex items-center justify-between px-4 pt-3 pb-1 md:hidden">
+          <span className="text-sm font-semibold">Menu</span>
+          <button onClick={onClose} className="p-1 rounded hover:bg-sidebar-accent">
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
       <ScrollArea className="flex-1 py-4">
         <nav className="px-3 space-y-6">
           <NavSection title="Principal">

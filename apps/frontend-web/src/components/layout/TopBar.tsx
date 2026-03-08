@@ -23,6 +23,7 @@ import {
   Moon,
   Sun,
   ExternalLink,
+  Menu,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -36,7 +37,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-export function TopBar() {
+export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
   const {
     mode,
     currentUser,
@@ -94,8 +95,15 @@ export function TopBar() {
   };
 
   return (
-    <header className="h-14 border-b border-border/60 bg-card/80 backdrop-blur-md flex items-center px-4 gap-4 sticky top-0 z-50 shadow-[0_1px_3px_-1px_rgba(0,0,0,0.06)]">
-      <div className="flex items-center gap-2 min-w-[180px]">
+    <header className="h-14 border-b border-border/60 bg-card/80 backdrop-blur-md flex items-center px-4 gap-2 md:gap-4 sticky top-0 z-50 shadow-[0_1px_3px_-1px_rgba(0,0,0,0.06)]">
+      {/* Hamburger for mobile */}
+      {onToggleSidebar && (
+        <Button variant="ghost" size="icon" className="h-8 w-8 md:hidden" onClick={onToggleSidebar}>
+          <Menu className="w-5 h-5" />
+        </Button>
+      )}
+
+      <div className="flex items-center gap-2 min-w-[140px] md:min-w-[180px]">
         <div className="w-8 h-8 rounded-lg gradient-primary flex items-center justify-center">
           <span className="text-white font-bold text-sm">S</span>
         </div>
@@ -106,7 +114,7 @@ export function TopBar() {
       </div>
 
       {mode === 'org' && currentUser.role !== 'platform_super_admin' && (
-        <div className="flex items-center gap-2">
+        <div className="hidden md:flex items-center gap-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 gap-2">

@@ -38,7 +38,6 @@ const METRICS = [
   { key: 'current_c', label: 'Courant phase C (A)', unit: 'A' },
   { key: 'power_factor_total', label: 'Facteur de puissance', unit: '' },
   { key: 'energy_import', label: 'Énergie importée (kWh)', unit: 'kWh' },
-  { key: 'frequency', label: 'Fréquence (Hz)', unit: 'Hz' },
   { key: 'thdi_a', label: 'THD courant A (%)', unit: '%' },
 ] as const;
 
@@ -224,7 +223,7 @@ export default function History() {
     if (!readings.length) return;
     const columns = ['time', 'point_id', 'active_power_total', 'reactive_power_total', 'apparent_power_total',
       'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c',
-      'power_factor_total', 'energy_import', 'frequency', 'thdi_a'];
+      'power_factor_total', 'energy_import', 'thdi_a'];
     const header = columns.join(',') + '\n';
     const rows = [...readings]
       .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
@@ -502,7 +501,6 @@ export default function History() {
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Q (kvar)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">S (kVA)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF</th>
-                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Freq</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">E imp.</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDi A</th>
                         </tr>
@@ -532,7 +530,6 @@ export default function History() {
                                 <td className="py-1 px-2 text-right mono">{fmt(r.reactive_power_total)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.apparent_power_total)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.power_factor_total)}</td>
-                                <td className="py-1 px-2 text-right mono">{fmt(r.frequency)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.energy_import)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.thdi_a)}</td>
                               </tr>

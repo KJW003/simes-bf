@@ -20,6 +20,18 @@
   </head>
 
   <body>
+    <script>
+      // Apply saved theme before React renders to avoid flash
+      (function(){
+        try {
+          var p = JSON.parse(localStorage.getItem('simes-preferences') || '{}');
+          var t = p.theme || 'light';
+          if (t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+            document.documentElement.classList.add('dark');
+          }
+        } catch(e){}
+      })();
+    </script>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

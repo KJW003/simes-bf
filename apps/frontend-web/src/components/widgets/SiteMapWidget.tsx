@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap } from 'react-leaflet';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
+import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, useMapEvents } from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   MapPin, Settings2, Cloud, Thermometer, Wind, Droplets,
-  Wifi, WifiOff, Clock, Radio, X,
+  Wifi, WifiOff, Clock, Radio, X, Edit3, MousePointerClick, Hexagon,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTerrainOverview } from '@/hooks/useApi';
@@ -146,6 +146,16 @@ function RecenterMap({ lat, lng, zoom }: { lat: number; lng: number; zoom: numbe
   return null;
 }
 
+/* ─── Map click handler for edit modes ────────────────── */
+function MapClickHandler({ onMapClick }: { onMapClick: (lat: number, lng: number) => void }) {
+  useMapEvents({
+    click(e) {
+      onMapClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
 /* ─── Config dialog ───────────────────────────────────── */
 function ConfigDialog({ open, onClose, config, onSave }: {
   open: boolean;
@@ -265,9 +275,39 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const zones = (overviewData?.zones ?? []) as Array<Record<string, any>>;
 
+  // Edit modes: 'none' | 'place-point' | 'draw-zone'
+  const [editMode, setEditMode] = useState<'none' | 'place-point' | 'draw-zone'>('none');
+  const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
+  const [drawingZoneCoords, setDrawingZoneCoords] = useState<[number, number][]>([]);
+  const [drawingZoneName, setDrawingZoneName] = useState('');
+
+  // Auto-import zones from API if no config zones exist
+  useEffect(() => {
+    if (zones.length > 0 && (!config.zones || config.zones.length === 0)) {
+      const colors = ['#3b82f680', '#10b98180', '#f59e0b80', '#ef444480', '#8b5cf680'];
+      const apiZones = zones.map((z, i) => ({
+        name: String(z.name ?? `Zone ${i + 1}`),
+        color: colors[i % colors.length],
+        coords: [
+          [config.lat + 0.0005, config.lng - 0.0005],
+          [config.lat + 0.0005, config.lng + 0.0005],
+          [config.lat - 0.0005, config.lng + 0.0005],
+          [config.lat - 0.0005, config.lng - 0.0005],
+        ] as [number, number][],
+      }));
+      const updated = { ...config, zones: apiZones };
+      setConfig(updated);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    }
+  }, [zones, config.zones?.length]);
+
+  const saveConfig = useCallback((updated: SiteMapConfig) => {
+    setConfig(updated);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+  }, []);
+
   const getPointStatus = useCallback((p: Record<string, any>) => {
     if (!p) return 'offline';
-    const r = p.readings;
     const lastSeen = p.lastSeen as string | null;
     const minutesAgo = lastSeen ? Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000) : null;
     if (minutesAgo == null) return 'offline';
@@ -295,6 +335,48 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
   const onlineCount = pointMarkers.filter(p => p.status === 'online').length;
   const staleCount = pointMarkers.filter(p => p.status === 'stale').length;
   const offlineCount = pointMarkers.filter(p => p.status === 'offline').length;
+
+  // Handle map click for edit modes
+  const handleMapClick = useCallback((lat: number, lng: number) => {
+    if (editMode === 'place-point' && selectedPointId) {
+      const updated = {
+        ...config,
+        pointLocations: { ...config.pointLocations, [selectedPointId]: { lat, lng } },
+      };
+      saveConfig(updated);
+      setSelectedPointId(null);
+      setEditMode('none');
+    } else if (editMode === 'draw-zone') {
+      setDrawingZoneCoords(prev => [...prev, [lat, lng]]);
+    }
+  }, [editMode, selectedPointId, config, saveConfig]);
+
+  // Handle point marker drag end
+  const handlePointDragEnd = useCallback((pointId: string, lat: number, lng: number) => {
+    const updated = {
+      ...config,
+      pointLocations: { ...config.pointLocations, [pointId]: { lat, lng } },
+    };
+    saveConfig(updated);
+  }, [config, saveConfig]);
+
+  // Finish drawing zone
+  const finishDrawingZone = useCallback(() => {
+    if (drawingZoneCoords.length < 3 || !drawingZoneName.trim()) return;
+    const colors = ['#3b82f680', '#10b98180', '#f59e0b80', '#ef444480', '#8b5cf680'];
+    const updated = {
+      ...config,
+      zones: [...(config.zones ?? []), {
+        name: drawingZoneName.trim(),
+        color: colors[(config.zones?.length ?? 0) % colors.length],
+        coords: drawingZoneCoords,
+      }],
+    };
+    saveConfig(updated);
+    setDrawingZoneCoords([]);
+    setDrawingZoneName('');
+    setEditMode('none');
+  }, [drawingZoneCoords, drawingZoneName, config, saveConfig]);
 
   // Zone stats
   const zoneStats = useMemo(() => {
@@ -327,6 +409,9 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
               <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-400" />{staleCount} stale</span>
               <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500" />{offlineCount} off</span>
             </div>
+            <Button variant={editMode !== 'none' ? 'default' : 'outline'} size="sm" className="h-7 text-xs gap-1" onClick={() => setEditMode(editMode !== 'none' ? 'none' : 'place-point')}>
+              <Edit3 className="w-3 h-3" /> Éditer
+            </Button>
             <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setConfigOpen(true)}>
               <Settings2 className="w-3 h-3" /> Config
             </Button>
@@ -335,6 +420,55 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
       </CardHeader>
       <CardContent className="space-y-2">
         <WeatherPanel lat={config.lat} lng={config.lng} />
+
+        {/* Edit mode toolbar */}
+        {editMode !== 'none' && (
+          <div className="flex items-center gap-2 p-2 border rounded-lg bg-muted/50 text-xs">
+            <Button size="sm" variant={editMode === 'place-point' ? 'default' : 'outline'} className="h-7 text-xs gap-1" onClick={() => { setEditMode('place-point'); setDrawingZoneCoords([]); }}>
+              <MousePointerClick className="w-3 h-3" /> Placer un point
+            </Button>
+            <Button size="sm" variant={editMode === 'draw-zone' ? 'default' : 'outline'} className="h-7 text-xs gap-1" onClick={() => { setEditMode('draw-zone'); setSelectedPointId(null); }}>
+              <Hexagon className="w-3 h-3" /> Dessiner une zone
+            </Button>
+
+            {editMode === 'place-point' && (
+              <span className="text-muted-foreground ml-2">
+                {selectedPointId
+                  ? `Cliquez sur la carte pour placer "${points.find(p => String(p.id) === selectedPointId)?.name}"`
+                  : 'Sélectionnez un point dans la liste ci-dessous, puis cliquez sur la carte'
+                }
+              </span>
+            )}
+
+            {editMode === 'place-point' && !selectedPointId && (
+              <div className="flex items-center gap-1 ml-2 flex-wrap">
+                {points.map(p => (
+                  <Button key={String(p.id)} size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => setSelectedPointId(String(p.id))}>
+                    {String(p.name)}
+                  </Button>
+                ))}
+              </div>
+            )}
+
+            {editMode === 'draw-zone' && (
+              <div className="flex items-center gap-2 ml-2">
+                <span className="text-muted-foreground">Cliquez pour ajouter des sommets ({drawingZoneCoords.length} pts)</span>
+                <Input placeholder="Nom de la zone" className="h-7 w-32 text-xs" value={drawingZoneName} onChange={e => setDrawingZoneName(e.target.value)} />
+                <Button size="sm" className="h-7 text-xs" onClick={finishDrawingZone} disabled={drawingZoneCoords.length < 3 || !drawingZoneName.trim()}>
+                  Terminer
+                </Button>
+                <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setDrawingZoneCoords([])}>
+                  Effacer
+                </Button>
+              </div>
+            )}
+
+            <Button size="sm" variant="ghost" className="h-7 text-xs ml-auto" onClick={() => { setEditMode('none'); setSelectedPointId(null); setDrawingZoneCoords([]); }}>
+              <X className="w-3 h-3 mr-1" /> Fermer
+            </Button>
+          </div>
+        )}
+
         <div className="rounded-lg overflow-hidden border" style={{ height: 400 }}>
           <MapContainer
             center={[config.lat, config.lng]}
@@ -343,6 +477,7 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
             scrollWheelZoom
           >
             <RecenterMap lat={config.lat} lng={config.lng} zoom={config.zoom} />
+            {editMode !== 'none' && <MapClickHandler onMapClick={handleMapClick} />}
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -380,12 +515,20 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
               </Popup>
             </Marker>
 
-            {/* Point markers */}
+            {/* Point markers — draggable in edit mode */}
             {pointMarkers.map(p => (
               <Marker
                 key={p.id}
                 position={[p.lat, p.lng]}
                 icon={p.status === 'online' ? ICON_ONLINE : p.status === 'stale' ? ICON_STALE : ICON_OFFLINE}
+                draggable={editMode !== 'none'}
+                eventHandlers={{
+                  dragend: (e) => {
+                    const marker = e.target;
+                    const pos = marker.getLatLng();
+                    handlePointDragEnd(String(p.id), pos.lat, pos.lng);
+                  },
+                }}
               >
                 <Popup>
                   <div className="min-w-[180px]">
@@ -407,6 +550,14 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
                 </Popup>
               </Marker>
             ))}
+
+            {/* Drawing zone preview polygon */}
+            {editMode === 'draw-zone' && drawingZoneCoords.length >= 2 && (
+              <Polygon
+                positions={drawingZoneCoords}
+                pathOptions={{ color: '#6366f1', fillColor: '#6366f180', fillOpacity: 0.3, weight: 2, dashArray: '5 5' }}
+              />
+            )}
           </MapContainer>
         </div>
       </CardContent>
