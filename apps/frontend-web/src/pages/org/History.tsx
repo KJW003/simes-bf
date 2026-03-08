@@ -32,9 +32,15 @@ const METRICS = [
   { key: 'reactive_power_total', label: 'Puissance réactive (kVar)', unit: 'kVar' },
   { key: 'apparent_power_total', label: 'Puissance apparente (kVA)', unit: 'kVA' },
   { key: 'voltage_a', label: 'Tension phase A (V)', unit: 'V' },
+  { key: 'voltage_b', label: 'Tension phase B (V)', unit: 'V' },
+  { key: 'voltage_c', label: 'Tension phase C (V)', unit: 'V' },
   { key: 'current_a', label: 'Courant phase A (A)', unit: 'A' },
+  { key: 'current_b', label: 'Courant phase B (A)', unit: 'A' },
+  { key: 'current_c', label: 'Courant phase C (A)', unit: 'A' },
   { key: 'power_factor_total', label: 'Facteur de puissance', unit: '' },
   { key: 'energy_import', label: 'Énergie importée (kWh)', unit: 'kWh' },
+  { key: 'frequency', label: 'Fréquence (Hz)', unit: 'Hz' },
+  { key: 'thdi_a', label: 'THD courant A (%)', unit: '%' },
 ] as const;
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
@@ -190,22 +196,25 @@ export default function History() {
 
   const co2 = useMemo(() => energyDelta * CO2_FACTOR, [energyDelta]);
 
-  // ─── CSV export
+  // ─── CSV export (multi-metric)
   const exportCsv = useCallback(() => {
     if (!readings.length) return;
-    const header = 'time,' + metric + '\n';
+    const columns = ['time', 'point_id', 'active_power_total', 'reactive_power_total', 'apparent_power_total',
+      'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c',
+      'power_factor_total', 'energy_import', 'frequency', 'thdi_a'];
+    const header = columns.join(',') + '\n';
     const rows = [...readings]
       .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
-      .map(r => `${r.time},${r[metric] ?? ''}`)
+      .map(r => columns.map(c => r[c] ?? '').join(','))
       .join('\n');
     const blob = new Blob([header + rows], { type: 'text/csv' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `simes_${metric}_${range}.csv`;
+    a.download = `simes_donnees_${range}.csv`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [readings, metric, range]);
+  }, [readings, range]);
 
   if (!selectedTerrainId) {
     return (

@@ -1,7 +1,9 @@
 networks:
   edge:
+    name: simes-edge
     driver: bridge
   internal:
+    name: simes-internal
     driver: bridge
 
 volumes:
@@ -132,7 +134,7 @@ services:
     container_name: simes-frontend-web
     labels:
       - traefik.enable=true
-      - traefik.docker.network=edge
+      - traefik.docker.network=simes-edge
       - traefik.http.routers.ui.rule=PathPrefix(`/`)
       - traefik.http.routers.ui.entrypoints=web
       - traefik.http.routers.ui.priority=1
@@ -162,7 +164,7 @@ services:
         condition: service_healthy
     labels:
       - traefik.enable=true
-      - traefik.docker.network=edge
+      - traefik.docker.network=simes-edge
       - traefik.http.routers.apicore.rule=PathPrefix(`/api`)
       - traefik.http.routers.apicore.entrypoints=web
       - traefik.http.routers.apicore.priority=100
@@ -177,11 +179,11 @@ services:
       - internal
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3000/health"]
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)throw r;process.exit(0)}).catch(()=>process.exit(1))"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 20s
 
   # ===== INGESTION =====
   ingestion-service:
@@ -202,7 +204,7 @@ services:
         condition: service_healthy
     labels:
       - traefik.enable=true
-      - traefik.docker.network=edge
+      - traefik.docker.network=simes-edge
       - traefik.http.routers.ingest.rule=PathPrefix(`/ingest`)
       - traefik.http.routers.ingest.entrypoints=web
       - traefik.http.routers.ingest.priority=100

@@ -63,7 +63,14 @@ if [ "$DB_ONLY" = false ]; then
   fi
 
   cd "$COMPOSE_DIR"
-  docker compose -f docker-compose.yml up -d $BUILD_FLAG
+
+  # Stop previous containers and remove orphans
+  docker compose -f docker-compose.yml down --remove-orphans 2>/dev/null || true
+
+  # Remove old project-prefixed networks that conflict with named networks
+  docker network rm docker_edge docker_internal 2>/dev/null || true
+
+  docker compose -f docker-compose.yml up -d --force-recreate $BUILD_FLAG
   ok "Containers started."
 fi
 
@@ -119,10 +126,15 @@ ok "Core migrations applied."
 
 # ── Wait for api-core to be healthy ──────────────────────────
 info "Waiting for api-core to be healthy..."
-RETRIES=20
+RETRIES=30
 until docker inspect --format='{{.State.Health.Status}}' simes-api-core 2>/dev/null | grep -q 'healthy'; do
   RETRIES=$((RETRIES - 1))
-  if [ $RETRIES -le 0 ]; then warn "api-core did not become healthy in time (may still be starting)."; break; fi
+  if [ $RETRIES -le 0 ]; then
+    warn "api-core did not become healthy in time."
+    warn "Last logs from api-core:"
+    docker logs --tail 30 simes-api-core 2>&1 || true
+    break
+  fi
   sleep 3
 done
 if [ $RETRIES -gt 0 ]; then ok "api-core is healthy."; fi
