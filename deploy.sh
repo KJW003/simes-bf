@@ -70,6 +70,11 @@ if [ "$DB_ONLY" = false ]; then
   # Remove old project-prefixed networks that conflict with named networks
   docker network rm docker_edge docker_internal 2>/dev/null || true
 
+  # Prune corrupted BuildKit layer cache (prevents "parent snapshot does not exist" errors)
+  if [ "$NO_BUILD" = false ]; then
+    docker builder prune -f 2>/dev/null || true
+  fi
+
   docker compose -f docker-compose.yml up -d --force-recreate $BUILD_FLAG
   ok "Containers started."
 fi
