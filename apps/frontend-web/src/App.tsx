@@ -15,7 +15,7 @@ import Dashboard from "./pages/org/Dashboard";
 import DataMonitor from "./pages/org/DataMonitor";
 import Anomalies from "./pages/org/Anomalies";
 import PowerQuality from "./pages/org/PowerQuality";
-import History from "./pages/org/History";
+import History from "./pages/org/Donnees";
 import Forecasts from "./pages/org/Forecasts";
 import Invoice from "./pages/org/Invoice";
 import PvBattery from "./pages/org/SolairePerformance";
@@ -41,7 +41,16 @@ import PurgeReadings from "./pages/platform/PurgeReadings";
 
 import NotFound from "./pages/NotFound";
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      gcTime: 10 * 60 * 1000,       // keep cache 10 min (survives navigation)
+      staleTime: 30_000,              // consider fresh for 30s
+      refetchOnWindowFocus: false,    // don't refetch when tab refocused
+      retry: 1,
+    },
+  },
+});
 
 function AppRoutes() {
   const { mode, currentUser, hasSolar } = useAppContext();

@@ -6,20 +6,19 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useReadings, useTerrainOverview, useZones } from '@/hooks/useApi';
+import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/utils';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
   Database, Download, Zap, TrendingUp, BarChart3,
-  Activity, Loader2, AlertCircle, Leaf, GitCompareArrows, Table,
+  Activity, Loader2, AlertCircle, Leaf, GitCompareArrows, Table, CalendarDays,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Legend,
+  ResponsiveContainer, Legend, Brush,
 } from 'recharts';
-
-const CO2_FACTOR = 0.71;
 
 const RANGES = [
   { key: '1D', label: '1 jour', hours: 24 },
@@ -47,21 +46,42 @@ const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) 
 
 export default function History() {
   const { selectedTerrainId } = useAppContext();
+  const prefs = usePreferences();
   const [range, setRange] = useState<string>('1D');
   const [metric, setMetric] = useState<string>('active_power_total');
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
   const [compareMode, setCompareMode] = useState(false);
+  const [compareDate, setCompareDate] = useState('');
   const [viewMode, setViewMode] = useState<'chart' | 'table'>('chart');
   const [zoneFilter, setZoneFilter] = useState<string>('_all');
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+
+  const handleLegendClick = useCallback((e: any) => {
+    const key = e.dataKey ?? e.value;
+    if (!key) return;
+    setHiddenSeries(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
+  }, []);
 
   const rangeObj = RANGES.find(r => r.key === range) ?? RANGES[0];
   const metricObj = METRICS.find(m => m.key === metric) ?? METRICS[0];
   const now = useMemo(() => new Date(), [range]); // eslint-disable-line react-hooks/exhaustive-deps
   const from = useMemo(() => new Date(now.getTime() - rangeObj.hours * 3600_000).toISOString(), [now, rangeObj]);
 
-  // Yesterday's range for comparison
-  const yesterdayFrom = useMemo(() => new Date(now.getTime() - rangeObj.hours * 3600_000 - 86400_000).toISOString(), [now, rangeObj]);
-  const yesterdayTo = useMemo(() => new Date(now.getTime() - 86400_000).toISOString(), [now]);
+  // Flexible comparison date range
+  const compFrom = useMemo(() => {
+    if (!compareDate) return new Date(now.getTime() - rangeObj.hours * 3600_000 - 86400_000).toISOString();
+    const d = new Date(compareDate);
+    return d.toISOString();
+  }, [compareDate, now, rangeObj]);
+  const compTo = useMemo(() => {
+    if (!compareDate) return new Date(now.getTime() - 86400_000).toISOString();
+    const d = new Date(compareDate);
+    return new Date(d.getTime() + rangeObj.hours * 3600_000).toISOString();
+  }, [compareDate, now, rangeObj]);
+  const compareLabel = useMemo(() => {
+    if (!compareDate) return 'J-1';
+    return new Date(compareDate).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  }, [compareDate]);
 
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
   const { data: zonesData } = useZones(selectedTerrainId);
@@ -84,12 +104,12 @@ export default function History() {
 
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
 
-  // Comparison (yesterday) data
+  // Comparison data (flexible date)
   const { data: compareData } = useReadings(
     compareMode ? selectedTerrainId : null,
     compareMode ? {
-      from: yesterdayFrom,
-      to: yesterdayTo,
+      from: compFrom,
+      to: compTo,
       point_id: selectedPoint === '_all' ? undefined : selectedPoint,
       limit: 5000,
     } : undefined,
@@ -111,10 +131,13 @@ export default function History() {
       .sort((a, b) => a.time - b.time);
 
     if (compareMode && compareReadings.length) {
-      // Align yesterday's data to today's time axis (shift by 24h)
+      // Align comparison data to main time axis
+      const shiftMs = compareDate
+        ? new Date(from).getTime() - new Date(compFrom).getTime()
+        : 86400_000;
       const compMap = new Map<string, number>();
       for (const r of compareReadings) {
-        const shifted = new Date(new Date(String(r.time)).getTime() + 86400_000);
+        const shifted = new Date(new Date(String(r.time)).getTime() + shiftMs);
         const label = shifted.toLocaleString('fr-FR', {
           hour: '2-digit', minute: '2-digit',
           ...(rangeObj.hours > 24 ? { day: '2-digit', month: '2-digit' } : {}),
@@ -194,7 +217,7 @@ export default function History() {
     return Math.max(...eis) - Math.min(...eis);
   }, [readings]);
 
-  const co2 = useMemo(() => energyDelta * CO2_FACTOR, [energyDelta]);
+  const co2 = useMemo(() => energyDelta * prefs.co2Factor, [energyDelta, prefs.co2Factor]);
 
   // ─── CSV export (multi-metric)
   const exportCsv = useCallback(() => {
@@ -312,8 +335,23 @@ export default function History() {
           className="gap-1"
         >
           <GitCompareArrows className="w-4 h-4" />
-          {compareMode ? 'Comparaison ON' : 'Comparer J-1'}
+          {compareMode ? `Comparaison: ${compareLabel}` : 'Comparer'}
         </Button>
+        {compareMode && (
+          <div className="flex items-center gap-2">
+            <CalendarDays className="w-4 h-4 text-muted-foreground" />
+            <input
+              type="date"
+              value={compareDate}
+              onChange={e => setCompareDate(e.target.value)}
+              className="h-8 rounded border px-2 text-xs bg-background"
+              placeholder="Date de comparaison"
+            />
+            {compareDate && (
+              <Button size="sm" variant="ghost" className="h-7 text-xs px-2" onClick={() => setCompareDate('')}>J-1</Button>
+            )}
+          </div>
+        )}
       </div>
 
       {isLoading && <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Chargement…</CardContent></Card>}
@@ -339,7 +377,7 @@ export default function History() {
                 <CardHeader className="pb-2">
                   <CardTitle className="text-base font-medium flex items-center gap-2">
                     Courbe de charge — {metricObj.label}
-                    {compareMode && <Badge className="text-[10px] bg-orange-100 text-orange-700">vs J-1</Badge>}
+                    {compareMode && <Badge className="text-[10px] bg-orange-100 text-orange-700">vs {compareLabel}</Badge>}
                     <Badge variant="outline" className="text-[10px] ml-auto">{readings.length} mesures</Badge>
                   </CardTitle>
                 </CardHeader>
@@ -358,13 +396,20 @@ export default function History() {
                             if (!payload?.length) return '';
                             return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
                           }}
-                          formatter={(v: number, name: string) => [v != null ? v.toFixed(2) : '—', name === 'yesterday' ? 'J-1' : metricObj.unit]}
+                          formatter={(v: number, name: string) => [v != null ? v.toFixed(2) : '—', name === 'yesterday' ? compareLabel : metricObj.unit]}
                         />
-                        {compareMode && <Legend wrapperStyle={{ fontSize: 11 }} />}
-                        <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="Aujourd'hui" />
+                        <Legend
+                          wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
+                          onClick={handleLegendClick}
+                          formatter={(value: string, entry: any) => (
+                            <span style={{ color: hiddenSeries.has(entry.dataKey) ? '#9ca3af' : entry.color, textDecoration: hiddenSeries.has(entry.dataKey) ? 'line-through' : 'none' }}>{value}</span>
+                          )}
+                        />
+                        <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="Aujourd'hui" hide={hiddenSeries.has('value')} />
                         {compareMode && (
-                          <Line type="monotone" dataKey="yesterday" stroke="#f97316" dot={false} strokeWidth={1.5} strokeDasharray="5 5" name="J-1" connectNulls />
+                          <Line type="monotone" dataKey="yesterday" stroke="#f97316" dot={false} strokeWidth={1.5} strokeDasharray="5 5" name={compareLabel} connectNulls hide={hiddenSeries.has('yesterday')} />
                         )}
+                        <Brush dataKey="label" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
                       </LineChart>
                     </ResponsiveContainer>
                   )}
@@ -429,48 +474,74 @@ export default function History() {
           )}
             </>
           ) : (
-            /* Table view mode */
+            /* Acrel-style table view — all parameters at each timestamp */
             <Card>
               <CardHeader className="pb-2">
-                <CardTitle className="text-base font-medium">Données brutes — {metricObj.label}</CardTitle>
+                <CardTitle className="text-base font-medium">Tableau de données — style Acrel-EEM</CardTitle>
               </CardHeader>
               <CardContent>
                 {readings.length === 0 ? (
                   <div className="py-8 text-center text-muted-foreground text-sm">Aucune donnée pour cette période</div>
                 ) : (
                   <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
-                    <table className="w-full text-sm">
-                      <thead className="sticky top-0 bg-background">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="sticky top-0 bg-background z-10">
                         <tr className="border-b text-left text-muted-foreground">
-                          <th className="pb-2 font-medium">Horodatage</th>
-                          <th className="pb-2 font-medium">Point</th>
-                          <th className="pb-2 font-medium text-right">{metricObj.label}</th>
-                          <th className="pb-2 font-medium text-right">Énergie (kWh)</th>
-                          <th className="pb-2 font-medium text-right">PF</th>
+                          <th className="pb-2 px-2 font-medium whitespace-nowrap">Horodatage</th>
+                          <th className="pb-2 px-2 font-medium whitespace-nowrap">Point</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ua (V)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ub (V)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Uc (V)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Uab (V)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ubc (V)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Uca (V)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ia (A)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ib (A)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ic (A)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">P (kW)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Q (kvar)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">S (kVA)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Freq</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">E imp.</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDi A</th>
                         </tr>
                       </thead>
                       <tbody>
                         {[...readings]
                           .sort((a, b) => new Date(String(b.time)).getTime() - new Date(String(a.time)).getTime())
-                          .slice(0, 200)
+                          .slice(0, 300)
                           .map((r, i) => {
                             const pointName = points.find(p => String(p.id) === String(r.point_id))?.name;
                             return (
                               <tr key={i} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                                <td className="py-1.5 text-muted-foreground">
-                                  {new Date(String(r.time)).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                <td className="py-1 px-2 whitespace-nowrap text-muted-foreground">
+                                  {new Date(String(r.time)).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                                 </td>
-                                <td className="py-1.5 font-medium">{String(pointName ?? r.point_id ?? '—')}</td>
-                                <td className="py-1.5 text-right mono">{fmt(r[metric])} {metricObj.unit}</td>
-                                <td className="py-1.5 text-right mono">{fmt(r.energy_import, 1)}</td>
-                                <td className="py-1.5 text-right mono">{fmt(r.power_factor_total, 3)}</td>
+                                <td className="py-1 px-2 font-medium truncate max-w-[120px]">{String(pointName ?? r.point_id ?? '—')}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_a)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_b)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_c)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_ab)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_bc)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_ca)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.current_a)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.current_b)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.current_c)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.active_power_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.reactive_power_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.apparent_power_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.power_factor_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.frequency)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.energy_import)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.thdi_a)}</td>
                               </tr>
                             );
                           })}
                       </tbody>
                     </table>
-                    {readings.length > 200 && (
-                      <div className="py-2 text-center text-xs text-muted-foreground">Affichage des 200 dernières mesures sur {readings.length}</div>
+                    {readings.length > 300 && (
+                      <div className="py-2 text-center text-xs text-muted-foreground">Affichage des 300 dernières mesures sur {readings.length}</div>
                     )}
                   </div>
                 )}

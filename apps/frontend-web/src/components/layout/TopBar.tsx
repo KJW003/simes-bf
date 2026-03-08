@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Link } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { useApiHealth } from '@/hooks/useApiHealth';
 import { useIncidents, useIncidentStats } from '@/hooks/useApi';
+import { usePreferences, savePreferences } from '@/hooks/usePreferences';
 import {
   Building2,
   MapPin,
   Radio,
-  Search,
   Bell,
   User,
   ChevronDown,
@@ -33,7 +33,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
@@ -56,10 +55,12 @@ export function TopBar() {
   } = useAppContext();
 
   const { isOnline, latencyMs } = useApiHealth();
-  const [searchQuery, setSearchQuery] = useState('');
-  const [darkMode, setDarkMode] = useState(() =>
-    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
-  );
+  const prefs = usePreferences();
+  const darkMode = prefs.theme === 'dark' || (prefs.theme === 'system' && typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+
+  const toggleDarkMode = () => {
+    savePreferences({ ...prefs, theme: darkMode ? 'light' : 'dark' });
+  };
 
   // Fetch real incidents for notification center
   const { data: incidentsData } = useIncidents({ status: 'open' });
@@ -68,17 +69,6 @@ export function TopBar() {
   const incidents = (incidentsData as any)?.incidents ?? [];
   const openCount = (incidentStats as any)?.open ?? 0;
   const criticalCount = (incidentStats as any)?.critical ?? 0;
-
-  // Dark mode toggle
-  useEffect(() => {
-    if (darkMode) {
-      document.documentElement.classList.add('dark');
-      localStorage.setItem('simes-theme', 'dark');
-    } else {
-      document.documentElement.classList.remove('dark');
-      localStorage.setItem('simes-theme', 'light');
-    }
-  }, [darkMode]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -250,20 +240,6 @@ export function TopBar() {
 
       <div className="flex-1" />
 
-      <div className="relative w-72 group">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground transition-colors group-focus-within:text-primary" />
-        <Input
-          placeholder={
-            mode === 'platform'
-              ? 'Rechercher organisations, incidents, sites...'
-              : 'Rechercher zones, alertes, concentrateurs...'
-          }
-          className="pl-9 h-8 text-sm bg-muted/40 border-transparent hover:border-border focus:border-ring focus:bg-background transition-all"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-        />
-      </div>
-
       {/* API connectivity indicator */}
       <div className="flex items-center gap-1.5" title={isOnline ? `API connectée (${latencyMs ?? '—'} ms)` : 'API déconnectée'}>
         <span className={cn(
@@ -280,7 +256,7 @@ export function TopBar() {
         variant="ghost"
         size="icon"
         className="h-8 w-8 hover:bg-accent/80"
-        onClick={() => setDarkMode(!darkMode)}
+        onClick={toggleDarkMode}
         title={darkMode ? 'Mode clair' : 'Mode sombre'}
       >
         {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}

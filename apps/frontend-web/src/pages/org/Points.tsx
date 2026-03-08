@@ -273,11 +273,21 @@ export default function Points() {
 
                 {r && (
                   <CardContent className="px-4 pb-3 pt-1">
-                    <div className="space-y-2 text-xs">
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">P</span>
-                        <span className="mono font-medium">{fmt(r.active_power_total)} kW</span>
+                    <div className="grid grid-cols-3 gap-2 text-xs mb-2">
+                      <div className="rounded-md bg-muted/40 p-1.5 text-center">
+                        <div className="text-[10px] text-muted-foreground">P Active</div>
+                        <div className="mono font-semibold">{fmt(r.active_power_total)} <span className="text-[9px] font-normal">kW</span></div>
                       </div>
+                      <div className="rounded-md bg-muted/40 p-1.5 text-center">
+                        <div className="text-[10px] text-muted-foreground">Q Réactive</div>
+                        <div className="mono font-semibold">{fmt(r.reactive_power_total)} <span className="text-[9px] font-normal">kvar</span></div>
+                      </div>
+                      <div className="rounded-md bg-muted/40 p-1.5 text-center">
+                        <div className="text-[10px] text-muted-foreground">S Apparente</div>
+                        <div className="mono font-semibold">{fmt(r.apparent_power_total)} <span className="text-[9px] font-normal">kVA</span></div>
+                      </div>
+                    </div>
+                    <div className="space-y-1.5 text-xs">
                       <div className="flex justify-between">
                         <span className="text-muted-foreground">Va / Vb / Vc</span>
                         <span className="mono font-medium">{fmt(r.voltage_a)} / {fmt(r.voltage_b)} / {fmt(r.voltage_c)} V</span>

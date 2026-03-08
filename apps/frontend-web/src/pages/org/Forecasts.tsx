@@ -12,14 +12,13 @@ import {
   TrendingUp, Loader2, Calendar, Activity, Zap, Target, BarChart3,
 } from 'lucide-react';
 import { useReadings, useTerrainOverview } from '@/hooks/useApi';
+import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
-const CO2_FACTOR = 0.71;
-const TARIFF_CFA_KWH = 97;
 
 const FORECAST_HORIZONS = [
   { key: '1D', label: 'J+1', days: 1, historyDays: 7 },
@@ -124,6 +123,8 @@ function computeHourlyProfile(readings: Array<Record<string, unknown>>) {
 
 export default function Forecasts() {
   const { selectedTerrainId } = useAppContext();
+  const prefs = usePreferences();
+  const currSym = getCurrencySymbol(prefs.currency);
   const [horizon, setHorizon] = useState<string>('1D');
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
 
@@ -174,8 +175,8 @@ export default function Forecasts() {
 
   // Forecast KPIs
   const forecastEnergy = forecast.reduce((s, d) => s + d.predicted * 24, 0);
-  const forecastCost = forecastEnergy * TARIFF_CFA_KWH;
-  const forecastCO2 = forecastEnergy * CO2_FACTOR;
+  const forecastCost = forecastEnergy * prefs.tariffRate;
+  const forecastCO2 = forecastEnergy * prefs.co2Factor;
   const trendPercent = dailyAvg > 0 ? (trend / dailyAvg) * 100 : 0;
 
   if (!selectedTerrainId) {
@@ -241,7 +242,7 @@ export default function Forecasts() {
               variant={trendPercent > 2 ? 'warning' : trendPercent < -2 ? 'success' : 'default'}
             />
             <KpiCard label={`Énergie prévisionnelle (${h.label})`} value={fmt(forecastEnergy, 0)} unit="kWh" icon={<Target className="w-4 h-4" />} />
-            <KpiCard label={`Coût estimé (${h.label})`} value={forecastCost >= 1000 ? `${(forecastCost / 1000).toFixed(1)}k` : fmt(forecastCost, 0)} unit="FCFA" icon={<BarChart3 className="w-4 h-4" />} />
+            <KpiCard label={`Coût estimé (${h.label})`} value={forecastCost >= 1000 ? `${(forecastCost / 1000).toFixed(1)}k` : fmt(forecastCost, 0)} unit={currSym} icon={<BarChart3 className="w-4 h-4" />} />
             <KpiCard label={`CO₂ estimé (${h.label})`} value={fmt(forecastCO2, 1)} unit="kg" icon={<Calendar className="w-4 h-4" />} />
           </div>
 

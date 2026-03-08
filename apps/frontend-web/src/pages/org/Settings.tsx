@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,43 +15,12 @@ import {
   Clock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-
-interface UserPreferences {
-  theme: 'light' | 'dark' | 'system';
-  refreshInterval: number;
-  notificationsEnabled: boolean;
-  soundEnabled: boolean;
-  compactMode: boolean;
-  defaultTimeRange: string;
-  co2Factor: number;
-  currency: string;
-  tariffRate: number;
-}
-
-const DEFAULTS: UserPreferences = {
-  theme: 'light',
-  refreshInterval: 15,
-  notificationsEnabled: true,
-  soundEnabled: false,
-  compactMode: false,
-  defaultTimeRange: '1D',
-  co2Factor: 0.71,
-  currency: 'FCFA',
-  tariffRate: 97,
-};
-
-function loadPreferences(): UserPreferences {
-  try {
-    const stored = localStorage.getItem('simes-preferences');
-    return stored ? { ...DEFAULTS, ...JSON.parse(stored) } : DEFAULTS;
-  } catch {
-    return DEFAULTS;
-  }
-}
+import { usePreferences, savePreferences, PREF_DEFAULTS, type UserPreferences } from '@/hooks/usePreferences';
 
 export default function SettingsPage() {
   const { currentUser } = useAppContext();
-  const [prefs, setPrefs] = useState<UserPreferences>(loadPreferences);
+  const current = usePreferences();
+  const [prefs, setPrefs] = useState<UserPreferences>(current);
   const [saved, setSaved] = useState(false);
 
   const update = <K extends keyof UserPreferences>(key: K, value: UserPreferences[K]) => {
@@ -60,18 +29,7 @@ export default function SettingsPage() {
   };
 
   const save = () => {
-    localStorage.setItem('simes-preferences', JSON.stringify(prefs));
-    // Apply theme immediately
-    if (prefs.theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else if (prefs.theme === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      // system
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      document.documentElement.classList.toggle('dark', prefersDark);
-    }
-    localStorage.setItem('simes-theme', prefs.theme);
+    savePreferences(prefs);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   };
@@ -283,7 +241,7 @@ export default function SettingsPage() {
 
       {/* Save */}
       <div className="flex justify-end gap-3">
-        <Button variant="outline" onClick={() => setPrefs(DEFAULTS)}>
+        <Button variant="outline" onClick={() => setPrefs(PREF_DEFAULTS)}>
           Réinitialiser
         </Button>
         <Button onClick={save} className="gap-2">

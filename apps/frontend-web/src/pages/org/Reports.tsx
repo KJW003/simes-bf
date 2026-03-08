@@ -11,12 +11,12 @@ import { FileText, Download, Loader2, CheckCircle, FileSpreadsheet, BarChart3, Z
 import { useAppContext } from '@/contexts/AppContext';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import api from '@/lib/api';
-
-const CO2_FACTOR = 0.71;
-const TARIFF_CFA_KWH = 97;
+import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 
 export default function Reports() {
   const { selectedTerrainId } = useAppContext();
+  const prefs = usePreferences();
+  const currSym = getCurrencySymbol(prefs.currency);
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [days, setDays] = useState(30);
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
@@ -40,12 +40,12 @@ export default function Reports() {
     return {
       readingCount: readings.length,
       energy,
-      cost: energy * TARIFF_CFA_KWH,
-      co2: energy * CO2_FACTOR,
+      cost: energy * prefs.tariffRate,
+      co2: energy * prefs.co2Factor,
       peakPower: powers.length ? Math.max(...powers) : 0,
       avgPower: powers.length ? powers.reduce((s, v) => s + v, 0) / powers.length : 0,
     };
-  }, [readings]);
+  }, [readings, prefs.tariffRate, prefs.co2Factor]);
 
   const handleExportExcel = async (pointId: string) => {
     try {
@@ -64,11 +64,13 @@ export default function Reports() {
         return;
       }
 
+      const point = points.find(p => String(p.id) === pointId);
+      const pointName = point ? String(point.name).replace(/[^a-zA-Z0-9_-]/g, '_') : pointId;
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = `simes-point-${pointId}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `simes-${pointName}-${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(downloadUrl);
@@ -161,7 +163,7 @@ export default function Reports() {
           <KpiCard label="Mesures" value={summary.readingCount.toLocaleString()} icon={<BarChart3 className="w-4 h-4" />} />
           <KpiCard label={`Énergie (${days}j)`} value={summary.energy >= 1000 ? `${(summary.energy / 1000).toFixed(1)}` : summary.energy.toFixed(0)} unit={summary.energy >= 1000 ? 'MWh' : 'kWh'} icon={<Zap className="w-4 h-4" />} />
           <KpiCard label="Pic puissance" value={summary.peakPower.toFixed(1)} unit="kW" icon={<Zap className="w-4 h-4" />} />
-          <KpiCard label="Coût estimé" value={summary.cost >= 1_000_000 ? `${(summary.cost / 1_000_000).toFixed(1)}M` : `${(summary.cost / 1000).toFixed(0)}k`} unit="FCFA" icon={<FileText className="w-4 h-4" />} />
+          <KpiCard label="Coût estimé" value={summary.cost >= 1_000_000 ? `${(summary.cost / 1_000_000).toFixed(1)}M` : `${(summary.cost / 1000).toFixed(0)}k`} unit={currSym} icon={<FileText className="w-4 h-4" />} />
           <KpiCard label="CO₂" value={summary.co2.toFixed(0)} unit="kg" icon={<FileText className="w-4 h-4" />} />
         </div>
       )}

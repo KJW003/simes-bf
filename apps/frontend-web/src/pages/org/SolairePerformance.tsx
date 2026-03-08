@@ -13,13 +13,11 @@ import {
   BarChart3, ArrowRight,
 } from 'lucide-react';
 import { useTerrainOverview, useReadings, useDashboard } from '@/hooks/useApi';
+import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import {
   BarChart, Bar, LineChart, Line, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
 } from 'recharts';
-
-const CO2_FACTOR = 0.71;
-const TARIFF_CFA_KWH = 97;
 
 // Monthly solar irradiance (kWh/m²/day) — Ouagadougou region
 const MONTHLY_IRRADIANCE = [
@@ -37,6 +35,8 @@ export function PvBattery() {
 
 export default function SolairePerformance() {
   const { selectedTerrainId, hasSolar } = useAppContext();
+  const prefs = usePreferences();
+  const currSym = getCurrencySymbol(prefs.currency);
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
   const { data: dashData } = useDashboard(selectedTerrainId);
 
@@ -44,7 +44,7 @@ export default function SolairePerformance() {
   const [pvCapacity, setPvCapacity] = useState(10); // kWc
   const [systemLosses, setSystemLosses] = useState(14); // %
   const [tilt, setTilt] = useState(12); // degrees
-  const [electricityRate] = useState(TARIFF_CFA_KWH);
+  const electricityRate = prefs.tariffRate;
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const currentPowerKW = dashData?.power_now_kw ?? 0;
@@ -68,7 +68,7 @@ export default function SolairePerformance() {
         production: Math.round(monthlyProd),
         irradiance: m.ghi,
         savings: Math.round(monthlyProd * electricityRate),
-        co2Avoided: Math.round(monthlyProd * CO2_FACTOR),
+        co2Avoided: Math.round(monthlyProd * prefs.co2Factor),
       };
     });
   }, [pvCapacity, systemLosses, tilt, electricityRate]);
@@ -148,7 +148,7 @@ export default function SolairePerformance() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4 animate-stagger-children">
         <KpiCard label="Production annuelle" value={annualProd >= 1000 ? `${(annualProd / 1000).toFixed(1)}` : String(annualProd)} unit={annualProd >= 1000 ? 'MWh' : 'kWh'} icon={<Zap className="w-4 h-4" />} />
         <KpiCard label="Rendement spécifique" value={String(Math.round(specificYield))} unit="kWh/kWc" icon={<TrendingUp className="w-4 h-4" />} />
-        <KpiCard label="Économies annuelles" value={annualSavings >= 1_000_000 ? `${(annualSavings / 1_000_000).toFixed(1)}M` : `${(annualSavings / 1000).toFixed(0)}k`} unit="FCFA" icon={<BarChart3 className="w-4 h-4" />} />
+        <KpiCard label="Économies annuelles" value={annualSavings >= 1_000_000 ? `${(annualSavings / 1_000_000).toFixed(1)}M` : `${(annualSavings / 1000).toFixed(0)}k`} unit={currSym} icon={<BarChart3 className="w-4 h-4" />} />
         <KpiCard label="CO₂ évité" value={String(Math.round(annualCO2 / 1000))} unit="t/an" icon={<Leaf className="w-4 h-4" />} />
         <KpiCard
           label="Retour sur investissement"
@@ -207,11 +207,11 @@ export default function SolairePerformance() {
             <div className="space-y-3 text-sm">
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Investissement estimé</span>
-                <span className="font-medium mono">{(totalInvestment / 1_000_000).toFixed(1)} M FCFA</span>
+                <span className="font-medium mono">{(totalInvestment / 1_000_000).toFixed(1)} M {currSym}</span>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Économies annuelles</span>
-                <span className="font-medium mono text-green-600">{(annualSavings / 1_000_000).toFixed(2)} M FCFA</span>
+                <span className="font-medium mono text-green-600">{(annualSavings / 1_000_000).toFixed(2)} M {currSym}</span>
               </div>
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">Retour sur investissement</span>
@@ -224,7 +224,7 @@ export default function SolairePerformance() {
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Gains totaux sur 25 ans (estimés)</span>
                 <span className="font-semibold mono text-green-700">
-                  {((annualSavings * 25 - totalInvestment) / 1_000_000).toFixed(1)} M FCFA
+                  {((annualSavings * 25 - totalInvestment) / 1_000_000).toFixed(1)} M {currSym}
                 </span>
               </div>
             </div>
@@ -248,11 +248,11 @@ export default function SolairePerformance() {
               <XAxis dataKey="month" tick={{ fontSize: 10 }} />
               <YAxis tick={{ fontSize: 10 }} unit=" kWh" />
               <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number, name: string) => {
-                const labels: Record<string, string> = { production: 'Production', savings: 'Économies (FCFA)', co2Avoided: 'CO₂ évité (kg)' };
+                const labels: Record<string, string> = { production: 'Production', savings: `Économies (${currSym})`, co2Avoided: 'CO₂ évité (kg)' };
                 return [v.toLocaleString(), labels[name] ?? name];
               }} />
               <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v: string) => {
-                const labels: Record<string, string> = { production: 'Production (kWh)', savings: 'Économies (FCFA)' };
+                const labels: Record<string, string> = { production: 'Production (kWh)', savings: `Économies (${currSym})` };
                 return labels[v] ?? v;
               }} />
               <Bar dataKey="production" fill="#f59e0b" radius={[4, 4, 0, 0]} name="production" />

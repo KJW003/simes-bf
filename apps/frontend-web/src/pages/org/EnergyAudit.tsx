@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RadialGauge } from '@/components/ui/radial-gauge';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
+import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import {
   CheckCircle2, AlertTriangle, FileText, Gauge, Activity,
   Zap, Loader2, TrendingUp, ShieldCheck, ThermometerSun,
@@ -16,11 +17,11 @@ import {
 } from 'recharts';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
-const CO2_FACTOR = 0.71;
-const TARIFF_CFA_KWH = 97;
 
 export default function EnergyAudit() {
   const { selectedTerrainId } = useAppContext();
+  const prefs = usePreferences();
+  const currSym = getCurrencySymbol(prefs.currency);
 
   const now = useMemo(() => new Date(), []);
   const from24h = useMemo(() => new Date(now.getTime() - 24 * 3600_000).toISOString(), [now]);
@@ -177,8 +178,8 @@ export default function EnergyAudit() {
   // Energy cost estimation
   const energyVals = readings.map(r => r.energy_import != null ? Number(r.energy_import) : NaN).filter(v => !isNaN(v));
   const energyDelta = energyVals.length >= 2 ? Math.max(...energyVals) - Math.min(...energyVals) : 0;
-  const costEstimate = energyDelta * TARIFF_CFA_KWH;
-  const co2Estimate = energyDelta * CO2_FACTOR;
+  const costEstimate = energyDelta * prefs.tariffRate;
+  const co2Estimate = energyDelta * prefs.co2Factor;
 
   if (!selectedTerrainId) {
     return (

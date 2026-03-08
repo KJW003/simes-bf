@@ -14,6 +14,8 @@ import {
   FileText,
   Settings,
   Calculator,
+  ShieldCheck,
+  MapPin,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -92,36 +94,21 @@ export function OrgSidebar() {
             {canAccessOrgRoute(role, 'dashboard') && (
               <NavItem to="/" icon={Home} label="Tableau de bord" />
             )}
-            {hasSolar && canAccessOrgRoute(role, 'pvBattery') && (
-              <NavItem to="/pv-battery" icon={Sun} label="Solaire" />
-            )}
             {canAccessOrgRoute(role, 'dataMonitor') && (
               <NavItem to="/data-monitor" icon={Activity} label="Terrain & zones" />
             )}
             {canAccessOrgRoute(role, 'dataMonitor') && (
-              <NavItem to="/points" icon={Activity} label="Points de mesure" />
+              <NavItem to="/points" icon={MapPin} label="Points de mesure" />
             )}
             {canAccessOrgRoute(role, 'powerQuality') && (
               <NavItem to="/power-quality" icon={Gauge} label="Qualité réseau" />
             )}
-            {canAccessOrgRoute(role, 'history') && (
+            {canAccessOrgRoute(role, 'Donnees') && (
               <NavItem to="/donnees" icon={Database} label="Données" />
             )}
           </NavSection>
 
           <NavSection title="Analyse">
-            {canAccessOrgRoute(role, 'forecasts') && (
-              <NavItem to="/forecasts" icon={TrendingUp} label="Prévisions" />
-            )}
-            {canAccessOrgRoute(role, 'invoice') && (
-              <NavItem to="/invoice" icon={Receipt} label="Facturation" />
-            )}
-            {canAccessOrgRoute(role, 'energyAudit') && (
-              <NavItem to="/energy-audit" icon={Activity} label="Audit énergétique" />
-            )}
-            {canAccessOrgRoute(role, 'predimensionnement') && (
-              <NavItem to="/predimensionnement" icon={Calculator} label="Prédimensionnement" />
-            )}
             {canAccessOrgRoute(role, 'anomalies') && (
               <NavItem
                 to="/anomalies"
@@ -129,10 +116,30 @@ export function OrgSidebar() {
                 label="Alertes & Anomalies"
               />
             )}
+            {canAccessOrgRoute(role, 'invoice') && (
+              <NavItem to="/invoice" icon={Receipt} label="Facturation" />
+            )}
+            {canAccessOrgRoute(role, 'energyAudit') && (
+              <NavItem to="/energy-audit" icon={ShieldCheck} label="Audit énergétique" />
+            )}
             {canAccessOrgRoute(role, 'reports') && (
               <NavItem to="/reports" icon={FileText} label="Rapports" />
             )}
+            {canAccessOrgRoute(role, 'forecasts') && (
+              <NavItem to="/forecasts" icon={TrendingUp} label="Prévisions (bientôt)" />
+            )}
           </NavSection>
+
+          {hasSolar && (
+            <NavSection title="Solaire">
+              {canAccessOrgRoute(role, 'pvBattery') && (
+                <NavItem to="/pv-battery" icon={Sun} label="Performance solaire" />
+              )}
+              {canAccessOrgRoute(role, 'predimensionnement') && (
+                <NavItem to="/predimensionnement" icon={Calculator} label="Prédimensionnement" />
+              )}
+            </NavSection>
+          )}
 
           {canAccessOrgRoute(role, 'admin') && (
             <NavSection title="Administration">

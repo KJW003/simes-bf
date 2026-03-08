@@ -14,10 +14,13 @@ import { Shield, KeyRound, Mail, Lock, ArrowRight, CheckCircle } from 'lucide-re
 const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export default function Login() {
-  const { isAuthenticated, login, authLock } = useAppContext();
+  const { isAuthenticated, login, authLock, currentUser } = useAppContext();
   const navigate = useNavigate();
   const location = useLocation();
-  const from = (location.state as { from?: { pathname: string } } | undefined)?.from?.pathname ?? '/';
+  const fromState = (location.state as { from?: { pathname: string } } | undefined)?.from?.pathname ?? '/';
+  // Platform admins always go to /, org users go to saved location or /
+  const isPlatform = currentUser.role === 'platform_super_admin';
+  const from = isPlatform ? '/' : fromState;
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');

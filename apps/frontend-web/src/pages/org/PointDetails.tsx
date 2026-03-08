@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
@@ -13,14 +14,13 @@ import {
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import api from '@/lib/api';
 import {
-  Activity, Zap, Gauge, Thermometer, ArrowLeft, Download, Loader2,
-  AlertTriangle, CheckCircle2,
+  Activity, Zap, Thermometer, ArrowLeft, Download, Loader2,
+  AlertTriangle, CheckCircle2, ChevronDown, ChevronUp,
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-  ResponsiveContainer,
+  ResponsiveContainer, Brush,
 } from 'recharts';
-import { RadialGauge } from '@/components/ui/radial-gauge';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
 const fmtDT = (t: string) => new Date(t).toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -31,6 +31,105 @@ const autoFitDomain: [(v: number) => number, (v: number) => number] = [
   (min: number) => { const pad = Math.max(Math.abs(min) * 0.02, 0.5); return Math.floor((min - pad) * 100) / 100; },
   (max: number) => { const pad = Math.max(Math.abs(max) * 0.02, 0.5); return Math.ceil((max + pad) * 100) / 100; },
 ];
+
+const PARAM_GROUPS = [
+  { label: 'Puissances', keys: ['active_power_total', 'active_power_a', 'active_power_b', 'active_power_c', 'reactive_power_total', 'reactive_power_a', 'reactive_power_b', 'reactive_power_c', 'apparent_power_total', 'apparent_power_a', 'apparent_power_b', 'apparent_power_c'] },
+  { label: 'Tensions simples', keys: ['voltage_a', 'voltage_b', 'voltage_c'] },
+  { label: 'Tensions composées', keys: ['voltage_ab', 'voltage_bc', 'voltage_ca'] },
+  { label: 'Courants', keys: ['current_a', 'current_b', 'current_c'] },
+  { label: 'Facteur de puissance', keys: ['power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c'] },
+  { label: 'THD courant', keys: ['thdi_a', 'thdi_b', 'thdi_c'] },
+  { label: 'THD tension', keys: ['thdu_a', 'thdu_b', 'thdu_c'] },
+  { label: 'Énergie', keys: ['energy_import', 'energy_export'] },
+  { label: 'Autres', keys: ['frequency', 'alarm_state', 'voltage_unbalance'] },
+];
+
+/** Expandable parameters panel replacing gauges */
+function ExpandableParams({ latest }: { latest: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(false);
+
+  const availableGroups = useMemo(() =>
+    PARAM_GROUPS.map(g => ({
+      ...g,
+      params: g.keys.filter(k => latest[k] != null && latest[k] !== '').map(k => ({ key: k, value: Number(latest[k]) })),
+    })).filter(g => g.params.length > 0),
+    [latest],
+  );
+
+  return (
+    <Card>
+      <CardHeader className="pb-2 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <Activity className="w-4 h-4 text-primary" />
+          Tous les paramètres
+          <Badge variant="outline" className="text-[10px] ml-1">{availableGroups.reduce((n, g) => n + g.params.length, 0)} disponibles</Badge>
+          <span className="ml-auto">
+            {expanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+          </span>
+        </CardTitle>
+      </CardHeader>
+      {expanded && (
+        <CardContent className="space-y-4">
+          {availableGroups.map(g => (
+            <div key={g.label}>
+              <div className="text-xs font-semibold text-muted-foreground uppercase mb-2">{g.label}</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-2">
+                {g.params.map(p => (
+                  <div key={p.key} className="p-2 border rounded text-center">
+                    <div className="text-[10px] text-muted-foreground truncate">{p.key.replace(/_/g, ' ')}</div>
+                    <div className="text-sm font-semibold mono">{p.value.toFixed(2)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </CardContent>
+      )}
+    </Card>
+  );
+}
+
+/** Reusable interactive chart wrapper — clickable legend + Brush zoom */
+function InteractiveLineChart({ data, lines, height = 300, unit = '' }: {
+  data: Array<Record<string, any>>;
+  lines: Array<{ dataKey: string; stroke: string; name: string; strokeWidth?: number; yAxisId?: string }>;
+  height?: number;
+  unit?: string;
+}) {
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+  const handleLegendClick = useCallback((e: any) => {
+    const key = e.dataKey ?? e.value;
+    if (!key) return;
+    setHiddenSeries(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
+  }, []);
+
+  if (!data.length) return <div className="text-sm text-muted-foreground py-8 text-center">Aucune donnée pour cette période</div>;
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <LineChart data={data}>
+        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+        <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+        <YAxis tick={{ fontSize: 10 }} unit={unit ? ` ${unit}` : ''} domain={autoFitDomain} />
+        {lines.some(l => l.yAxisId) && <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} domain={[0, 1]} />}
+        <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number) => v?.toFixed(2)} />
+        <Legend
+          wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
+          onClick={handleLegendClick}
+          formatter={(value: string, entry: any) => (
+            <span style={{ color: hiddenSeries.has(entry.dataKey) ? '#9ca3af' : entry.color, textDecoration: hiddenSeries.has(entry.dataKey) ? 'line-through' : 'none' }}>{value}</span>
+          )}
+        />
+        {lines.map(l => (
+          <Line key={l.dataKey} type="monotone" dataKey={l.dataKey} stroke={l.stroke} dot={false}
+            strokeWidth={l.strokeWidth ?? 1.5} name={l.name} yAxisId={l.yAxisId}
+            hide={hiddenSeries.has(l.dataKey)} />
+        ))}
+        <Brush dataKey="time" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
 
 export default function PointDetails() {
   const { pointId } = useParams<{ pointId: string }>();
@@ -167,94 +266,14 @@ export default function PointDetails() {
         <KpiCard label="S apparente" value={fmt(latest?.apparent_power_total) + ' kVA'} icon={<Zap className="w-4 h-4" />} />
         <KpiCard label="Tension A" value={fmt(latest?.voltage_a) + ' V'} icon={<Thermometer className="w-4 h-4" />} />
         <KpiCard label="Courant A" value={fmt(latest?.current_a) + ' A'} icon={<Activity className="w-4 h-4" />} />
-        <KpiCard label="PF total" value={fmt(latest?.power_factor_total)} icon={<Gauge className="w-4 h-4" />}
+        <KpiCard label="PF total" value={fmt(latest?.power_factor_total)} icon={<Zap className="w-4 h-4" />}
           variant={latest?.power_factor_total != null && Number(latest.power_factor_total) < 0.85 ? 'warning' : 'default'} />
         <KpiCard label="Fréquence" value={fmt(latest?.frequency) + ' Hz'} icon={<Activity className="w-4 h-4" />} />
       </div>
 
-      {/* Real-time Gauges */}
+      {/* Expandable parameters */}
       {latest && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium flex items-center gap-2">
-              <Gauge className="w-4 h-4 text-primary" />
-              Indicateurs temps réel
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="flex flex-wrap items-center justify-around gap-4">
-              <RadialGauge
-                value={Number(latest.active_power_total ?? 0)}
-                min={0}
-                max={Math.max(Number(latest.active_power_total ?? 0) * 1.5, 50)}
-                label="Puissance active"
-                unit="kW"
-                size={130}
-                thresholds={[
-                  { value: 0, color: '#10b981' },
-                  { value: Number(latest.active_power_total ?? 0) * 0.8, color: '#f59e0b' },
-                  { value: Number(latest.active_power_total ?? 0) * 1.2, color: '#ef4444' },
-                ]}
-              />
-              <RadialGauge
-                value={Number(latest.power_factor_total ?? 0)}
-                min={0}
-                max={1}
-                label="Facteur de puissance"
-                unit="cos φ"
-                size={130}
-                thresholds={[
-                  { value: 0, color: '#ef4444' },
-                  { value: 0.7, color: '#f59e0b' },
-                  { value: 0.9, color: '#10b981' },
-                ]}
-              />
-              <RadialGauge
-                value={Number(latest.voltage_a ?? 0)}
-                min={180}
-                max={260}
-                label="Tension Phase A"
-                unit="V"
-                size={130}
-                thresholds={[
-                  { value: 180, color: '#ef4444' },
-                  { value: 210, color: '#f59e0b' },
-                  { value: 225, color: '#10b981' },
-                  { value: 245, color: '#f59e0b' },
-                ]}
-              />
-              <RadialGauge
-                value={Number(latest.current_a ?? 0)}
-                min={0}
-                max={Math.max(Number(latest.current_a ?? 0) * 1.5, 10)}
-                label="Courant Phase A"
-                unit="A"
-                size={130}
-                thresholds={[
-                  { value: 0, color: '#10b981' },
-                  { value: Number(latest.current_a ?? 0) * 0.8, color: '#f59e0b' },
-                  { value: Number(latest.current_a ?? 0) * 1.2, color: '#ef4444' },
-                ]}
-              />
-              {latest.frequency != null && (
-                <RadialGauge
-                  value={Number(latest.frequency ?? 50)}
-                  min={49}
-                  max={51}
-                  label="Fréquence"
-                  unit="Hz"
-                  size={130}
-                  thresholds={[
-                    { value: 49, color: '#ef4444' },
-                    { value: 49.5, color: '#f59e0b' },
-                    { value: 49.8, color: '#10b981' },
-                    { value: 50.2, color: '#f59e0b' },
-                  ]}
-                />
-              )}
-            </div>
-          </CardContent>
-        </Card>
+        <ExpandableParams latest={latest} />
       )}
 
       {/* Quality diagnostics */}
@@ -275,22 +294,10 @@ export default function PointDetails() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Courbe de charge — Puissance active</CardTitle></CardHeader>
             <CardContent>
-              {timeSeries.length === 0 ? (
-                <div className="text-sm text-muted-foreground py-8 text-center">Aucune donnée pour cette période</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={300}>
-                  <LineChart data={timeSeries}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} unit=" kW" domain={autoFitDomain} />
-                    <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} domain={[0, 1]} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
-                    <Legend />
-                    <Line type="monotone" dataKey="p_total" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="P totale (kW)" />
-                    <Line type="monotone" dataKey="pf" stroke="#f59e0b" dot={false} strokeWidth={1} name="PF" yAxisId="right" />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
+              <InteractiveLineChart data={timeSeries} unit="kW" lines={[
+                { dataKey: 'p_total', stroke: 'hsl(var(--primary))', name: 'P totale (kW)', strokeWidth: 1.5 },
+                { dataKey: 'pf', stroke: '#f59e0b', name: 'PF', strokeWidth: 1, yAxisId: 'right' },
+              ]} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -301,55 +308,34 @@ export default function PointDetails() {
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Puissance active (kW)</CardTitle></CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <LineChart data={timeSeries}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} unit=" kW" domain={autoFitDomain} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
-                    <Legend />
-                    <Line type="monotone" dataKey="p_total" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="P total" />
-                    <Line type="monotone" dataKey="p_a" stroke="#ef4444" dot={false} strokeWidth={1} name="Pa" />
-                    <Line type="monotone" dataKey="p_b" stroke="#3b82f6" dot={false} strokeWidth={1} name="Pb" />
-                    <Line type="monotone" dataKey="p_c" stroke="#22c55e" dot={false} strokeWidth={1} name="Pc" />
-                  </LineChart>
-                </ResponsiveContainer>
+                <InteractiveLineChart data={timeSeries} unit="kW" height={250} lines={[
+                  { dataKey: 'p_total', stroke: 'hsl(var(--primary))', name: 'P total', strokeWidth: 1.5 },
+                  { dataKey: 'p_a', stroke: '#ef4444', name: 'Pa', strokeWidth: 1 },
+                  { dataKey: 'p_b', stroke: '#3b82f6', name: 'Pb', strokeWidth: 1 },
+                  { dataKey: 'p_c', stroke: '#22c55e', name: 'Pc', strokeWidth: 1 },
+                ]} />
               </CardContent>
             </Card>
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Puissance réactive (kvar)</CardTitle></CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <LineChart data={timeSeries}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} unit=" kvar" domain={autoFitDomain} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
-                    <Legend />
-                    <Line type="monotone" dataKey="q_total" stroke="#8b5cf6" dot={false} strokeWidth={1.5} name="Q total" />
-                    <Line type="monotone" dataKey="q_a" stroke="#ef4444" dot={false} strokeWidth={1} name="Qa" />
-                    <Line type="monotone" dataKey="q_b" stroke="#3b82f6" dot={false} strokeWidth={1} name="Qb" />
-                    <Line type="monotone" dataKey="q_c" stroke="#22c55e" dot={false} strokeWidth={1} name="Qc" />
-                  </LineChart>
-                </ResponsiveContainer>
+                <InteractiveLineChart data={timeSeries} unit="kvar" height={250} lines={[
+                  { dataKey: 'q_total', stroke: '#8b5cf6', name: 'Q total', strokeWidth: 1.5 },
+                  { dataKey: 'q_a', stroke: '#ef4444', name: 'Qa', strokeWidth: 1 },
+                  { dataKey: 'q_b', stroke: '#3b82f6', name: 'Qb', strokeWidth: 1 },
+                  { dataKey: 'q_c', stroke: '#22c55e', name: 'Qc', strokeWidth: 1 },
+                ]} />
               </CardContent>
             </Card>
             <Card className="lg:col-span-2">
               <CardHeader className="pb-2"><CardTitle className="text-base">Puissance apparente (kVA)</CardTitle></CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={250}>
-                  <LineChart data={timeSeries}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} unit=" kVA" domain={autoFitDomain} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
-                    <Legend />
-                    <Line type="monotone" dataKey="s_total" stroke="#f97316" dot={false} strokeWidth={1.5} name="S total" />
-                    <Line type="monotone" dataKey="s_a" stroke="#ef4444" dot={false} strokeWidth={1} name="Sa" />
-                    <Line type="monotone" dataKey="s_b" stroke="#3b82f6" dot={false} strokeWidth={1} name="Sb" />
-                    <Line type="monotone" dataKey="s_c" stroke="#22c55e" dot={false} strokeWidth={1} name="Sc" />
-                  </LineChart>
-                </ResponsiveContainer>
+                <InteractiveLineChart data={timeSeries} unit="kVA" height={250} lines={[
+                  { dataKey: 's_total', stroke: '#f97316', name: 'S total', strokeWidth: 1.5 },
+                  { dataKey: 's_a', stroke: '#ef4444', name: 'Sa', strokeWidth: 1 },
+                  { dataKey: 's_b', stroke: '#3b82f6', name: 'Sb', strokeWidth: 1 },
+                  { dataKey: 's_c', stroke: '#22c55e', name: 'Sc', strokeWidth: 1 },
+                ]} />
               </CardContent>
             </Card>
           </div>
@@ -360,18 +346,11 @@ export default function PointDetails() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Tensions simples (V)</CardTitle></CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={timeSeries}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 10 }} unit=" V" domain={autoFitDomain} />
-                  <Tooltip contentStyle={{ fontSize: 12 }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="v_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Va (Phase A)" />
-                  <Line type="monotone" dataKey="v_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Vb (Phase B)" />
-                  <Line type="monotone" dataKey="v_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="Vc (Phase C)" />
-                </LineChart>
-              </ResponsiveContainer>
+              <InteractiveLineChart data={timeSeries} unit="V" lines={[
+                { dataKey: 'v_a', stroke: '#ef4444', name: 'Va (Phase A)' },
+                { dataKey: 'v_b', stroke: '#3b82f6', name: 'Vb (Phase B)' },
+                { dataKey: 'v_c', stroke: '#22c55e', name: 'Vc (Phase C)' },
+              ]} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -381,18 +360,11 @@ export default function PointDetails() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Tensions composées (V)</CardTitle></CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={timeSeries}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 10 }} unit=" V" domain={autoFitDomain} />
-                  <Tooltip contentStyle={{ fontSize: 12 }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="v_ab" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Vab" />
-                  <Line type="monotone" dataKey="v_bc" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Vbc" />
-                  <Line type="monotone" dataKey="v_ca" stroke="#22c55e" dot={false} strokeWidth={1.5} name="Vca" />
-                </LineChart>
-              </ResponsiveContainer>
+              <InteractiveLineChart data={timeSeries} unit="V" lines={[
+                { dataKey: 'v_ab', stroke: '#ef4444', name: 'Vab' },
+                { dataKey: 'v_bc', stroke: '#3b82f6', name: 'Vbc' },
+                { dataKey: 'v_ca', stroke: '#22c55e', name: 'Vca' },
+              ]} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -402,18 +374,11 @@ export default function PointDetails() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">Courants par phase (A)</CardTitle></CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={timeSeries}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 10 }} unit=" A" domain={autoFitDomain} />
-                  <Tooltip contentStyle={{ fontSize: 12 }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="i_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="Ia (Phase A)" />
-                  <Line type="monotone" dataKey="i_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="Ib (Phase B)" />
-                  <Line type="monotone" dataKey="i_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="Ic (Phase C)" />
-                </LineChart>
-              </ResponsiveContainer>
+              <InteractiveLineChart data={timeSeries} unit="A" lines={[
+                { dataKey: 'i_a', stroke: '#ef4444', name: 'Ia (Phase A)' },
+                { dataKey: 'i_b', stroke: '#3b82f6', name: 'Ib (Phase B)' },
+                { dataKey: 'i_c', stroke: '#22c55e', name: 'Ic (Phase C)' },
+              ]} />
             </CardContent>
           </Card>
         </TabsContent>
@@ -442,18 +407,11 @@ export default function PointDetails() {
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">THDi par phase (%)</CardTitle></CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={timeSeries}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} unit=" %" domain={autoFitDomain} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
-                    <Legend />
-                    <Line type="monotone" dataKey="thdi_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="THDi A" />
-                    <Line type="monotone" dataKey="thdi_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="THDi B" />
-                    <Line type="monotone" dataKey="thdi_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="THDi C" />
-                  </LineChart>
-                </ResponsiveContainer>
+                <InteractiveLineChart data={timeSeries} unit="%" height={220} lines={[
+                  { dataKey: 'thdi_a', stroke: '#ef4444', name: 'THDi A' },
+                  { dataKey: 'thdi_b', stroke: '#3b82f6', name: 'THDi B' },
+                  { dataKey: 'thdi_c', stroke: '#22c55e', name: 'THDi C' },
+                ]} />
               </CardContent>
             </Card>
           </div>
@@ -464,18 +422,11 @@ export default function PointDetails() {
           <Card>
             <CardHeader className="pb-2"><CardTitle className="text-base">THD tension par phase (%)</CardTitle></CardHeader>
             <CardContent>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={timeSeries}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                  <YAxis tick={{ fontSize: 10 }} unit=" %" domain={autoFitDomain} />
-                  <Tooltip contentStyle={{ fontSize: 12 }} />
-                  <Legend />
-                  <Line type="monotone" dataKey="thdu_a" stroke="#ef4444" dot={false} strokeWidth={1.5} name="THDu A" />
-                  <Line type="monotone" dataKey="thdu_b" stroke="#3b82f6" dot={false} strokeWidth={1.5} name="THDu B" />
-                  <Line type="monotone" dataKey="thdu_c" stroke="#22c55e" dot={false} strokeWidth={1.5} name="THDu C" />
-                </LineChart>
-              </ResponsiveContainer>
+              <InteractiveLineChart data={timeSeries} unit="%" lines={[
+                { dataKey: 'thdu_a', stroke: '#ef4444', name: 'THDu A' },
+                { dataKey: 'thdu_b', stroke: '#3b82f6', name: 'THDu B' },
+                { dataKey: 'thdu_c', stroke: '#22c55e', name: 'THDu C' },
+              ]} />
             </CardContent>
           </Card>
         </TabsContent>
