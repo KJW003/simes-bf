@@ -72,6 +72,7 @@ function AppRoutes() {
             {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<DataMonitor />} />}
             {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<Points />} />}
             {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<PowerQuality />} />}
+            {canAccessOrgRoute(role, "history") && <Route path="/donnees" element={<History />} />}
             {canAccessOrgRoute(role, "history") && <Route path="/history" element={<History />} />}
             {canAccessOrgRoute(role, "forecasts") && <Route path="/forecasts" element={<Forecasts />} />}
             {canAccessOrgRoute(role, "invoice") && <Route path="/invoice" element={<Invoice />} />}

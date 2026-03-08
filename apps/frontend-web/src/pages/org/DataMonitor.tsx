@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Map as MapIcon, Zap, Activity, Gauge, ChevronRight, Loader2, Radio, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useTerrainOverview, useZones, useCreateZone, useUpdateZone, useDeleteZone } from '@/hooks/useApi';
 import api from '@/lib/api';
+import { useQueryClient } from '@tanstack/react-query';
 
 const fmt = (v: any, decimals = 2) => v != null && v !== '' ? Number(v).toFixed(decimals) : '—';
 
@@ -22,6 +23,7 @@ export default function DataMonitor() {
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(terrainId);
   const { data: zonesData, isLoading: loadZ } = useZones(terrainId);
 
+  const queryClient = useQueryClient();
   const createZone = useCreateZone();
   const updateZone = useUpdateZone();
   const deleteZone = useDeleteZone();
@@ -175,7 +177,8 @@ export default function DataMonitor() {
                             await api.assignZone(String(p.id), assignTargetZone);
                             setAssigningPointId(null);
                             setAssignTargetZone('');
-                            window.location.reload();
+                            queryClient.invalidateQueries({ queryKey: ['terrain-overview'] });
+                            queryClient.invalidateQueries({ queryKey: ['zones'] });
                           }}>OK</Button>
                           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { setAssigningPointId(null); setAssignTargetZone(''); }}>✕</Button>
                         </div>

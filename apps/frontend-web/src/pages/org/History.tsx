@@ -5,19 +5,21 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { useReadings, useTerrainOverview } from '@/hooks/useApi';
+import { useReadings, useTerrainOverview, useZones } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  History as HistoryIcon, Download, Zap, TrendingUp, BarChart3,
-  Activity, Loader2, AlertCircle,
+  Database, Download, Zap, TrendingUp, BarChart3,
+  Activity, Loader2, AlertCircle, Leaf, GitCompareArrows, Table,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer,
+  ResponsiveContainer, Legend,
 } from 'recharts';
+
+const CO2_FACTOR = 0.71;
 
 const RANGES = [
   { key: '1D', label: '1 jour', hours: 24 },
@@ -42,14 +44,30 @@ export default function History() {
   const [range, setRange] = useState<string>('1D');
   const [metric, setMetric] = useState<string>('active_power_total');
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
+  const [compareMode, setCompareMode] = useState(false);
+  const [viewMode, setViewMode] = useState<'chart' | 'table'>('chart');
+  const [zoneFilter, setZoneFilter] = useState<string>('_all');
 
   const rangeObj = RANGES.find(r => r.key === range) ?? RANGES[0];
   const metricObj = METRICS.find(m => m.key === metric) ?? METRICS[0];
   const now = useMemo(() => new Date(), [range]); // eslint-disable-line react-hooks/exhaustive-deps
   const from = useMemo(() => new Date(now.getTime() - rangeObj.hours * 3600_000).toISOString(), [now, rangeObj]);
 
+  // Yesterday's range for comparison
+  const yesterdayFrom = useMemo(() => new Date(now.getTime() - rangeObj.hours * 3600_000 - 86400_000).toISOString(), [now, rangeObj]);
+  const yesterdayTo = useMemo(() => new Date(now.getTime() - 86400_000).toISOString(), [now]);
+
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
+  const { data: zonesData } = useZones(selectedTerrainId);
   const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
+  const zones = ((zonesData ?? []) as unknown) as Array<Record<string, unknown>>;
+
+  // Filter points by zone
+  const filteredPoints = useMemo(() => {
+    if (zoneFilter === '_all') return points;
+    if (zoneFilter === '_unassigned') return points.filter(p => !(p as any).zone_id);
+    return points.filter(p => String((p as any).zone_id) === zoneFilter);
+  }, [points, zoneFilter]);
 
   const { data, isLoading, isError } = useReadings(selectedTerrainId, {
     from,
@@ -60,10 +78,22 @@ export default function History() {
 
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
 
-  // ─── Compute chart data
+  // Comparison (yesterday) data
+  const { data: compareData } = useReadings(
+    compareMode ? selectedTerrainId : null,
+    compareMode ? {
+      from: yesterdayFrom,
+      to: yesterdayTo,
+      point_id: selectedPoint === '_all' ? undefined : selectedPoint,
+      limit: 5000,
+    } : undefined,
+  );
+  const compareReadings = (compareData?.readings ?? []) as Array<Record<string, unknown>>;
+
+  // ─── Compute chart data (with optional comparison)
   const chartData = useMemo(() => {
     if (!readings.length) return [];
-    return readings
+    const mainData = readings
       .map(r => ({
         time: new Date(String(r.time)).getTime(),
         value: r[metric] != null ? Number(r[metric]) : null,
@@ -73,7 +103,26 @@ export default function History() {
         }),
       }))
       .sort((a, b) => a.time - b.time);
-  }, [readings, metric, rangeObj]);
+
+    if (compareMode && compareReadings.length) {
+      // Align yesterday's data to today's time axis (shift by 24h)
+      const compMap = new Map<string, number>();
+      for (const r of compareReadings) {
+        const shifted = new Date(new Date(String(r.time)).getTime() + 86400_000);
+        const label = shifted.toLocaleString('fr-FR', {
+          hour: '2-digit', minute: '2-digit',
+          ...(rangeObj.hours > 24 ? { day: '2-digit', month: '2-digit' } : {}),
+        });
+        const val = r[metric] != null ? Number(r[metric]) : null;
+        if (val != null) compMap.set(label, val);
+      }
+      return mainData.map(d => ({
+        ...d,
+        yesterday: compMap.get(d.label) ?? null,
+      }));
+    }
+    return mainData;
+  }, [readings, compareReadings, metric, rangeObj, compareMode]);
 
   // ─── Daily energy bars
   const dailyEnergy = useMemo(() => {
@@ -139,6 +188,8 @@ export default function History() {
     return Math.max(...eis) - Math.min(...eis);
   }, [readings]);
 
+  const co2 = useMemo(() => energyDelta * CO2_FACTOR, [energyDelta]);
+
   // ─── CSV export
   const exportCsv = useCallback(() => {
     if (!readings.length) return;
@@ -159,8 +210,8 @@ export default function History() {
   if (!selectedTerrainId) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Historique" description="Analyse historique de consommation" />
-        <Card><CardContent className="py-12 text-center text-muted-foreground">Sélectionnez un terrain pour voir l'historique.</CardContent></Card>
+        <PageHeader title="Données" description="Analyse de consommation" />
+        <Card><CardContent className="py-12 text-center text-muted-foreground">Sélectionnez un terrain pour voir les données.</CardContent></Card>
       </div>
     );
   }
@@ -168,12 +219,28 @@ export default function History() {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Historique"
-        description="Analyse historique de consommation"
+        title="Données"
+        description="Analyse de consommation"
         actions={
-          <Button variant="outline" size="sm" onClick={exportCsv} disabled={!readings.length}>
-            <Download className="w-4 h-4 mr-2" />CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              variant={viewMode === 'chart' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('chart')}
+            >
+              <BarChart3 className="w-4 h-4 mr-1" />Graphiques
+            </Button>
+            <Button
+              variant={viewMode === 'table' ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setViewMode('table')}
+            >
+              <Table className="w-4 h-4 mr-1" />Tableau
+            </Button>
+            <Button variant="outline" size="sm" onClick={exportCsv} disabled={!readings.length}>
+              <Download className="w-4 h-4 mr-2" />CSV
+            </Button>
+          </div>
         }
       />
 
@@ -201,12 +268,26 @@ export default function History() {
         </div>
 
         <div className="space-y-1">
+          <label className="text-xs font-medium text-muted-foreground">Zone</label>
+          <Select value={zoneFilter} onValueChange={(v) => { setZoneFilter(v); setSelectedPoint('_all'); }}>
+            <SelectTrigger className="w-44"><SelectValue placeholder="Toutes les zones" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="_all">Toutes les zones</SelectItem>
+              {zones.map(z => (
+                <SelectItem key={String(z.id)} value={String(z.id)}>{String(z.name)}</SelectItem>
+              ))}
+              <SelectItem value="_unassigned">Hors zone</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">Point de mesure</label>
           <Select value={selectedPoint} onValueChange={setSelectedPoint}>
             <SelectTrigger className="w-56"><SelectValue placeholder="Tous les points" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="_all">Tous les points</SelectItem>
-              {points.map(p => (
+              {filteredPoints.map(p => (
                 <SelectItem key={String(p.id)} value={String(p.id)}>
                   {String(p.name)}
                 </SelectItem>
@@ -214,6 +295,16 @@ export default function History() {
             </SelectContent>
           </Select>
         </div>
+
+        <Button
+          variant={compareMode ? 'default' : 'outline'}
+          size="sm"
+          onClick={() => setCompareMode(!compareMode)}
+          className="gap-1"
+        >
+          <GitCompareArrows className="w-4 h-4" />
+          {compareMode ? 'Comparaison ON' : 'Comparer J-1'}
+        </Button>
       </div>
 
       {isLoading && <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Chargement…</CardContent></Card>}
@@ -223,45 +314,53 @@ export default function History() {
       {!isLoading && !isError && (
         <>
           {/* KPIs */}
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 animate-stagger-children">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-4 animate-stagger-children">
             <KpiCard label="Maximum" value={fmt(kpis.max)} unit={metricObj.unit} icon={<TrendingUp className="w-4 h-4" />} />
             <KpiCard label="Moyenne" value={fmt(kpis.avg)} unit={metricObj.unit} icon={<Activity className="w-4 h-4" />} />
             <KpiCard label="Minimum" value={fmt(kpis.min)} unit={metricObj.unit} icon={<BarChart3 className="w-4 h-4" />} />
             <KpiCard label="Énergie période" value={fmt(energyDelta, 1)} unit="kWh" icon={<Zap className="w-4 h-4" />} />
-            <KpiCard label="Points" value={kpis.count} icon={<HistoryIcon className="w-4 h-4" />} />
+            <KpiCard label="CO₂ période" value={fmt(co2, 1)} unit="kg" icon={<Leaf className="w-4 h-4" />} />
+            <KpiCard label="Points" value={kpis.count} icon={<Database className="w-4 h-4" />} />
           </div>
 
           {/* Load curve */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-base font-medium flex items-center gap-2">
-                Courbe de charge — {metricObj.label}
-                <Badge variant="outline" className="text-[10px] ml-auto">{readings.length} mesures</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              {chartData.length === 0 ? (
-                <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Aucune donnée pour cette période</div>
-              ) : (
-                <ResponsiveContainer width="100%" height={320}>
-                  <LineChart data={chartData}>
-                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                    <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} />
-                    <Tooltip
-                      contentStyle={{ fontSize: 12 }}
-                      labelFormatter={(_l, payload) => {
-                        if (!payload?.length) return '';
-                        return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
-                      }}
-                      formatter={(v: number) => [v != null ? v.toFixed(2) : '—', metricObj.unit]}
-                    />
-                    <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name={metricObj.label} />
-                  </LineChart>
-                </ResponsiveContainer>
-              )}
-            </CardContent>
-          </Card>
+          {viewMode === 'chart' ? (
+            <>
+              <Card>
+                <CardHeader className="pb-2">
+                  <CardTitle className="text-base font-medium flex items-center gap-2">
+                    Courbe de charge — {metricObj.label}
+                    {compareMode && <Badge className="text-[10px] bg-orange-100 text-orange-700">vs J-1</Badge>}
+                    <Badge variant="outline" className="text-[10px] ml-auto">{readings.length} mesures</Badge>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  {chartData.length === 0 ? (
+                    <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Aucune donnée pour cette période</div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height={320}>
+                      <LineChart data={chartData}>
+                        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                        <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                        <YAxis tick={{ fontSize: 10 }} />
+                        <Tooltip
+                          contentStyle={{ fontSize: 12 }}
+                          labelFormatter={(_l, payload) => {
+                            if (!payload?.length) return '';
+                            return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
+                          }}
+                          formatter={(v: number, name: string) => [v != null ? v.toFixed(2) : '—', name === 'yesterday' ? 'J-1' : metricObj.unit]}
+                        />
+                        {compareMode && <Legend wrapperStyle={{ fontSize: 11 }} />}
+                        <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="Aujourd'hui" />
+                        {compareMode && (
+                          <Line type="monotone" dataKey="yesterday" stroke="#f97316" dot={false} strokeWidth={1.5} strokeDasharray="5 5" name="J-1" connectNulls />
+                        )}
+                      </LineChart>
+                    </ResponsiveContainer>
+                  )}
+                </CardContent>
+              </Card>
 
           {/* Daily energy bars */}
           {dailyEnergy.length > 1 && (
@@ -316,6 +415,56 @@ export default function History() {
                     ))}
                   </div>
                 </div>
+              </CardContent>
+            </Card>
+          )}
+            </>
+          ) : (
+            /* Table view mode */
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-base font-medium">Données brutes — {metricObj.label}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {readings.length === 0 ? (
+                  <div className="py-8 text-center text-muted-foreground text-sm">Aucune donnée pour cette période</div>
+                ) : (
+                  <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+                    <table className="w-full text-sm">
+                      <thead className="sticky top-0 bg-background">
+                        <tr className="border-b text-left text-muted-foreground">
+                          <th className="pb-2 font-medium">Horodatage</th>
+                          <th className="pb-2 font-medium">Point</th>
+                          <th className="pb-2 font-medium text-right">{metricObj.label}</th>
+                          <th className="pb-2 font-medium text-right">Énergie (kWh)</th>
+                          <th className="pb-2 font-medium text-right">PF</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {[...readings]
+                          .sort((a, b) => new Date(String(b.time)).getTime() - new Date(String(a.time)).getTime())
+                          .slice(0, 200)
+                          .map((r, i) => {
+                            const pointName = points.find(p => String(p.id) === String(r.point_id))?.name;
+                            return (
+                              <tr key={i} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                                <td className="py-1.5 text-muted-foreground">
+                                  {new Date(String(r.time)).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                </td>
+                                <td className="py-1.5 font-medium">{String(pointName ?? r.point_id ?? '—')}</td>
+                                <td className="py-1.5 text-right mono">{fmt(r[metric])} {metricObj.unit}</td>
+                                <td className="py-1.5 text-right mono">{fmt(r.energy_import, 1)}</td>
+                                <td className="py-1.5 text-right mono">{fmt(r.power_factor_total, 3)}</td>
+                              </tr>
+                            );
+                          })}
+                      </tbody>
+                    </table>
+                    {readings.length > 200 && (
+                      <div className="py-2 text-center text-xs text-muted-foreground">Affichage des 200 dernières mesures sur {readings.length}</div>
+                    )}
+                  </div>
+                )}
               </CardContent>
             </Card>
           )}

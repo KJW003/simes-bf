@@ -6,7 +6,7 @@ import {
   Home,
   Activity,
   Gauge,
-  History,
+  Database,
   TrendingUp,
   Receipt,
   Sun,
@@ -105,7 +105,7 @@ export function OrgSidebar() {
               <NavItem to="/power-quality" icon={Gauge} label="Qualité réseau" />
             )}
             {canAccessOrgRoute(role, 'history') && (
-              <NavItem to="/history" icon={History} label="Historique" />
+              <NavItem to="/donnees" icon={Database} label="Données" />
             )}
           </NavSection>
 
@@ -126,7 +126,7 @@ export function OrgSidebar() {
               <NavItem
                 to="/anomalies"
                 icon={AlertTriangle}
-                label="Anomalies"
+                label="Alertes & Anomalies"
               />
             )}
             {canAccessOrgRoute(role, 'reports') && (
