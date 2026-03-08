@@ -20,6 +20,7 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer,
 } from 'recharts';
+import { RadialGauge } from '@/components/ui/radial-gauge';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
 const fmtDT = (t: string) => new Date(t).toLocaleString('fr-FR', { hour: '2-digit', minute: '2-digit' });
@@ -171,6 +172,92 @@ export default function PointDetails() {
         <KpiCard label="Fréquence" value={fmt(latest?.frequency) + ' Hz'} icon={<Activity className="w-4 h-4" />} />
       </div>
 
+      {/* Real-time Gauges */}
+      {latest && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base font-medium flex items-center gap-2">
+              <Gauge className="w-4 h-4 text-primary" />
+              Indicateurs temps réel
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="flex flex-wrap items-center justify-around gap-4">
+              <RadialGauge
+                value={Number(latest.active_power_total ?? 0)}
+                min={0}
+                max={Math.max(Number(latest.active_power_total ?? 0) * 1.5, 50)}
+                label="Puissance active"
+                unit="kW"
+                size={130}
+                thresholds={[
+                  { value: 0, color: '#10b981' },
+                  { value: Number(latest.active_power_total ?? 0) * 0.8, color: '#f59e0b' },
+                  { value: Number(latest.active_power_total ?? 0) * 1.2, color: '#ef4444' },
+                ]}
+              />
+              <RadialGauge
+                value={Number(latest.power_factor_total ?? 0)}
+                min={0}
+                max={1}
+                label="Facteur de puissance"
+                unit="cos φ"
+                size={130}
+                thresholds={[
+                  { value: 0, color: '#ef4444' },
+                  { value: 0.7, color: '#f59e0b' },
+                  { value: 0.9, color: '#10b981' },
+                ]}
+              />
+              <RadialGauge
+                value={Number(latest.voltage_a ?? 0)}
+                min={180}
+                max={260}
+                label="Tension Phase A"
+                unit="V"
+                size={130}
+                thresholds={[
+                  { value: 180, color: '#ef4444' },
+                  { value: 210, color: '#f59e0b' },
+                  { value: 225, color: '#10b981' },
+                  { value: 245, color: '#f59e0b' },
+                ]}
+              />
+              <RadialGauge
+                value={Number(latest.current_a ?? 0)}
+                min={0}
+                max={Math.max(Number(latest.current_a ?? 0) * 1.5, 10)}
+                label="Courant Phase A"
+                unit="A"
+                size={130}
+                thresholds={[
+                  { value: 0, color: '#10b981' },
+                  { value: Number(latest.current_a ?? 0) * 0.8, color: '#f59e0b' },
+                  { value: Number(latest.current_a ?? 0) * 1.2, color: '#ef4444' },
+                ]}
+              />
+              {latest.frequency != null && (
+                <RadialGauge
+                  value={Number(latest.frequency ?? 50)}
+                  min={49}
+                  max={51}
+                  label="Fréquence"
+                  unit="Hz"
+                  size={130}
+                  thresholds={[
+                    { value: 49, color: '#ef4444' },
+                    { value: 49.5, color: '#f59e0b' },
+                    { value: 49.8, color: '#10b981' },
+                    { value: 50.2, color: '#f59e0b' },
+                  ]}
+                />
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Quality diagnostics */}
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto">
           <TabsTrigger value="overview">Vue d'ensemble</TabsTrigger>

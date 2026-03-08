@@ -1,12 +1,15 @@
 import React from 'react';
 import { Outlet } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
+import { useApiHealth } from '@/hooks/useApiHealth';
 import { TopBar } from './TopBar';
 import { OrgSidebar } from './OrgSidebar';
 import { PlatformSidebar } from './PlatformSidebar';
+import { cn } from '@/lib/utils';
 
 export function MainLayout() {
-  const { mode } = useAppContext();
+  const { mode, selectedTerrain } = useAppContext();
+  const { isOnline, latencyMs } = useApiHealth();
   
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -31,6 +34,43 @@ export function MainLayout() {
           </div>
         </main>
       </div>
+
+      {/* System Status Footer Bar */}
+      <footer className="h-7 border-t border-border/60 bg-card/60 backdrop-blur-sm flex items-center px-4 gap-4 text-[10px] text-muted-foreground select-none">
+        <div className="flex items-center gap-1.5">
+          <span className={cn(
+            'w-1.5 h-1.5 rounded-full',
+            isOnline ? 'bg-green-500' : 'bg-red-500 animate-pulse'
+          )} />
+          <span>{isOnline ? 'API connectée' : 'API hors ligne'}</span>
+          {latencyMs != null && <span className="text-muted-foreground/60">({latencyMs} ms)</span>}
+        </div>
+
+        <span className="text-border">|</span>
+
+        {selectedTerrain && (
+          <>
+            <div className="flex items-center gap-1.5">
+              <span className={cn(
+                'w-1.5 h-1.5 rounded-full',
+                selectedTerrain.status === 'online' ? 'bg-green-500' :
+                selectedTerrain.status === 'degraded' ? 'bg-amber-400 animate-pulse' : 'bg-gray-400'
+              )} />
+              <span>Concentrateur: {selectedTerrain.name}</span>
+              <span className="text-muted-foreground/60">
+                ({selectedTerrain.dataCompleteness24h.toFixed(0)}% complétude)
+              </span>
+            </div>
+            <span className="text-border">|</span>
+            <span>{selectedTerrain.pointsCount} points</span>
+            <span className="text-border">|</span>
+          </>
+        )}
+
+        <div className="flex-1" />
+
+        <span className="text-muted-foreground/50">SIMES-BF v1.0 — {mode === 'platform' ? 'Plateforme' : 'Organisation'}</span>
+      </footer>
     </div>
   );
 }

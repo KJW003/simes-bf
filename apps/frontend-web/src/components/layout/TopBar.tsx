@@ -1,6 +1,8 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { useApiHealth } from '@/hooks/useApiHealth';
+import { useIncidents, useIncidentStats } from '@/hooks/useApi';
 import {
   Building2,
   MapPin,
@@ -18,6 +20,9 @@ import {
   WifiOff,
   AlertCircle,
   Check,
+  Moon,
+  Sun,
+  ExternalLink,
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -52,6 +57,28 @@ export function TopBar() {
 
   const { isOnline, latencyMs } = useApiHealth();
   const [searchQuery, setSearchQuery] = useState('');
+  const [darkMode, setDarkMode] = useState(() =>
+    typeof document !== 'undefined' && document.documentElement.classList.contains('dark')
+  );
+
+  // Fetch real incidents for notification center
+  const { data: incidentsData } = useIncidents({ status: 'open' });
+  const { data: incidentStats } = useIncidentStats();
+
+  const incidents = (incidentsData as any)?.incidents ?? [];
+  const openCount = (incidentStats as any)?.open ?? 0;
+  const criticalCount = (incidentStats as any)?.critical ?? 0;
+
+  // Dark mode toggle
+  useEffect(() => {
+    if (darkMode) {
+      document.documentElement.classList.add('dark');
+      localStorage.setItem('simes-theme', 'dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+      localStorage.setItem('simes-theme', 'light');
+    }
+  }, [darkMode]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -248,20 +275,88 @@ export function TopBar() {
         </span>
       </div>
 
+      {/* Dark Mode Toggle */}
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 hover:bg-accent/80"
+        onClick={() => setDarkMode(!darkMode)}
+        title={darkMode ? 'Mode clair' : 'Mode sombre'}
+      >
+        {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+      </Button>
+
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
           <Button variant="ghost" size="icon" className="h-8 w-8 relative hover:bg-accent/80">
             <Bell className="w-4 h-4" />
+            {openCount > 0 && (
+              <span className={cn(
+                'absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full text-[10px] font-bold flex items-center justify-center px-1',
+                criticalCount > 0 ? 'bg-red-500 text-white animate-pulse' : 'bg-amber-500 text-white'
+              )}>
+                {openCount > 99 ? '99+' : openCount}
+              </span>
+            )}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-80">
-          <DropdownMenuLabel>Notifications</DropdownMenuLabel>
+        <DropdownMenuContent align="end" className="w-96 max-h-[480px] overflow-y-auto">
+          <DropdownMenuLabel className="flex items-center justify-between">
+            <span>Notifications</span>
+            {openCount > 0 && (
+              <Badge variant="outline" className={cn('text-[10px]', criticalCount > 0 ? 'badge-critical' : 'badge-warning')}>
+                {openCount} ouverte{openCount > 1 ? 's' : ''}
+              </Badge>
+            )}
+          </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem className="flex-col items-start gap-1 py-3">
-            <span className="text-xs text-muted-foreground">
-              Aucune notification pour le moment.
-            </span>
-          </DropdownMenuItem>
+          {incidents.length === 0 ? (
+            <DropdownMenuItem className="flex-col items-start gap-1 py-3">
+              <span className="text-xs text-muted-foreground flex items-center gap-2">
+                <Check className="w-3 h-3 text-green-500" />
+                Aucune alerte ouverte. Tout fonctionne correctement.
+              </span>
+            </DropdownMenuItem>
+          ) : (
+            <>
+              {incidents.slice(0, 8).map((inc: any) => (
+                <DropdownMenuItem key={inc.id} className="flex-col items-start gap-1 py-2.5 cursor-pointer">
+                  <div className="flex items-center gap-2 w-full">
+                    <span className={cn(
+                      'w-2 h-2 rounded-full flex-shrink-0',
+                      inc.severity === 'critical' ? 'bg-red-500 animate-pulse' :
+                      inc.severity === 'warning' ? 'bg-amber-400' : 'bg-blue-400'
+                    )} />
+                    <span className="text-sm font-medium truncate flex-1">{inc.title}</span>
+                    <Badge variant="outline" className={cn(
+                      'text-[9px] flex-shrink-0',
+                      inc.severity === 'critical' ? 'badge-critical' :
+                      inc.severity === 'warning' ? 'badge-warning' : 'badge-info'
+                    )}>
+                      {inc.severity}
+                    </Badge>
+                  </div>
+                  {inc.description && (
+                    <span className="text-[11px] text-muted-foreground line-clamp-1 pl-4">{inc.description}</span>
+                  )}
+                  <span className="text-[10px] text-muted-foreground pl-4">
+                    {new Date(inc.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </span>
+                </DropdownMenuItem>
+              ))}
+              {incidents.length > 8 && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem className="justify-center py-2">
+                    <Link to="/anomalies" className="text-xs text-primary flex items-center gap-1">
+                      Voir toutes les alertes ({incidents.length})
+                      <ExternalLink className="w-3 h-3" />
+                    </Link>
+                  </DropdownMenuItem>
+                </>
+              )}
+            </>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -283,13 +378,17 @@ export function TopBar() {
             </div>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem className="gap-2">
-            <User className="w-4 h-4" />
-            Profil
+          <DropdownMenuItem className="gap-2" asChild>
+            <Link to="/settings">
+              <User className="w-4 h-4" />
+              Profil
+            </Link>
           </DropdownMenuItem>
-          <DropdownMenuItem className="gap-2">
-            <Settings className="w-4 h-4" />
-            Paramètres
+          <DropdownMenuItem className="gap-2" asChild>
+            <Link to="/settings">
+              <Settings className="w-4 h-4" />
+              Paramètres
+            </Link>
           </DropdownMenuItem>
           <DropdownMenuItem className="gap-2">
             <HelpCircle className="w-4 h-4" />

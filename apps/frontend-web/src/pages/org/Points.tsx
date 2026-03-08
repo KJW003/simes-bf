@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useTerrainOverview, useReadings, useUpdatePoint } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
+import { MiniSparkline } from '@/components/ui/mini-sparkline';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
 const fmtDT = (iso: string) => {
@@ -40,6 +41,39 @@ export default function Points() {
     selectedPointId ? selectedTerrainId : null,
     selectedPointId ? { point_id: selectedPointId, from: readingsFrom, limit: 50 } : undefined,
   );
+
+  // Fetch 24h readings for sparklines (all points)
+  const sparklineFrom = useMemo(() => new Date(Date.now() - 24 * 3600_000).toISOString(), []);
+  const { data: allReadingsData } = useReadings(
+    selectedTerrainId,
+    { from: sparklineFrom, limit: 5000 },
+  );
+
+  // Compute sparkline data per point
+  const sparklineMap = useMemo(() => {
+    const map = new Map<string, number[]>();
+    const readings = (allReadingsData as any)?.readings ?? [];
+    if (!readings.length) return map;
+
+    // Group by point, sort by time, extract power values
+    const grouped = new Map<string, Array<{ t: number; v: number }>>();
+    for (const r of readings) {
+      const pid = String(r.point_id);
+      if (r.active_power_total == null) continue;
+      if (!grouped.has(pid)) grouped.set(pid, []);
+      grouped.get(pid)!.push({ t: new Date(r.time).getTime(), v: Number(r.active_power_total) });
+    }
+
+    for (const [pid, vals] of grouped) {
+      vals.sort((a, b) => a.t - b.t);
+      // Downsample to ~20 points for sparkline
+      const step = Math.max(1, Math.floor(vals.length / 20));
+      const downsampled = vals.filter((_, i) => i % step === 0 || i === vals.length - 1).map(v => v.v);
+      map.set(pid, downsampled);
+    }
+
+    return map;
+  }, [allReadingsData]);
 
   const handleRename = async (pointId: string) => {
     if (!renameValue.trim()) return;
@@ -257,6 +291,18 @@ export default function Points() {
                         <span className={cn('mono font-medium', pf != null && pf < 0.85 && 'text-amber-600')}>{fmt(r.power_factor_total)}</span>
                       </div>
                     </div>
+                    {/* 24h trend sparkline */}
+                    {sparklineMap.has(String(p.id)) && (
+                      <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between">
+                        <span className="text-[10px] text-muted-foreground">24h</span>
+                        <MiniSparkline
+                          data={sparklineMap.get(String(p.id))!}
+                          width={100}
+                          height={24}
+                          color={isOnline ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))'}
+                        />
+                      </div>
+                    )}
                   </CardContent>
                 )}
               </Card>

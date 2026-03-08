@@ -26,6 +26,7 @@ import Administration from "./pages/org/Administration";
 import ZonePage from "./pages/org/ZonePage";
 import PointDetails from "./pages/org/PointDetails";
 import Points from "./pages/org/Points";
+import SettingsPage from "./pages/org/Settings";
 
 // Platform Mode Pages
 import NocOverview from "./pages/platform/NocOverview";
@@ -84,6 +85,7 @@ function AppRoutes() {
             {canAccessOrgRoute(role, "admin") && <Route path="/admin" element={<Administration />} />}
             {canAccessOrgRoute(role, "dataMonitor") && <Route path="/terrain/:terrainId/zones/:zoneId" element={<ZonePage />} />}
             {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points/:pointId" element={<PointDetails />} />}
+            <Route path="/settings" element={<SettingsPage />} />
           </>
         )}
         <Route path="*" element={<NotFound />} />

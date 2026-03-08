@@ -137,6 +137,7 @@ export function OrgSidebar() {
           {canAccessOrgRoute(role, 'admin') && (
             <NavSection title="Administration">
               <NavItem to="/admin" icon={Settings} label="Configuration" />
+              <NavItem to="/settings" icon={Settings} label="Paramètres" />
             </NavSection>
           )}
         </nav>
