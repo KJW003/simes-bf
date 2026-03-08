@@ -266,25 +266,30 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
   const zones = (overviewData?.zones ?? []) as Array<Record<string, any>>;
 
   const getPointStatus = useCallback((p: Record<string, any>) => {
+    if (!p) return 'offline';
     const r = p.readings;
     const lastSeen = p.lastSeen as string | null;
     const minutesAgo = lastSeen ? Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000) : null;
     if (minutesAgo == null) return 'offline';
-    if (minutesAgo < config.staleThresholdMin) return 'online';
-    if (minutesAgo < config.offlineThresholdMin) return 'stale';
+    if (minutesAgo < (config?.staleThresholdMin ?? 15)) return 'online';
+    if (minutesAgo < (config?.offlineThresholdMin ?? 60)) return 'stale';
     return 'offline';
-  }, [config.staleThresholdMin, config.offlineThresholdMin]);
+  }, [config?.staleThresholdMin, config?.offlineThresholdMin]);
 
   // Compute point positions — spread a grid around site if no custom locations
   const pointMarkers = useMemo(() => {
+    if (!points || !Array.isArray(points) || !config) return [];
     return points.map((p, i) => {
-      const custom = config.pointLocations[String(p.id)];
-      const lat = custom?.lat ?? config.lat + (Math.floor(i / 4) - 1) * 0.0003;
-      const lng = custom?.lng ?? config.lng + ((i % 4) - 1.5) * 0.0003;
+      if (!p) return null;
+      const custom = config.pointLocations?.[String(p.id)];
+      const baseLat = config.lat ?? 12.3714;
+      const baseLng = config.lng ?? -1.5197;
+      const lat = custom?.lat ?? baseLat + (Math.floor(i / 4) - 1) * 0.0003;
+      const lng = custom?.lng ?? baseLng + ((i % 4) - 1.5) * 0.0003;
       const status = getPointStatus(p);
       const r = p.readings;
       return { ...p, lat, lng, status, r };
-    });
+    }).filter(Boolean);
   }, [points, config, getPointStatus]);
 
   const onlineCount = pointMarkers.filter(p => p.status === 'online').length;
@@ -293,14 +298,17 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
 
   // Zone stats
   const zoneStats = useMemo(() => {
+    if (!config?.zones || config.zones.length === 0) return [];
     return config.zones.map(z => {
+      if (!z || !z.name) return { name: '', count: 0 };
       const inZone = points.filter(p => {
-        const zone = zones.find(zn => String(zn.id) === String(p.zone_id));
+        if (!p?.zone_id || !zones?.length) return false;
+        const zone = zones.find(zn => String(zn?.id) === String(p.zone_id));
         return zone && String(zone.name) === z.name;
       });
       return { name: z.name, count: inZone.length };
     });
-  }, [config.zones, points, zones]);
+  }, [config?.zones, points, zones]);
 
   const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
 
@@ -341,18 +349,22 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
             />
 
             {/* Zone polygons */}
-            {config.zones.map((z, i) => (
-              <Polygon
-                key={i}
-                positions={z.coords}
-                pathOptions={{ color: z.color.replace(/80$/, ''), fillColor: z.color, fillOpacity: 0.2, weight: 2 }}
-              >
-                <Popup>
-                  <div className="text-sm font-medium">{z.name}</div>
-                  <div className="text-xs text-gray-600">{zoneStats[i]?.count ?? 0} appareils</div>
-                </Popup>
-              </Polygon>
-            ))}
+            {config.zones && config.zones.map((z, i) => {
+              if (!z?.color || !z?.coords || z.coords.length < 2) return null;
+              const baseColor = z.color.replace(/80$/, '') || '#999';
+              return (
+                <Polygon
+                  key={i}
+                  positions={z.coords}
+                  pathOptions={{ color: baseColor, fillColor: z.color, fillOpacity: 0.2, weight: 2 }}
+                >
+                  <Popup>
+                    <div className="text-sm font-medium">{z.name}</div>
+                    <div className="text-xs text-gray-600">{zoneStats[i]?.count ?? 0} appareils</div>
+                  </Popup>
+                </Polygon>
+              );
+            })}
 
             {/* Gateway marker */}
             <Marker position={[config.gatewayLat, config.gatewayLng]} icon={ICON_GATEWAY}>
