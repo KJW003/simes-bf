@@ -30,5 +30,6 @@ const ORG_ROUTE_ACCESS: Record<OrgRouteKey, UserRole[]> = {
 };
 
 export function canAccessOrgRoute(role: UserRole, key: OrgRouteKey) {
-  return ORG_ROUTE_ACCESS[key].includes(role);
+  const allowed = ORG_ROUTE_ACCESS[key];
+  return allowed ? allowed.includes(role) : false;
 }

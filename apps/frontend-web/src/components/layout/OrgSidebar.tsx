@@ -103,7 +103,7 @@ export function OrgSidebar() {
             {canAccessOrgRoute(role, 'powerQuality') && (
               <NavItem to="/power-quality" icon={Gauge} label="Qualité réseau" />
             )}
-            {canAccessOrgRoute(role, 'Donnees') && (
+            {canAccessOrgRoute(role, 'history') && (
               <NavItem to="/donnees" icon={Database} label="Données" />
             )}
           </NavSection>
