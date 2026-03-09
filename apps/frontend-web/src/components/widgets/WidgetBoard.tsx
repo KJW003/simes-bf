@@ -21,6 +21,8 @@ import { useAppContext } from '@/contexts/AppContext';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import { ConfigureWidgetModal } from '@/components/widgets/ConfigureWidgetModal';
 import { getWidgetDefinition, getWidgetDefinitions } from '@/lib/widget-registry';
+import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWidget, AlarmWidget, AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
+import { SiteMapWidget } from '@/components/widgets/SiteMapWidget';
 import { cn } from '@/lib/utils';
 import { METRIC_LABELS, METRIC_UNITS, ENERGY_SOURCE_LABELS } from '@/types/widget-engine';
 import {
@@ -209,8 +211,28 @@ function renderWidgetContent(
   size: WidgetSize,
   data: ResolvedWidgetData,
   config: WidgetConfig,
+  ctx?: { terrainId?: string; from?: string; to?: string },
 ): React.ReactNode {
   switch (defId) {
+    // ── Dashboard standalone sections (rendered without outer Card) ──
+    case 'dashboard-kpis':
+      return ctx?.terrainId ? <LiveKPIs terrainId={ctx.terrainId} /> : null;
+    case 'dashboard-load-curve':
+      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.from ?? new Date(Date.now() - 86400_000).toISOString()} to={ctx.to ?? new Date().toISOString()} /> : null;
+    case 'dashboard-map':
+      return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} /> : null;
+    case 'dashboard-alarms':
+      return ctx?.terrainId ? <AlarmWidget terrainId={ctx.terrainId} /> : null;
+    case 'dashboard-alarm-config':
+      return ctx?.terrainId ? <AlarmConfigPanel terrainId={ctx.terrainId} /> : null;
+    case 'dashboard-daily-cost':
+      return ctx?.terrainId ? <DailyCostWidget terrainId={ctx.terrainId} /> : null;
+    case 'dashboard-carbon':
+      return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} /> : null;
+    case 'dashboard-power-peaks':
+      return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} from={ctx.from ?? new Date(Date.now() - 86400_000).toISOString()} to={ctx.to ?? new Date().toISOString()} /> : null;
+
+    // ── Core metric widgets ──
     case 'energy-quality-summary':
     case 'live-load':
       return <MultiMetricWidget size={size} data={data} config={config} />;
@@ -511,14 +533,14 @@ function MultiMetricWidget({
   return (
     <div className="space-y-2">
       {/* KPI strip */}
-      <div className="flex flex-wrap gap-4">
+      <div className="flex flex-wrap gap-4 overflow-x-auto">
         {metrics.map((m) => {
           const val = data.kpis?.[m];
           const unit = getUnit(m);
           return (
-            <div key={m} className="min-w-[60px]">
-              <div className="text-[10px] text-muted-foreground">{getLabel(m)}</div>
-              <div className="text-sm font-semibold">
+            <div key={m} className="min-w-[60px] shrink-0">
+              <div className="text-[10px] text-muted-foreground truncate max-w-[100px]">{getLabel(m)}</div>
+              <div className="text-sm font-semibold whitespace-nowrap">
                 {val != null ? Number(val).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
                 <span className="text-[10px] text-muted-foreground ml-0.5">{unit}</span>
               </div>
@@ -527,13 +549,13 @@ function MultiMetricWidget({
         })}
       </div>
       {/* Tab bar */}
-      <div className="flex gap-1 border-b">
+      <div className="flex gap-1 border-b overflow-x-auto">
         {metrics.length > 1 && (
           <button
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTab(ALL_TAB); }}
             onMouseDown={(e) => e.stopPropagation()}
             className={cn(
-              'px-2 py-1 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer',
+              'px-2 py-1 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer shrink-0 whitespace-nowrap',
               clampedTab === ALL_TAB || activeTab === ALL_TAB
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -548,7 +570,7 @@ function MultiMetricWidget({
             onClick={(e) => { e.preventDefault(); e.stopPropagation(); setActiveTab(i); }}
             onMouseDown={(e) => e.stopPropagation()}
             className={cn(
-              'px-2 py-1 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer',
+              'px-2 py-1 text-xs font-medium border-b-2 -mb-px transition-colors cursor-pointer shrink-0 whitespace-nowrap',
               i === clampedTab && activeTab !== ALL_TAB
                 ? 'border-primary text-primary'
                 : 'border-transparent text-muted-foreground hover:text-foreground'
@@ -616,6 +638,16 @@ const widgetDefs = getWidgetDefinitions();
 
 function buildDefaultLayout(terrainId?: string): WidgetLayoutItem[] {
   const order: Array<{ id: string; size: WidgetSize; state?: WidgetRuntimeState }> = [
+    // Dashboard sections first
+    { id: 'dashboard-kpis', size: 'lg' },
+    { id: 'dashboard-load-curve', size: 'lg' },
+    { id: 'dashboard-map', size: 'lg' },
+    { id: 'dashboard-alarms', size: 'md' },
+    { id: 'dashboard-alarm-config', size: 'md' },
+    { id: 'dashboard-daily-cost', size: 'md' },
+    { id: 'dashboard-carbon', size: 'md' },
+    { id: 'dashboard-power-peaks', size: 'lg' },
+    // Custom metric widgets
     { id: 'energy-quality-summary', size: 'md' },
     { id: 'live-load', size: 'lg' },
     { id: 'cost-energy', size: 'md' },
@@ -638,7 +670,7 @@ function buildDefaultLayout(terrainId?: string): WidgetLayoutItem[] {
 
 const sizeClassMap: Record<WidgetSize, string> = {
   sm: 'col-span-1',
-  md: 'col-span-1 md:col-span-1 xl:col-span-1',
+  md: 'col-span-1 xl:col-span-2',
   lg: 'col-span-1 md:col-span-2 xl:col-span-3',
 };
 
@@ -656,7 +688,7 @@ const stateBadgeMap: Record<WidgetRuntimeState, { label: string; className: stri
   offline: { label: 'Hors ligne', className: 'badge-warning' },
 };
 
-const STORAGE_VERSION = 'v6'; // bump: column-level metric selection + readings charts
+const STORAGE_VERSION = 'v7'; // bump: unified dashboard + custom widgets
 const buildStorageKey = (userId?: string) => `simes_widget_layout_${STORAGE_VERSION}_${userId ?? 'guest'}`;
 
 function isValidLayout(data: unknown): data is WidgetLayoutItem[] {
@@ -896,12 +928,12 @@ export function WidgetBoard() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h3 className="text-lg font-semibold">Mon tableau de bord</h3>
-          <p className="text-sm text-muted-foreground">Glissez-déposez, configurez et composez vos widgets.</p>
+          <h3 className="text-base sm:text-lg font-semibold">Mon tableau de bord</h3>
+          <p className="text-xs sm:text-sm text-muted-foreground hidden sm:block">Glissez-déposez, configurez et composez vos widgets.</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Select value={timePeriod} onValueChange={setTimePeriod}>
-            <SelectTrigger className="w-32 h-8 text-xs">
+            <SelectTrigger className="w-28 sm:w-32 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -911,17 +943,18 @@ export function WidgetBoard() {
             </SelectContent>
           </Select>
           <Button variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
-            <Plus className="w-4 h-4 mr-2" />
-            Ajouter widget
+            <Plus className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Ajouter widget</span>
           </Button>
           <Button variant="outline" size="sm" onClick={saveLayout}>
-            Sauvegarder
+            <span className="hidden sm:inline">Sauvegarder</span>
+            <span className="sm:hidden">💾</span>
           </Button>
           <Button variant="outline" size="sm" onClick={exportAsReport}>
-            <FileDown className="w-4 h-4 mr-2" />
-            Rapport
+            <FileDown className="w-4 h-4 sm:mr-2" />
+            <span className="hidden sm:inline">Rapport</span>
           </Button>
-          <Button variant="ghost" size="sm" onClick={resetLayout}>
+          <Button variant="ghost" size="sm" onClick={resetLayout} className="hidden sm:flex">
             Réinitialiser
           </Button>
         </div>
@@ -935,6 +968,74 @@ export function WidgetBoard() {
           const state: WidgetRuntimeState = item.state ?? 'ready';
           const stateBadge = stateBadgeMap[state];
           const data = resolveData(item);
+          const dashCtx = { terrainId: selectedTerrainId, from: readingsFrom, to: new Date().toISOString() };
+
+          // ── Standalone dashboard widget (renders its own Card) ──
+          if (def.standalone) {
+            return (
+              <ContextMenu key={item.instanceId}>
+                <ContextMenuTrigger asChild>
+                  <div
+                    className={cn(
+                      sizeClassMap[item.size],
+                      hoverId === item.instanceId && 'ring-2 ring-primary/60 rounded-lg'
+                    )}
+                    onDragOver={handleDragOver(item.instanceId)}
+                    onDrop={handleDrop(item.instanceId)}
+                  >
+                    <div className="group relative h-full">
+                      {/* Floating control strip */}
+                      <div className="absolute -top-2 right-2 z-20 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 touch-manipulation transition-opacity bg-background/80 rounded px-1.5 py-0.5 border shadow-sm">
+                        <span className="text-muted-foreground cursor-grab" draggable onDragStart={handleDragStart(item.instanceId)}>
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </span>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => {
+                          const sizes: WidgetSize[] = ['sm', 'md', 'lg'];
+                          const nextSize = sizes[(sizes.indexOf(item.size) + 1) % sizes.length];
+                          updateSize(item.instanceId, nextSize);
+                        }}>
+                          <span className="text-[9px] font-bold uppercase">{item.size}</span>
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setFullscreenId(item.instanceId)}>
+                          <Maximize2 className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 text-destructive hover:text-destructive" onClick={() => removeWidget(item.instanceId)}>
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
+                      {renderWidgetContent(item.id, item.size, data, item.config, dashCtx)}
+                    </div>
+                  </div>
+                </ContextMenuTrigger>
+                <ContextMenuContent className="w-48">
+                  <ContextMenuItem onClick={() => togglePin(item.instanceId)}>
+                    {item.pinned ? <PinOff className="w-4 h-4 mr-2" /> : <Pin className="w-4 h-4 mr-2" />}
+                    {item.pinned ? 'Dépingler' : 'Épingler'}
+                  </ContextMenuItem>
+                  <ContextMenuSub>
+                    <ContextMenuSubTrigger>
+                      <Settings className="w-4 h-4 mr-2" />
+                      Taille
+                    </ContextMenuSubTrigger>
+                    <ContextMenuSubContent>
+                      {(['sm', 'md', 'lg'] as WidgetSize[]).map(size => (
+                        <ContextMenuItem key={size} onClick={() => updateSize(item.instanceId, size)}>
+                          {sizeLabelMap[size]}
+                        </ContextMenuItem>
+                      ))}
+                    </ContextMenuSubContent>
+                  </ContextMenuSub>
+                  <ContextMenuSeparator />
+                  <ContextMenuItem className="text-destructive" onClick={() => removeWidget(item.instanceId)}>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Supprimer
+                  </ContextMenuItem>
+                </ContextMenuContent>
+              </ContextMenu>
+            );
+          }
+
+          // ── Standard card-wrapped widget ──
 
           return (
             <ContextMenu key={item.instanceId}>
@@ -995,7 +1096,7 @@ export function WidgetBoard() {
                         </Badge>
                         <Tooltip>
                           <TooltipTrigger asChild>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => {
+                            <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity" onClick={(e) => {
                               e.stopPropagation();
                               const sizes: WidgetSize[] = ['sm', 'md', 'lg'];
                               const currentIdx = sizes.indexOf(item.size);
@@ -1007,7 +1108,7 @@ export function WidgetBoard() {
                           </TooltipTrigger>
                           <TooltipContent>Taille : {sizeLabelMap[item.size]} — cliquer pour changer</TooltipContent>
                         </Tooltip>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(e) => {
+                        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity" onClick={(e) => {
                           e.stopPropagation();
                           setConfiguringInstanceId(item.instanceId);
                         }}>
@@ -1019,7 +1120,7 @@ export function WidgetBoard() {
                         }}>
                           <Maximize2 className="w-4 h-4" />
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive" onClick={(e) => {
+                        <Button variant="ghost" size="icon" className="h-7 w-7 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity text-destructive hover:text-destructive" onClick={(e) => {
                           e.stopPropagation();
                           removeWidget(item.instanceId);
                         }}>
@@ -1153,7 +1254,7 @@ export function WidgetBoard() {
           <div className="flex-1 overflow-auto min-h-0">
             {fullscreenItem && fullscreenDef && (
               <div className="p-6 h-full [&_.h-40]:h-[60vh] [&_.h-28]:h-[55vh] [&_.h-20]:h-[50vh] [&_.h-24]:h-[50vh] [&_.h-32]:h-[55vh]">
-                {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config)}
+                {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config, { terrainId: selectedTerrainId, from: readingsFrom, to: new Date().toISOString() })}
               </div>
             )}
           </div>

@@ -185,7 +185,7 @@
 
   /* ── Data Tables ── */
   .data-table {
-    @apply w-full text-sm;
+    @apply w-full text-sm min-w-[480px];
   }
 
   .data-table thead {
@@ -210,6 +210,12 @@
 
   .data-table tbody tr:last-child td {
     @apply border-b-0;
+  }
+
+  /* Responsive table wrapper — add .table-responsive on the parent */
+  .table-responsive {
+    @apply overflow-x-auto;
+    -webkit-overflow-scrolling: touch;
   }
 
   /* ── Monospace for values ── */

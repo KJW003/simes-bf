@@ -3,11 +3,15 @@ import { useTerrainOverview } from './useApi';
 
 /* ── Types ── */
 
+export interface AlarmCondition {
+  element: string;
+  condition: string;   // >, <, >=, <=, ==
+  value: string;
+}
+
 export interface AlarmRule {
   id: number;
-  condition: string;
-  element: string;
-  value: string;
+  conditions: AlarmCondition[];
   active: boolean;
   pointId?: string | null; // null/empty = all devices
 }
@@ -43,8 +47,21 @@ function saveHistory(entries: AlarmEntry[]) {
 }
 
 export function loadRules(): AlarmRule[] {
-  try { const s = localStorage.getItem(RULES_KEY); return s ? JSON.parse(s) : []; }
-  catch { return []; }
+  try {
+    const s = localStorage.getItem(RULES_KEY);
+    if (!s) return [];
+    const raw: any[] = JSON.parse(s);
+    // Migrate old single-condition format → conditions array
+    return raw.map(r => {
+      if (r.conditions) return r as AlarmRule;
+      return {
+        id: r.id,
+        conditions: [{ element: r.element, condition: r.condition, value: r.value }],
+        active: r.active,
+        pointId: r.pointId ?? null,
+      } as AlarmRule;
+    });
+  } catch { return []; }
 }
 
 export function saveRules(rules: AlarmRule[]) {
@@ -109,20 +126,29 @@ export function useAlarmEngine(terrainId: string | null) {
         }
       }
 
-      // 2. Configured rule-based alarms
+      // 2. Configured rule-based alarms (all conditions must match = AND logic)
       for (const rule of rules) {
         if (rule.pointId && rule.pointId !== pid) continue;
-        const actual = r[rule.element] != null ? Number(r[rule.element]) : null;
-        if (actual == null || isNaN(actual)) continue;
-        const threshold = Number(rule.value);
-        if (isNaN(threshold)) continue;
+        if (!rule.conditions.length) continue;
 
-        if (evaluateCondition(actual, rule.condition, threshold)) {
-          const label = rule.element.replace(/_/g, ' ');
+        let allMatch = true;
+        const parts: string[] = [];
+
+        for (const cond of rule.conditions) {
+          const actual = r[cond.element] != null ? Number(r[cond.element]) : null;
+          if (actual == null || isNaN(actual)) { allMatch = false; break; }
+          const threshold = Number(cond.value);
+          if (isNaN(threshold)) { allMatch = false; break; }
+          if (!evaluateCondition(actual, cond.condition, threshold)) { allMatch = false; break; }
+          parts.push(`${cond.element.replace(/_/g, ' ')} ${cond.condition} ${cond.value} (${actual.toFixed(2)})`);
+        }
+
+        if (allMatch) {
+          const firstEl = rule.conditions[0].element;
           triggering.set(`rule_${rule.id}_${pid}`, {
             pointId: pid, pointName: pname,
-            type: `${label} ${rule.condition} ${rule.value} (actuel: ${actual.toFixed(2)})`,
-            severity: severityFor(rule.element),
+            type: parts.join(' ET '),
+            severity: severityFor(firstEl),
             source: 'rule', ruleId: rule.id,
           });
         }

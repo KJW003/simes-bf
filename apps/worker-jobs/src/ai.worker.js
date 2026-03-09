@@ -18,6 +18,9 @@ function minOfDayFromTs(tsIso) {
 }
 
 async function computeFacture(payload = {}) {
+  if (!db) throw new Error("CORE_DB_URL not configured – cannot compute invoice");
+  if (!telemetryDb) throw new Error("TELEMETRY_DB_URL not configured – cannot compute invoice");
+
   const terrainId = payload.terrain_id;
   if (!terrainId) throw new Error("terrain_id is required");
 

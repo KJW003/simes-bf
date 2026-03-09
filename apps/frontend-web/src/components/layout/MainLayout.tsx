@@ -59,8 +59,8 @@ export function MainLayout() {
       </div>
 
       {/* System Status Footer Bar */}
-      <footer className="h-7 border-t border-border/60 bg-card/60 backdrop-blur-sm flex items-center px-4 gap-4 text-[10px] text-muted-foreground select-none">
-        <div className="flex items-center gap-1.5">
+      <footer className="h-7 border-t border-border/60 bg-card/60 backdrop-blur-sm flex items-center px-4 gap-4 text-[10px] text-muted-foreground select-none overflow-hidden">
+        <div className="flex items-center gap-1.5 shrink-0">
           <span className={cn(
             'w-1.5 h-1.5 rounded-full',
             isOnline ? 'bg-green-500' : 'bg-red-500 animate-pulse'
@@ -69,11 +69,11 @@ export function MainLayout() {
           {latencyMs != null && <span className="text-muted-foreground/60">({latencyMs} ms)</span>}
         </div>
 
-        <span className="text-border">|</span>
+        <span className="text-border hidden sm:inline">|</span>
 
         {selectedTerrain && (
           <>
-            <div className="flex items-center gap-1.5">
+            <div className="hidden sm:flex items-center gap-1.5">
               <span className={cn(
                 'w-1.5 h-1.5 rounded-full',
                 selectedTerrain.status === 'online' ? 'bg-green-500' :
@@ -84,9 +84,9 @@ export function MainLayout() {
                 ({selectedTerrain.dataCompleteness24h.toFixed(0)}% complétude)
               </span>
             </div>
-            <span className="text-border">|</span>
-            <span>{selectedTerrain.pointsCount} points</span>
-            <span className="text-border">|</span>
+            <span className="text-border hidden sm:inline">|</span>
+            <span className="hidden sm:inline">{selectedTerrain.pointsCount} points</span>
+            <span className="text-border hidden sm:inline">|</span>
           </>
         )}
 

@@ -1,64 +1,24 @@
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
 import { useSubmitFacture, useFactureResult, useLatestFacture } from '@/hooks/useApi';
 import {
   Receipt, Zap, Clock, TrendingUp, FileText, AlertTriangle,
-  Loader2, CheckCircle2, Calculator,
+  Loader2, CheckCircle2, Calculator, Info,
 } from 'lucide-react';
-
-type TariffPlan = { label: string; hpRate: number; peakRate: number; monthlyRedevance: number; primePerKw: number };
-type TariffGroupPreset = { hours: { hp: string; peak: string }; plans: Record<string, TariffPlan> };
-
-const TARIFF_PRESETS: Record<string, TariffGroupPreset> = {
-  D: {
-    hours: { hp: '00:00-17:00', peak: '17:00-24:00' },
-    plans: {
-      D1: { label: 'D1 Non-industriel', hpRate: 88, peakRate: 165, monthlyRedevance: 8538, primePerKw: 2882 },
-      D2: { label: 'D2 Industriel', hpRate: 75, peakRate: 140, monthlyRedevance: 7115, primePerKw: 2402 },
-      D3: { label: 'D3 Special', hpRate: 160, peakRate: 160, monthlyRedevance: 8538, primePerKw: 2882 },
-    },
-  },
-  E: {
-    hours: { hp: '00:00-17:00', peak: '17:00-24:00' },
-    plans: {
-      E1: { label: 'E1 Non-industriel', hpRate: 64, peakRate: 139, monthlyRedevance: 8538, primePerKw: 5903 },
-      E2: { label: 'E2 Industriel', hpRate: 54, peakRate: 118, monthlyRedevance: 7115, primePerKw: 5366 },
-      E3: { label: 'E3 Special', hpRate: 160, peakRate: 160, monthlyRedevance: 8538, primePerKw: 5903 },
-    },
-  },
-  G: {
-    hours: { hp: '00:00-10:00', peak: '10:00-24:00' },
-    plans: {
-      G: { label: 'G', hpRate: 70, peakRate: 140, monthlyRedevance: 7115, primePerKw: 5366 },
-    },
-  },
-};
+import { usePreferences, TARIFF_PRESETS } from '@/hooks/usePreferences';
 
 const formatCurrency = (value: number) => value.toLocaleString('fr-FR');
 
 export default function Invoice() {
-  const { selectedTerrain, currentUser } = useAppContext();
-  const isAdmin = currentUser.role === 'org_admin';
+  const { selectedTerrain } = useAppContext();
+  const prefs = usePreferences();
 
-  const [tariffGroup, setTariffGroup] = useState('D');
-  const [tariffPlan, setTariffPlan] = useState('D1');
-  const [peakHours, setPeakHours] = useState(TARIFF_PRESETS.D.hours.peak);
-  const [offPeakHours, setOffPeakHours] = useState(TARIFF_PRESETS.D.hours.hp);
-  const [hpRate, setHpRate] = useState(String(TARIFF_PRESETS.D.plans.D1.hpRate));
-  const [peakRate, setPeakRate] = useState(String(TARIFF_PRESETS.D.plans.D1.peakRate));
-  const [monthlyRedevance, setMonthlyRedevance] = useState(String(TARIFF_PRESETS.D.plans.D1.monthlyRedevance));
-  const [primePerKw, setPrimePerKw] = useState(String(TARIFF_PRESETS.D.plans.D1.primePerKw));
-  const [subscribedPower, setSubscribedPower] = useState('100');
+  const peakHours = TARIFF_PRESETS[prefs.tariffGroup]?.hours.peak ?? '17:00-24:00';
 
   const [runId, setRunId] = useState<string | null>(null);
   const submitFacture = useSubmitFacture();
@@ -73,36 +33,12 @@ export default function Invoice() {
     try {
       const run = await submitFacture.mutateAsync({
         terrain_id: selectedTerrain.id,
-        subscribed_power_kw: Number(subscribedPower) || 100,
+        subscribed_power_kw: prefs.subscribedPowerKw,
       });
       setRunId(run.id);
     } catch (e) {
       console.error('Erreur soumission facture:', e);
     }
-  };
-
-  const applyPreset = (group: string, planKey: string) => {
-    const preset = TARIFF_PRESETS[group];
-    const plan = preset.plans[planKey];
-    if (!plan) return;
-    setPeakHours(preset.hours.peak);
-    setOffPeakHours(preset.hours.hp);
-    setHpRate(String(plan.hpRate));
-    setPeakRate(String(plan.peakRate));
-    setMonthlyRedevance(String(plan.monthlyRedevance));
-    setPrimePerKw(String(plan.primePerKw));
-  };
-
-  const handleGroupChange = (value: string) => {
-    setTariffGroup(value);
-    const firstPlan = Object.keys(TARIFF_PRESETS[value].plans)[0];
-    setTariffPlan(firstPlan);
-    applyPreset(value, firstPlan);
-  };
-
-  const handlePlanChange = (value: string) => {
-    setTariffPlan(value);
-    applyPreset(tariffGroup, value);
   };
 
   const apiBreakdown = hasLiveResult ? (liveResult.breakdown as Array<{ key: string; label: string; kwh: number | null; rate: number | null; amount: number }>) : null;
@@ -111,13 +47,13 @@ export default function Invoice() {
   const apiMaxDemand = hasLiveResult ? Number(liveResult.maxDemandKw ?? 0) : 0;
   const apiPlanName = hasLiveResult ? String(liveResult.tariffVersionName ?? '') : '';
 
-  const planLabel = TARIFF_PRESETS[tariffGroup].plans[tariffPlan]?.label ?? tariffPlan;
+  const planLabel = TARIFF_PRESETS[prefs.tariffGroup]?.plans[prefs.tariffPlan]?.label ?? prefs.tariffPlan;
 
   return (
     <div className="space-y-6">
       <PageHeader
         title="Facturation"
-        description={"Estimation de facture - " + (selectedTerrain?.name ?? 'Site')}
+        description={"Estimation de facture – " + (selectedTerrain?.name ?? 'Site')}
         actions={
           <div className="flex gap-2">
             {selectedTerrain && (
@@ -137,6 +73,15 @@ export default function Invoice() {
           </div>
         }
       />
+
+      {/* Preview banner */}
+      <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm flex items-start gap-3 text-amber-800 dark:text-amber-200">
+        <Info className="w-4 h-4 mt-0.5 shrink-0" />
+        <div>
+          <span className="font-medium">Module en préversion</span> — les calculs sont indicatifs et basés sur le plan <span className="font-medium">{planLabel}</span> (PS {prefs.subscribedPowerKw} kW).
+          Modifiez les paramètres tarifaires dans <span className="font-medium">Paramètres → Configuration tarifaire</span>.
+        </div>
+      </div>
 
       {hasLiveResult && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm flex items-center gap-3">
@@ -172,6 +117,7 @@ export default function Invoice() {
             </div>
           </CardHeader>
           <CardContent>
+            <div className="table-responsive">
             <table className="data-table">
               <thead>
                 <tr className="bg-muted/50">
@@ -198,6 +144,7 @@ export default function Invoice() {
                 </tr>
               </tbody>
             </table>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -206,62 +153,6 @@ export default function Invoice() {
         <Card>
           <CardContent className="py-8 text-center text-sm text-muted-foreground">
             Aucune facture calculee. Cliquez sur "Calculer (API)" pour lancer le calcul.
-          </CardContent>
-        </Card>
-      )}
-
-      {isAdmin && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base font-medium">Configuration tarifaire (SONABEL Oct-2023)</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="space-y-2">
-                <Label>Groupe tarifaire</Label>
-                <Select value={tariffGroup} onValueChange={handleGroupChange}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="D">D</SelectItem>
-                    <SelectItem value="E">E</SelectItem>
-                    <SelectItem value="G">G</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Plan tarifaire</Label>
-                <Select value={tariffPlan} onValueChange={handlePlanChange}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(TARIFF_PRESETS[tariffGroup].plans).map(([key, plan]) => (
-                      <SelectItem key={key} value={key}>{key} - {plan.label}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Puissance souscrite (PS, kW)</Label>
-                <Input value={subscribedPower} onChange={(e) => setSubscribedPower(e.target.value)} />
-              </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div className="space-y-2">
-                <Label>Tarif kWh HP (XOF)</Label>
-                <Input value={hpRate} onChange={(e) => setHpRate(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Tarif kWh HPointe (XOF)</Label>
-                <Input value={peakRate} onChange={(e) => setPeakRate(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Redevance mensuelle (XOF)</Label>
-                <Input value={monthlyRedevance} onChange={(e) => setMonthlyRedevance(e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Prime par kW (XOF)</Label>
-                <Input value={primePerKw} onChange={(e) => setPrimePerKw(e.target.value)} />
-              </div>
-            </div>
           </CardContent>
         </Card>
       )}

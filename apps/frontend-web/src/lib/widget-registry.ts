@@ -7,6 +7,8 @@
 import type {
   WidgetDefinition,
   WidgetConfig,
+  WidgetConfigSchema,
+  WidgetResolver,
   ResolvedWidgetData,
   WidgetResolverContext,
   MetricKey,
@@ -22,6 +24,13 @@ import {
   Sun,
   Battery,
   Zap,
+  LayoutDashboard,
+  Map,
+  Bell,
+  Settings2,
+  DollarSign,
+  Leaf,
+  TrendingUp,
 } from 'lucide-react';
 
 // -------------------------
@@ -440,10 +449,133 @@ function batteryStatusResolver(
 }
 
 // -------------------------
+// PASSTHROUGH RESOLVER (for standalone dashboard widgets)
+// -------------------------
+const passthroughResolver: WidgetResolver = () => ({
+  kpis: {},
+  series: {},
+  availableMetrics: [],
+  meta: {},
+});
+
+const DASHBOARD_CONFIG_SCHEMA: WidgetConfigSchema = {
+  allowedScopes: ['TERRAIN'],
+  allowedDataSources: ['TERRAIN_AGG'],
+  supportedMetrics: [],
+  supportsMultiMetric: false,
+  hasTimeRange: false,
+  defaultConfig: {
+    scopeType: 'TERRAIN',
+    dataSource: { type: 'TERRAIN_AGG', refId: '' },
+    metrics: [],
+    timeRange: { mode: 'FOLLOW_PAGE', value: '1D' },
+    display: { viewMode: 'MIXED', multiMetricMode: 'TABS' },
+  },
+};
+
+// -------------------------
 // WIDGET DEFINITIONS
 // -------------------------
 
 export const widgetDefinitions: WidgetDefinition[] = [
+  // ── Dashboard standalone sections ──
+  {
+    id: 'dashboard-kpis',
+    title: 'KPIs temps réel',
+    description: 'Puissance, énergie, CO₂, coût, alertes, dernière MAJ.',
+    category: 'dashboard',
+    supportedSizes: ['lg'],
+    icon: LayoutDashboard,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-load-curve',
+    title: 'Courbe de charge',
+    description: 'Évolution de la puissance active par point — légende cliquable, zoom brush.',
+    category: 'dashboard',
+    supportedSizes: ['md', 'lg'],
+    icon: Activity,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-map',
+    title: 'Carte du site',
+    description: 'Points de mesure, zones, météo et statut des appareils.',
+    category: 'dashboard',
+    supportedSizes: ['md', 'lg'],
+    icon: Map,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-alarms',
+    title: 'Alarmes',
+    description: 'Alarmes actives et résolues triées par jour.',
+    category: 'dashboard',
+    supportedSizes: ['md', 'lg'],
+    icon: Bell,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-alarm-config',
+    title: 'Configuration alarmes',
+    description: 'Règles d\'alarme et seuils de statut des appareils.',
+    category: 'dashboard',
+    supportedSizes: ['md', 'lg'],
+    icon: Settings2,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-daily-cost',
+    title: 'Coût journalier',
+    description: 'Évolution du coût journalier sur 30 jours.',
+    category: 'dashboard',
+    supportedSizes: ['sm', 'md', 'lg'],
+    icon: DollarSign,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-carbon',
+    title: 'Empreinte carbone',
+    description: 'CO₂ journalier et cumulé sur 30 jours.',
+    category: 'dashboard',
+    supportedSizes: ['sm', 'md', 'lg'],
+    icon: Leaf,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  {
+    id: 'dashboard-power-peaks',
+    title: 'Pics de puissance',
+    description: 'Puissance maximale par point — 24h.',
+    category: 'dashboard',
+    supportedSizes: ['md', 'lg'],
+    icon: TrendingUp,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
+  // ── Core metric widgets ──
   {
     id: 'energy-quality-summary',
     title: 'Qualité énergie (Charges)',

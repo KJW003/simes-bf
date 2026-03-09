@@ -278,6 +278,7 @@ export default function PowerQuality() {
               {worstThd.length === 0 ? (
                 <div className="text-sm text-muted-foreground">Aucune donnée THD</div>
               ) : (
+                <div className="table-responsive">
                 <table className="data-table">
                   <thead><tr className="bg-muted/50"><th>Point</th><th>Phase</th><th>THDi %</th><th>Sévérité</th></tr></thead>
                   <tbody>
@@ -297,6 +298,7 @@ export default function PowerQuality() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -310,6 +312,7 @@ export default function PowerQuality() {
               {pointStats.length === 0 ? (
                 <div className="text-sm text-muted-foreground">Aucune donnée</div>
               ) : (
+                <div className="table-responsive">
                 <table className="data-table">
                   <thead>
                     <tr className="bg-muted/50">
@@ -344,6 +347,7 @@ export default function PowerQuality() {
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </CardContent>
           </Card>

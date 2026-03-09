@@ -72,7 +72,7 @@ export default function Anomalies() {
       />
 
       {/* Tabs */}
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         <Button variant={tab === 'alerts' ? 'default' : 'outline'} size="sm" onClick={() => setTab('alerts')}>
           <Bell className="w-4 h-4 mr-1" /> Alertes serveur
         </Button>

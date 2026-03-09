@@ -23,7 +23,7 @@ const ORG_ROUTE_ACCESS: Record<OrgRouteKey, UserRole[]> = {
   invoice: ['org_admin', 'operator', 'manager'],
   pvBattery: ['org_admin', 'operator'],
   predimensionnement: ['org_admin'],
-  anomalies: ['org_admin', 'operator'],
+  anomalies: ['org_admin', 'operator', 'manager'],
   reports: ['org_admin', 'operator', 'manager'],
   energyAudit: ['org_admin', 'operator', 'manager'],
   admin: ['platform_super_admin'],

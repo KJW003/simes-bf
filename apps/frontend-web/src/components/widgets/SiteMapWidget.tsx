@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import {
   MapPin, Settings2, Cloud, Thermometer, Wind, Droplets,
   Wifi, WifiOff, Clock, Radio, X, Edit3, MousePointerClick, Hexagon,
+  Lock, Unlock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useTerrainOverview } from '@/hooks/useApi';
@@ -267,6 +268,29 @@ function ConfigDialog({ open, onClose, config, onSave }: {
   );
 }
 
+/* ─── Coordinate input for a single point ─────────────── */
+function PointCoordsInput({ point, onSave }: { point: Record<string, any>; onSave: (lat: number, lng: number) => void }) {
+  const [lat, setLat] = useState('');
+  const [lng, setLng] = useState('');
+
+  return (
+    <div className="flex items-center gap-2">
+      <span className="font-medium min-w-[100px] truncate">{String(point.name)}</span>
+      <Input
+        type="number" step="0.0001" placeholder="Latitude" className="h-7 w-28 text-xs"
+        value={lat} onChange={e => setLat(e.target.value)}
+      />
+      <Input
+        type="number" step="0.0001" placeholder="Longitude" className="h-7 w-28 text-xs"
+        value={lng} onChange={e => setLng(e.target.value)}
+      />
+      <Button size="sm" className="h-7 text-xs" disabled={!lat || !lng} onClick={() => onSave(Number(lat), Number(lng))}>
+        Placer
+      </Button>
+    </div>
+  );
+}
+
 /* ─── Main Widget ─────────────────────────────────────── */
 export function SiteMapWidget({ terrainId }: { terrainId: string }) {
   const [config, setConfig] = useState<SiteMapConfig>(loadConfig);
@@ -316,21 +340,27 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
     return 'offline';
   }, [config?.staleThresholdMin, config?.offlineThresholdMin]);
 
-  // Compute point positions — spread a grid around site if no custom locations
+  // Compute point positions — only show points with explicit coordinates
   const pointMarkers = useMemo(() => {
     if (!points || !Array.isArray(points) || !config) return [];
-    return points.map((p, i) => {
+    return points.map((p) => {
       if (!p) return null;
       const custom = config.pointLocations?.[String(p.id)];
-      const baseLat = config.lat ?? 12.3714;
-      const baseLng = config.lng ?? -1.5197;
-      const lat = custom?.lat ?? baseLat + (Math.floor(i / 4) - 1) * 0.0003;
-      const lng = custom?.lng ?? baseLng + ((i % 4) - 1.5) * 0.0003;
+      if (!custom) return null; // no position set → don't show on map
       const status = getPointStatus(p);
       const r = p.readings;
-      return { ...p, lat, lng, status, r };
+      return { ...p, lat: custom.lat, lng: custom.lng, status, r };
     }).filter(Boolean);
   }, [points, config, getPointStatus]);
+
+  // Points that have no position yet
+  const unpositionedPoints = useMemo(() => {
+    if (!points?.length) return [];
+    return points.filter(p => !config.pointLocations?.[String(p.id)]);
+  }, [points, config.pointLocations]);
+
+  // Map lock state
+  const [mapLocked, setMapLocked] = useState(false);
 
   const onlineCount = pointMarkers.filter(p => p.status === 'online').length;
   const staleCount = pointMarkers.filter(p => p.status === 'stale').length;
@@ -412,6 +442,10 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
             <Button variant={editMode !== 'none' ? 'default' : 'outline'} size="sm" className="h-7 text-xs gap-1" onClick={() => setEditMode(editMode !== 'none' ? 'none' : 'place-point')}>
               <Edit3 className="w-3 h-3" /> Éditer
             </Button>
+            <Button variant={mapLocked ? 'default' : 'outline'} size="sm" className="h-7 text-xs gap-1" onClick={() => setMapLocked(v => !v)}>
+              {mapLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
+              {mapLocked ? 'Verrouillé' : 'Verrouiller'}
+            </Button>
             <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={() => setConfigOpen(true)}>
               <Settings2 className="w-3 h-3" /> Config
             </Button>
@@ -434,19 +468,37 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
             {editMode === 'place-point' && (
               <span className="text-muted-foreground ml-2">
                 {selectedPointId
-                  ? `Cliquez sur la carte pour placer "${points.find(p => String(p.id) === selectedPointId)?.name}"`
-                  : 'Sélectionnez un point dans la liste ci-dessous, puis cliquez sur la carte'
+                  ? `Cliquez sur la carte ou saisissez les coordonnées pour placer "${points.find(p => String(p.id) === selectedPointId)?.name}"`
+                  : 'Sélectionnez un point dans la liste ci-dessous, puis cliquez sur la carte ou saisissez des coordonnées'
                 }
               </span>
             )}
 
+            {/* Direct coordinate entry when a point is selected */}
+            {editMode === 'place-point' && selectedPointId && (
+              <PointCoordsInput
+                point={points.find(p => String(p.id) === selectedPointId) ?? { name: selectedPointId }}
+                onSave={(lat, lng) => {
+                  const updated = {
+                    ...config,
+                    pointLocations: { ...config.pointLocations, [selectedPointId]: { lat, lng } },
+                  };
+                  saveConfig(updated);
+                  setSelectedPointId(null);
+                }}
+              />
+            )}
+
             {editMode === 'place-point' && !selectedPointId && (
               <div className="flex items-center gap-1 ml-2 flex-wrap">
-                {points.map(p => (
-                  <Button key={String(p.id)} size="sm" variant="outline" className="h-6 text-[10px] px-2" onClick={() => setSelectedPointId(String(p.id))}>
-                    {String(p.name)}
-                  </Button>
-                ))}
+                {points.map(p => {
+                  const hasPos = !!config.pointLocations?.[String(p.id)];
+                  return (
+                    <Button key={String(p.id)} size="sm" variant={hasPos ? 'outline' : 'secondary'} className="h-6 text-[10px] px-2" onClick={() => setSelectedPointId(String(p.id))}>
+                      {String(p.name)} {hasPos ? '✓' : ''}
+                    </Button>
+                  );
+                })}
               </div>
             )}
 
@@ -469,12 +521,33 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
           </div>
         )}
 
-        <div className="rounded-lg overflow-hidden border" style={{ height: 400 }}>
+        {/* Coordinate input for unpositioned points */}
+        {unpositionedPoints.length > 0 && editMode === 'none' && (
+          <div className="p-2 border rounded-lg bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-xs space-y-2">
+            <div className="font-medium text-amber-700 dark:text-amber-400">{unpositionedPoints.length} point(s) sans position — saisissez les coordonnées :</div>
+            {unpositionedPoints.map(p => (
+              <PointCoordsInput
+                key={String(p.id)}
+                point={p}
+                onSave={(lat, lng) => {
+                  const updated = { ...config, pointLocations: { ...config.pointLocations, [String(p.id)]: { lat, lng } } };
+                  saveConfig(updated);
+                }}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="rounded-lg overflow-hidden border h-[280px] sm:h-[350px] md:h-[400px]">
           <MapContainer
             center={[config.lat, config.lng]}
             zoom={config.zoom}
             style={{ height: '100%', width: '100%' }}
-            scrollWheelZoom
+            scrollWheelZoom={!mapLocked}
+            dragging={!mapLocked}
+            doubleClickZoom={!mapLocked}
+            touchZoom={!mapLocked}
+            zoomControl={!mapLocked}
           >
             <RecenterMap lat={config.lat} lng={config.lng} zoom={config.zoom} />
             {editMode !== 'none' && <MapClickHandler onMapClick={handleMapClick} />}

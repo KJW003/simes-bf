@@ -40,6 +40,10 @@ const db = process.env.CORE_DB_URL
   : null;
 
 async function setRunStatus(runId, status, fields = {}) {
+  if (!db) {
+    console.warn("[worker-jobs] setRunStatus skipped – CORE_DB_URL not configured.");
+    return;
+  }
   const { result, error, started_at, finished_at } = fields;
 
   await db.query(
@@ -62,6 +66,10 @@ async function setRunStatus(runId, status, fields = {}) {
 }
 
 async function insertJobResult(runId, type, result, objectKey = null) {
+  if (!db) {
+    console.warn("[worker-jobs] insertJobResult skipped – CORE_DB_URL not configured.");
+    return;
+  }
   await db.query(
     `INSERT INTO job_results (run_id, type, result, object_key)
      VALUES ($1, $2, $3::jsonb, $4)`,

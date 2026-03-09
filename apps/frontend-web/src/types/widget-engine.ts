@@ -100,7 +100,7 @@ export type WidgetSize = 'sm' | 'md' | 'lg';
 // WIDGET DEFINITION (REGISTRY)
 // -------------------------
 
-export type WidgetCategory = 'core' | 'insight' | 'risk';
+export type WidgetCategory = 'core' | 'insight' | 'risk' | 'dashboard';
 
 export interface WidgetConfigSchema {
   /** Allowed scope types for this widget */
@@ -167,6 +167,8 @@ export interface WidgetDefinition {
   configSchema: WidgetConfigSchema;
   resolver: WidgetResolver;
   renderer: WidgetRenderer;
+  /** Standalone widgets render their own Card wrapper; WidgetBoard skips the outer Card */
+  standalone?: boolean;
 }
 
 // -------------------------

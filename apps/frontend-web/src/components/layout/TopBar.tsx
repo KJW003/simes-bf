@@ -114,12 +114,12 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
       </div>
 
       {mode === 'org' && currentUser.role !== 'platform_super_admin' && (
-        <div className="hidden md:flex items-center gap-2">
+        <div className="flex items-center gap-1 md:gap-2 overflow-x-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm" className="h-8 gap-2">
                 <Building2 className="w-4 h-4 text-muted-foreground" />
-                <span className="max-w-[120px] truncate">{selectedOrg?.name ?? 'Organisation'}</span>
+                <span className="max-w-[60px] md:max-w-[120px] truncate">{selectedOrg?.name ?? 'Organisation'}</span>
                 <ChevronDown className="w-3 h-3 text-muted-foreground" />
               </Button>
             </DropdownMenuTrigger>
@@ -139,13 +139,13 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <span className="text-muted-foreground">/</span>
+          <span className="text-muted-foreground hidden sm:inline">/</span>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-2">
-                <MapPin className="w-4 h-4 text-muted-foreground" />
-                <span className="max-w-[140px] truncate">{selectedSite?.name ?? 'Site'}</span>
+              <Button variant="outline" size="sm" className="h-8 gap-1 md:gap-2">
+                <MapPin className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="max-w-[60px] md:max-w-[140px] truncate">{selectedSite?.name ?? 'Site'}</span>
                 {selectedSite && getStatusIcon(selectedSite.status)}
                 <ChevronDown className="w-3 h-3 text-muted-foreground" />
               </Button>
@@ -169,13 +169,13 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <span className="text-muted-foreground">/</span>
+          <span className="text-muted-foreground hidden sm:inline">/</span>
 
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
-              <Button variant="outline" size="sm" className="h-8 gap-2">
-                <Radio className="w-4 h-4 text-muted-foreground" />
-                <span className="max-w-[140px] truncate">{selectedTerrain?.name ?? 'Terrain'}</span>
+              <Button variant="outline" size="sm" className="h-8 gap-1 md:gap-2">
+                <Radio className="w-4 h-4 text-muted-foreground shrink-0" />
+                <span className="max-w-[60px] md:max-w-[140px] truncate">{selectedTerrain?.name ?? 'Terrain'}</span>
                 {selectedTerrain && (
                   <>
                     {getStatusIcon(selectedTerrain.status)}
@@ -218,7 +218,7 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
             </DropdownMenuContent>
           </DropdownMenu>
 
-          <div className="flex items-center gap-2 ml-2 pl-2 border-l" title="Agrège les données de tous les terrains du site sélectionné">
+          <div className="hidden md:flex items-center gap-2 ml-2 pl-2 border-l" title="Agrège les données de tous les terrains du site sélectionné">
             <Button
               variant={aggregatedView ? 'secondary' : 'ghost'}
               size="sm"

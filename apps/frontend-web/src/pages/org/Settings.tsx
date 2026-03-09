@@ -12,10 +12,10 @@ import {
 } from '@/components/ui/select';
 import {
   Moon, Sun, Bell, Monitor, RefreshCw, Check, User,
-  Clock,
+  Clock, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { usePreferences, savePreferences, PREF_DEFAULTS, type UserPreferences } from '@/hooks/usePreferences';
+import { usePreferences, savePreferences, PREF_DEFAULTS, TARIFF_PRESETS, type UserPreferences } from '@/hooks/usePreferences';
 
 export default function SettingsPage() {
   const { currentUser } = useAppContext();
@@ -54,7 +54,7 @@ export default function SettingsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <Label className="text-xs text-muted-foreground">Nom</Label>
               <div className="text-sm font-medium">{currentUser.name}</div>
@@ -235,6 +235,85 @@ export default function SettingsPage() {
                 <SelectItem value="USD">USD ($)</SelectItem>
               </SelectContent>
             </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Configuration tarifaire */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Receipt className="w-4 h-4 text-primary" />
+            Configuration tarifaire (SONABEL)
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Groupe tarifaire</Label>
+              <Select
+                value={prefs.tariffGroup}
+                onValueChange={g => {
+                  const firstPlan = Object.keys(TARIFF_PRESETS[g].plans)[0];
+                  const plan = TARIFF_PRESETS[g].plans[firstPlan];
+                  setPrefs(prev => ({ ...prev, tariffGroup: g, tariffPlan: firstPlan, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
+                  setSaved(false);
+                }}
+              >
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.keys(TARIFF_PRESETS).map(g => (
+                    <SelectItem key={g} value={g}>{g}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Plan tarifaire</Label>
+              <Select
+                value={prefs.tariffPlan}
+                onValueChange={p => {
+                  const plan = TARIFF_PRESETS[prefs.tariffGroup].plans[p];
+                  if (!plan) return;
+                  setPrefs(prev => ({ ...prev, tariffPlan: p, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
+                  setSaved(false);
+                }}
+              >
+                <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {Object.entries(TARIFF_PRESETS[prefs.tariffGroup]?.plans ?? {}).map(([k, plan]) => (
+                    <SelectItem key={k} value={k}>{k} – {plan.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-sm font-medium">Puissance souscrite (kW)</Label>
+              <Input
+                type="number"
+                className="h-8 text-xs"
+                value={prefs.subscribedPowerKw}
+                onChange={e => update('subscribedPowerKw', Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Tarif HP (XOF/kWh)</Label>
+              <Input type="number" className="h-8 text-xs text-right" value={prefs.hpRate} onChange={e => update('hpRate', Number(e.target.value))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Tarif Pointe (XOF/kWh)</Label>
+              <Input type="number" className="h-8 text-xs text-right" value={prefs.peakRate} onChange={e => update('peakRate', Number(e.target.value))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Redevance (XOF/mois)</Label>
+              <Input type="number" className="h-8 text-xs text-right" value={prefs.monthlyRedevance} onChange={e => update('monthlyRedevance', Number(e.target.value))} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Prime/kW (XOF)</Label>
+              <Input type="number" className="h-8 text-xs text-right" value={prefs.primePerKw} onChange={e => update('primePerKw', Number(e.target.value))} />
+            </div>
           </div>
         </CardContent>
       </Card>
