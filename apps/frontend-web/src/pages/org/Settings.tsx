@@ -254,8 +254,11 @@ export default function SettingsPage() {
               <Select
                 value={prefs.tariffGroup}
                 onValueChange={g => {
-                  const firstPlan = Object.keys(TARIFF_PRESETS[g].plans)[0];
-                  const plan = TARIFF_PRESETS[g].plans[firstPlan];
+                  const groupPreset = TARIFF_PRESETS[g];
+                  if (!groupPreset) return;
+                  const firstPlan = Object.keys(groupPreset.plans)[0];
+                  const plan = groupPreset.plans[firstPlan];
+                  if (!plan) return;
                   setPrefs(prev => ({ ...prev, tariffGroup: g, tariffPlan: firstPlan, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
                   setSaved(false);
                 }}
@@ -273,7 +276,9 @@ export default function SettingsPage() {
               <Select
                 value={prefs.tariffPlan}
                 onValueChange={p => {
-                  const plan = TARIFF_PRESETS[prefs.tariffGroup].plans[p];
+                  const groupPreset = TARIFF_PRESETS[prefs.tariffGroup];
+                  if (!groupPreset) return;
+                  const plan = groupPreset.plans[p];
                   if (!plan) return;
                   setPrefs(prev => ({ ...prev, tariffPlan: p, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
                   setSaved(false);
