@@ -16,7 +16,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 const fmt = (v: any, decimals = 2) => v != null && v !== '' ? Number(v).toFixed(decimals) : '—';
 
-export default function DataMonitor() {
+export default function DataMonitor({ embedded }: { embedded?: boolean }) {
   const { selectedTerrain } = useAppContext();
   const terrainId = selectedTerrain?.id ?? null;
 
@@ -66,6 +66,7 @@ export default function DataMonitor() {
   }, [points]);
 
   if (!terrainId) {
+    if (embedded) return null;
     return (
       <div className="space-y-6">
         <PageHeader title="Supervision terrain" description="Sélectionnez un terrain" />
@@ -75,6 +76,7 @@ export default function DataMonitor() {
   }
 
   if (isLoading) {
+    if (embedded) return <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>;
     return (
       <div className="space-y-6">
         <PageHeader title="Supervision terrain" description="Chargement…" />
@@ -84,19 +86,28 @@ export default function DataMonitor() {
   }
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <PageHeader
-        title={"Terrain — " + (selectedTerrain?.name ?? '')}
-        description={"Concentrateur " + (selectedTerrain?.gatewayId ?? '—')}
-        actions={
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={() => { setEditingZone(null); setZoneName(''); setZoneDesc(''); setZoneDialogOpen(true); }}>
-              <Plus className="w-4 h-4 mr-1" />Créer une zone
-            </Button>
-            <Link to="/points"><Button variant="outline" size="sm"><Activity className="w-4 h-4 mr-1" />Tous les points</Button></Link>
-          </div>
-        }
-      />
+    <div className={embedded ? "space-y-4" : "space-y-6 animate-fade-in"}>
+      {!embedded && (
+        <PageHeader
+          title={"Terrain — " + (selectedTerrain?.name ?? '')}
+          description={"Concentrateur " + (selectedTerrain?.gatewayId ?? '—')}
+          actions={
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={() => { setEditingZone(null); setZoneName(''); setZoneDesc(''); setZoneDialogOpen(true); }}>
+                <Plus className="w-4 h-4 mr-1" />Créer une zone
+              </Button>
+              <Link to="/points"><Button variant="outline" size="sm"><Activity className="w-4 h-4 mr-1" />Tous les points</Button></Link>
+            </div>
+          }
+        />
+      )}
+      {embedded && (
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => { setEditingZone(null); setZoneName(''); setZoneDesc(''); setZoneDialogOpen(true); }}>
+            <Plus className="w-4 h-4 mr-1" />Créer une zone
+          </Button>
+        </div>
+      )}
 
       {/* KPI row */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">

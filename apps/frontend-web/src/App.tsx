@@ -26,6 +26,7 @@ import Administration from "./pages/org/Administration";
 import ZonePage from "./pages/org/ZonePage";
 import PointDetails from "./pages/org/PointDetails";
 import Points from "./pages/org/Points";
+import ZonesPoints from "./pages/org/ZonesPoints";
 import SettingsPage from "./pages/org/Settings";
 
 // Platform Mode Pages
@@ -79,8 +80,8 @@ function AppRoutes() {
         ) : (
           <>
             {canAccessOrgRoute(role, "dashboard") && <Route path="/" element={<Dashboard />} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<DataMonitor />} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<Points />} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<ZonesPoints />} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<ZonesPoints />} />}
             {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<PowerQuality />} />}
             {canAccessOrgRoute(role, "history") && <Route path="/donnees" element={<History />} />}
             {canAccessOrgRoute(role, "history") && <Route path="/history" element={<History />} />}

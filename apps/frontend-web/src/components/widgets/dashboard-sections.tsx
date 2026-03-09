@@ -30,7 +30,7 @@ const CHART_COLORS = [
 ];
 
 /* ── LiveKPIs ── */
-export function LiveKPIs({ terrainId }: { terrainId: string }) {
+export const LiveKPIs = React.memo(function LiveKPIs({ terrainId }: { terrainId: string }) {
   const { data, isLoading, isError } = useDashboard(terrainId);
   const { data: incidentStats } = useIncidentStats();
   const prefs = usePreferences();
@@ -118,10 +118,10 @@ export function LiveKPIs({ terrainId }: { terrainId: string }) {
       </Card>
     </div>
   );
-}
+});
 
 /* ── UnifiedLoadCurve ── */
-export function UnifiedLoadCurve({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
+export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
   const { data: overviewData } = useTerrainOverview(terrainId);
   const { data, isLoading } = useReadings(terrainId, { from, to, limit: 5000 });
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
@@ -218,10 +218,10 @@ export function UnifiedLoadCurve({ terrainId, from, to }: { terrainId: string; f
       </CardContent>
     </Card>
   );
-}
+});
 
 /* ── PowerPeaksTable ── */
-export function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
+export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
   const { data: overviewData } = useTerrainOverview(terrainId);
   const { data } = useReadings(terrainId, { from, to, limit: 5000 });
 
@@ -282,10 +282,10 @@ export function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; fr
       </CardContent>
     </Card>
   );
-}
+});
 
 /* ── DailyCostWidget ── */
-export function DailyCostWidget({ terrainId }: { terrainId: string }) {
+export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
   const from = useMemo(() => new Date(Date.now() - 30 * 86400_000).toISOString(), []);
@@ -334,63 +334,105 @@ export function DailyCostWidget({ terrainId }: { terrainId: string }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 /* ── CarbonWidget ── */
-export function CarbonWidget({ terrainId }: { terrainId: string }) {
+const CARBON_PERIODS = [
+  { key: '7d', label: '7 jours', days: 7 },
+  { key: '30d', label: '30 jours', days: 30 },
+  { key: '90d', label: '3 mois', days: 90 },
+  { key: '365d', label: '1 an', days: 365 },
+] as const;
+
+export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
-  const from = useMemo(() => new Date(Date.now() - 30 * 86400_000).toISOString(), []);
+  const [period, setPeriod] = useState<string>('30d');
+
+  const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
+  const from = useMemo(() => new Date(Date.now() - periodDays * 86400_000).toISOString(), [periodDays]);
   const to = useMemo(() => new Date().toISOString(), []);
-  const { data } = useReadings(terrainId, { from, to, limit: 10000 });
+  const { data } = useReadings(terrainId, { from, to, limit: 50000 });
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
 
   const dailyCarbon = useMemo(() => {
     if (!readings.length) return [];
-    const byDay = new Map<string, { min: number; max: number }>();
+    // Group readings by point then by day for accurate delta-based kWh
+    const pointDays = new Map<string, Map<string, { min: number; max: number }>>();
     for (const r of readings) {
+      const pid = String(r.point_id ?? 'all');
       const day = new Date(String(r.time)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
       const ei = r.energy_import != null ? Number(r.energy_import) : null;
       if (ei == null) continue;
-      const entry = byDay.get(day);
-      if (!entry) byDay.set(day, { min: ei, max: ei });
+      if (!pointDays.has(pid)) pointDays.set(pid, new Map());
+      const dayMap = pointDays.get(pid)!;
+      const entry = dayMap.get(day);
+      if (!entry) dayMap.set(day, { min: ei, max: ei });
       else { entry.min = Math.min(entry.min, ei); entry.max = Math.max(entry.max, ei); }
     }
+    // Aggregate all points per day
+    const totalByDay = new Map<string, number>();
+    for (const dayMap of pointDays.values()) {
+      for (const [day, { min, max }] of dayMap) {
+        totalByDay.set(day, (totalByDay.get(day) ?? 0) + Math.max(0, max - min));
+      }
+    }
     let cumulative = 0;
-    return Array.from(byDay.entries()).map(([day, { min, max }]) => {
-      const kwh = Math.max(0, max - min);
+    return Array.from(totalByDay.entries()).map(([day, kwh]) => {
       const co2 = kwh * prefs.co2Factor;
       cumulative += co2;
-      return { day, co2: Number(co2.toFixed(2)), cumulative: Number(cumulative.toFixed(2)) };
+      return { day, kwh: Number(kwh.toFixed(2)), co2: Number(co2.toFixed(2)), cumulative: Number(cumulative.toFixed(2)) };
     });
   }, [readings, prefs.co2Factor]);
+
+  const totalCO2 = dailyCarbon.length ? dailyCarbon[dailyCarbon.length - 1].cumulative : 0;
+  const totalKwh = dailyCarbon.reduce((s, d) => s + d.kwh, 0);
 
   if (!dailyCarbon.length) return null;
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base font-medium flex items-center gap-2">
-          <Leaf className="w-4 h-4 text-green-600" />
-          Empreinte carbone
-          <span className="text-xs font-normal text-muted-foreground">({prefs.co2Factor} kgCO₂/kWh)</span>
-        </CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Leaf className="w-4 h-4 text-green-600" />
+            Empreinte carbone
+            <span className="text-xs font-normal text-muted-foreground">({prefs.co2Factor} kgCO₂/kWh)</span>
+          </CardTitle>
+          <div className="flex items-center gap-1">
+            {CARBON_PERIODS.map(p => (
+              <Button key={p.key} variant={period === p.key ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setPeriod(p.key)}>
+                {p.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+        <div className="flex gap-4 mt-1 text-xs text-muted-foreground">
+          <span>Total: <b className="text-foreground">{totalCO2.toFixed(1)} kg CO₂</b></span>
+          <span>Conso: <b className="text-foreground">{totalKwh.toFixed(1)} kWh</b></span>
+          <span>Moy/jour: <b className="text-foreground">{(totalCO2 / dailyCarbon.length).toFixed(2)} kg</b></span>
+        </div>
       </CardHeader>
       <CardContent>
-        <ResponsiveContainer width="100%" height={180}>
-          <AreaChart data={dailyCarbon}>
+        <ResponsiveContainer width="100%" height={220}>
+          <BarChart data={dailyCarbon} barCategoryGap="15%">
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-            <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 10 }} unit=" kg" />
-            <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number, name: string) => [v.toFixed(2) + ' kg', name === 'cumulative' ? 'CO₂ cumulé' : 'CO₂ journalier']} />
+            <XAxis dataKey="day" tick={{ fontSize: 9 }} interval={periodDays > 90 ? Math.floor(dailyCarbon.length / 12) : 'preserveStartEnd'} />
+            <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit=" kg" />
+            <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} unit=" kg" hide />
+            <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number, name: string) => {
+              if (name === 'CO₂ cumulé') return [v.toFixed(1) + ' kg', name];
+              if (name === 'CO₂ journalier') return [v.toFixed(2) + ' kg', name];
+              return [v.toFixed(2) + ' kWh', name];
+            }} />
             <Legend wrapperStyle={{ fontSize: 11 }} />
-            <Area type="monotone" dataKey="cumulative" stroke="#16a34a" fill="#16a34a" fillOpacity={0.15} strokeWidth={2} name="CO₂ cumulé" />
-            <Area type="monotone" dataKey="co2" stroke="#86efac" fill="#86efac" fillOpacity={0.3} strokeWidth={1} name="CO₂ journalier" />
-          </AreaChart>
+            <Bar yAxisId="bar" dataKey="co2" fill="#86efac" radius={[3, 3, 0, 0]} name="CO₂ journalier" />
+            <Line yAxisId="line" type="monotone" dataKey="cumulative" stroke="#16a34a" strokeWidth={2} dot={false} name="CO₂ cumulé" />
+          </BarChart>
         </ResponsiveContainer>
       </CardContent>
     </Card>
   );
-}
+});
 
 /* ── AlarmWidget ── */
 export function AlarmWidget({ terrainId }: { terrainId: string }) {

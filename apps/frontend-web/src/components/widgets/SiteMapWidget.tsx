@@ -55,7 +55,21 @@ const DEFAULT_CONFIG: SiteMapConfig = {
 function loadConfig(): SiteMapConfig {
   try {
     const s = localStorage.getItem(STORAGE_KEY);
-    return s ? { ...DEFAULT_CONFIG, ...JSON.parse(s) } : DEFAULT_CONFIG;
+    if (!s) return DEFAULT_CONFIG;
+    const cfg = { ...DEFAULT_CONFIG, ...JSON.parse(s) };
+    // Remove auto-generated placeholder square zones (old data)
+    if (cfg.zones?.length) {
+      cfg.zones = cfg.zones.filter((z: any) => {
+        if (!z?.coords || z.coords.length !== 4) return true;
+        const [a, b, c, d] = z.coords;
+        // Detect the default square pattern: symmetric offsets of 0.0005
+        const isSquare = Math.abs(a[0] - b[0]) < 0.0001 && Math.abs(c[0] - d[0]) < 0.0001
+          && Math.abs(a[1] - d[1]) < 0.0001 && Math.abs(b[1] - c[1]) < 0.0001;
+        return !isSquare;
+      });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+    }
+    return cfg;
   } catch {
     return DEFAULT_CONFIG;
   }
@@ -83,6 +97,29 @@ const ICON_GATEWAY = L.divIcon({
   iconAnchor: [11, 11],
   popupAnchor: [0, -14],
 });
+
+/* ─── Map lock controller ─────────────────────────────── */
+function MapLockController({ locked }: { locked: boolean }) {
+  const map = useMap();
+  useEffect(() => {
+    if (locked) {
+      map.dragging.disable();
+      map.scrollWheelZoom.disable();
+      map.doubleClickZoom.disable();
+      map.touchZoom.disable();
+      map.boxZoom.disable();
+      map.keyboard.disable();
+    } else {
+      map.dragging.enable();
+      map.scrollWheelZoom.enable();
+      map.doubleClickZoom.enable();
+      map.touchZoom.enable();
+      map.boxZoom.enable();
+      map.keyboard.enable();
+    }
+  }, [map, locked]);
+  return null;
+}
 
 /* ─── Weather panel ───────────────────────────────────── */
 function WeatherPanel({ lat, lng }: { lat: number; lng: number }) {
@@ -292,7 +329,7 @@ function PointCoordsInput({ point, onSave }: { point: Record<string, any>; onSav
 }
 
 /* ─── Main Widget ─────────────────────────────────────── */
-export function SiteMapWidget({ terrainId }: { terrainId: string }) {
+export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId }: { terrainId: string }) {
   const [config, setConfig] = useState<SiteMapConfig>(loadConfig);
   const [configOpen, setConfigOpen] = useState(false);
   const { data: overviewData } = useTerrainOverview(terrainId);
@@ -304,26 +341,6 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [drawingZoneCoords, setDrawingZoneCoords] = useState<[number, number][]>([]);
   const [drawingZoneName, setDrawingZoneName] = useState('');
-
-  // Auto-import zones from API if no config zones exist
-  useEffect(() => {
-    if (zones.length > 0 && (!config.zones || config.zones.length === 0)) {
-      const colors = ['#3b82f680', '#10b98180', '#f59e0b80', '#ef444480', '#8b5cf680'];
-      const apiZones = zones.map((z, i) => ({
-        name: String(z.name ?? `Zone ${i + 1}`),
-        color: colors[i % colors.length],
-        coords: [
-          [config.lat + 0.0005, config.lng - 0.0005],
-          [config.lat + 0.0005, config.lng + 0.0005],
-          [config.lat - 0.0005, config.lng + 0.0005],
-          [config.lat - 0.0005, config.lng - 0.0005],
-        ] as [number, number][],
-      }));
-      const updated = { ...config, zones: apiZones };
-      setConfig(updated);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    }
-  }, [zones, config.zones?.length]);
 
   const saveConfig = useCallback((updated: SiteMapConfig) => {
     setConfig(updated);
@@ -543,12 +560,10 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
             center={[config.lat, config.lng]}
             zoom={config.zoom}
             style={{ height: '100%', width: '100%' }}
-            scrollWheelZoom={!mapLocked}
-            dragging={!mapLocked}
-            doubleClickZoom={!mapLocked}
-            touchZoom={!mapLocked}
-            zoomControl={!mapLocked}
+            scrollWheelZoom={true}
+            dragging={true}
           >
+            <MapLockController locked={mapLocked} />
             <RecenterMap lat={config.lat} lng={config.lng} zoom={config.zoom} />
             {editMode !== 'none' && <MapClickHandler onMapClick={handleMapClick} />}
             <TileLayer
@@ -638,4 +653,4 @@ export function SiteMapWidget({ terrainId }: { terrainId: string }) {
       <ConfigDialog open={configOpen} onClose={() => setConfigOpen(false)} config={config} onSave={setConfig} />
     </Card>
   );
-}
+});

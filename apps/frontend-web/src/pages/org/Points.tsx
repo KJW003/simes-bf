@@ -24,7 +24,7 @@ const fmtDT = (iso: string) => {
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 };
 
-export default function Points() {
+export default function Points({ embedded }: { embedded?: boolean }) {
   const { selectedTerrainId, selectedTerrain } = useAppContext();
   const { data, isLoading, isError } = useTerrainOverview(selectedTerrainId);
   const [filter, setFilter] = useState<string>('_all');
@@ -82,6 +82,7 @@ export default function Points() {
   };
 
   if (!selectedTerrainId) {
+    if (embedded) return null;
     return (
       <div className="space-y-6">
         <PageHeader
@@ -99,6 +100,7 @@ export default function Points() {
   }
 
   if (isLoading) {
+    if (embedded) return <Card><CardContent className="py-6 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>;
     return (
       <div className="space-y-6">
         <PageHeader
@@ -116,6 +118,7 @@ export default function Points() {
   }
 
   if (isError || !data) {
+    if (embedded) return <Card className="border-red-200 bg-red-50/30"><CardContent className="py-6 flex items-center gap-3"><AlertTriangle className="w-5 h-5 text-red-600" /><span className="text-sm text-red-700">Erreur lors du chargement</span></CardContent></Card>;
     return (
       <div className="space-y-6">
         <PageHeader
@@ -168,12 +171,14 @@ export default function Points() {
   };
 
   return (
-    <div className="space-y-6">
-      <PageHeader
-        title="Points de mesure"
-        description={selectedTerrain?.name ?? 'Terrain'}
-        breadcrumbs={[{ label: 'Accueil', href: '/' }, { label: 'Points' }]}
-      />
+    <div className={embedded ? "space-y-4" : "space-y-6"}>
+      {!embedded && (
+        <PageHeader
+          title="Points de mesure"
+          description={selectedTerrain?.name ?? 'Terrain'}
+          breadcrumbs={[{ label: 'Accueil', href: '/' }, { label: 'Points' }]}
+        />
+      )}
 
       {/* Filter + Search bar */}
       <div className="flex flex-wrap items-center gap-3">

@@ -15,7 +15,6 @@ import {
   Settings,
   Calculator,
   ShieldCheck,
-  MapPin,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -104,10 +103,7 @@ export function OrgSidebar({ onClose }: { onClose?: () => void } = {}) {
               <NavItem to="/" icon={Home} label="Tableau de bord" />
             )}
             {canAccessOrgRoute(role, 'dataMonitor') && (
-              <NavItem to="/data-monitor" icon={Activity} label="Terrain & zones" />
-            )}
-            {canAccessOrgRoute(role, 'dataMonitor') && (
-              <NavItem to="/points" icon={MapPin} label="Points de mesure" />
+              <NavItem to="/data-monitor" icon={Activity} label="Zones & Points" />
             )}
             {canAccessOrgRoute(role, 'powerQuality') && (
               <NavItem to="/power-quality" icon={Gauge} label="Qualité réseau" />

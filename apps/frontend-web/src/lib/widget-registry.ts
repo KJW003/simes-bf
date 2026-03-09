@@ -554,7 +554,7 @@ export const widgetDefinitions: WidgetDefinition[] = [
   {
     id: 'dashboard-carbon',
     title: 'Empreinte carbone',
-    description: 'CO₂ journalier et cumulé sur 30 jours.',
+    description: 'CO₂ journalier et cumulé — 7j, 30j, 3 mois, 1 an.',
     category: 'dashboard',
     supportedSizes: ['sm', 'md', 'lg'],
     icon: Leaf,

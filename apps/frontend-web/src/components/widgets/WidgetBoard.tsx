@@ -728,6 +728,7 @@ export function WidgetBoard() {
 
   // Fetch historical readings for chart widgets
   const readingsFrom = useMemo(() => new Date(Date.now() - periodMs).toISOString(), [periodMs]);
+  const readingsTo = useMemo(() => new Date().toISOString(), [readingsFrom]);
   const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, limit: 5000 });
 
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));
@@ -968,7 +969,7 @@ export function WidgetBoard() {
           const state: WidgetRuntimeState = item.state ?? 'ready';
           const stateBadge = stateBadgeMap[state];
           const data = resolveData(item);
-          const dashCtx = { terrainId: selectedTerrainId, from: readingsFrom, to: new Date().toISOString() };
+          const dashCtx = { terrainId: selectedTerrainId, from: readingsFrom, to: readingsTo };
 
           // ── Standalone dashboard widget (renders its own Card) ──
           if (def.standalone) {
@@ -1254,7 +1255,7 @@ export function WidgetBoard() {
           <div className="flex-1 overflow-auto min-h-0">
             {fullscreenItem && fullscreenDef && (
               <div className="p-6 h-full [&_.h-40]:h-[60vh] [&_.h-28]:h-[55vh] [&_.h-20]:h-[50vh] [&_.h-24]:h-[50vh] [&_.h-32]:h-[55vh]">
-                {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config, { terrainId: selectedTerrainId, from: readingsFrom, to: new Date().toISOString() })}
+                {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config, { terrainId: selectedTerrainId, from: readingsFrom, to: readingsTo })}
               </div>
             )}
           </div>
