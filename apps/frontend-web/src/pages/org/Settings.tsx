@@ -15,7 +15,7 @@ import {
   Clock, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { usePreferences, savePreferences, PREF_DEFAULTS, type UserPreferences } from '@/hooks/usePreferences';
+import { usePreferences, savePreferences, PREF_DEFAULTS, TARIFF_PRESETS, type UserPreferences } from '@/hooks/usePreferences';
 
 export default function SettingsPage() {
   const { currentUser } = useAppContext();
