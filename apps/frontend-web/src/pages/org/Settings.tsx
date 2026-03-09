@@ -15,7 +15,7 @@ import {
   Clock, Receipt,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { usePreferences, savePreferences, PREF_DEFAULTS, TARIFF_PRESETS, type UserPreferences } from '@/hooks/usePreferences';
+import { usePreferences, savePreferences, PREF_DEFAULTS, type UserPreferences } from '@/hooks/usePreferences';
 
 export default function SettingsPage() {
   const { currentUser } = useAppContext();
@@ -32,6 +32,25 @@ export default function SettingsPage() {
     savePreferences(prefs);
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
+  };
+
+  const handleGroupChange = (g: string) => {
+    const groupPreset = TARIFF_PRESETS[g];
+    if (!groupPreset) return;
+    const firstPlan = Object.keys(groupPreset.plans)[0];
+    const plan = groupPreset.plans[firstPlan];
+    if (!plan) return;
+    setPrefs(prev => ({ ...prev, tariffGroup: g, tariffPlan: firstPlan, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
+    setSaved(false);
+  };
+
+  const handlePlanChange = (p: string) => {
+    const groupPreset = TARIFF_PRESETS[prefs.tariffGroup];
+    if (!groupPreset) return;
+    const plan = groupPreset.plans[p];
+    if (!plan) return;
+    setPrefs(prev => ({ ...prev, tariffPlan: p, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
+    setSaved(false);
   };
 
   return (
@@ -251,44 +270,27 @@ export default function SettingsPage() {
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="space-y-1">
               <Label className="text-sm font-medium">Groupe tarifaire</Label>
-              <Select
-                value={prefs.tariffGroup}
-                onValueChange={g => {
-                  const groupPreset = TARIFF_PRESETS[g];
-                  if (!groupPreset) return;
-                  const firstPlan = Object.keys(groupPreset.plans)[0];
-                  const plan = groupPreset.plans[firstPlan];
-                  if (!plan) return;
-                  setPrefs(prev => ({ ...prev, tariffGroup: g, tariffPlan: firstPlan, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
-                  setSaved(false);
-                }}
-              >
+              <Select value={prefs.tariffGroup} onValueChange={handleGroupChange}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.keys(TARIFF_PRESETS).map(g => (
-                    <SelectItem key={g} value={g}>{g}</SelectItem>
-                  ))}
+                  <SelectItem value="D">D</SelectItem>
+                  <SelectItem value="E">E</SelectItem>
+                  <SelectItem value="G">G</SelectItem>
                 </SelectContent>
               </Select>
             </div>
             <div className="space-y-1">
               <Label className="text-sm font-medium">Plan tarifaire</Label>
-              <Select
-                value={prefs.tariffPlan}
-                onValueChange={p => {
-                  const groupPreset = TARIFF_PRESETS[prefs.tariffGroup];
-                  if (!groupPreset) return;
-                  const plan = groupPreset.plans[p];
-                  if (!plan) return;
-                  setPrefs(prev => ({ ...prev, tariffPlan: p, hpRate: plan.hpRate, peakRate: plan.peakRate, monthlyRedevance: plan.monthlyRedevance, primePerKw: plan.primePerKw }));
-                  setSaved(false);
-                }}
-              >
+              <Select value={prefs.tariffPlan} onValueChange={handlePlanChange}>
                 <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Object.entries(TARIFF_PRESETS[prefs.tariffGroup]?.plans ?? {}).map(([k, plan]) => (
-                    <SelectItem key={k} value={k}>{k} – {plan.label}</SelectItem>
-                  ))}
+                  <SelectItem value="D1">D1 – Non-industriel</SelectItem>
+                  <SelectItem value="D2">D2 – Industriel</SelectItem>
+                  <SelectItem value="D3">D3 – Special</SelectItem>
+                  <SelectItem value="E1">E1 – Non-industriel</SelectItem>
+                  <SelectItem value="E2">E2 – Industriel</SelectItem>
+                  <SelectItem value="E3">E3 – Special</SelectItem>
+                  <SelectItem value="G">G</SelectItem>
                 </SelectContent>
               </Select>
             </div>
