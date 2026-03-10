@@ -115,6 +115,19 @@ export const api = {
 
   me: () => request<{ ok: boolean; user: ApiUser }>('/auth/me'),
 
+  // ── User Settings (server-side persistence) ──
+  getSettings: () => request<{ ok: boolean; settings: Record<string, unknown> }>('/auth/settings'),
+  saveSettings: (settings: Record<string, unknown>) =>
+    request<{ ok: boolean; settings: Record<string, unknown> }>('/auth/settings', {
+      method: 'PUT',
+      body: JSON.stringify({ settings }),
+    }),
+  patchSettings: (settings: Record<string, unknown>) =>
+    request<{ ok: boolean; settings: Record<string, unknown> }>('/auth/settings', {
+      method: 'PATCH',
+      body: JSON.stringify({ settings }),
+    }),
+
   // ── Orgs ──
   getOrgs: () => request<ApiOrg[]>('/orgs'),
   createOrg: (name: string) =>
@@ -438,6 +451,14 @@ export const api = {
 
   /** Base URL for raw fetch calls (e.g. file downloads) */
   baseURL: BASE,
+
+  // ── AI / ML Forecasts ──
+  getMLForecast: (terrainId: string | number, days: number) =>
+    request<{ forecast: Array<{ day: string; predicted_kwh: number; lower: number; upper: number }>; model_mape: number | null; model_rmse: number | null }>(`/ai/forecast/${terrainId}?days=${days}`),
+  trainMLModel: (terrainId: string | number) =>
+    request<{ terrain_id: number; status: string; samples: number; mape: number | null; rmse: number | null; message: string }>(`/ai/train/${terrainId}`, { method: 'POST' }),
+  getMLModelStatus: (terrainId: string | number) =>
+    request<{ terrain_id: number; status: string; mape: number | null; rmse: number | null; samples: number | null }>(`/ai/model/${terrainId}`),
 };
 
 export default api;

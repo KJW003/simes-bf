@@ -2,6 +2,7 @@
 // Worker audit logging — writes to audit_logs table via core DB
 // ============================================================
 const { db } = require("./shared");
+const log = require("./config/logger");
 
 /**
  * Write an audit log entry to the database from worker context.
@@ -19,7 +20,7 @@ async function auditLog(level, source, message, metadata = {}) {
       [level, source, message, JSON.stringify(metadata)]
     );
   } catch (e) {
-    console.error("[audit-log/worker] insert failed:", e.message);
+    log.error({ err: e.message }, 'worker audit-log insert failed');
   }
 }
 

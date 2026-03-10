@@ -1,13 +1,37 @@
 const express = require("express");
 const router = express.Router();
 const { corePool, telemetryPool } = require("../../config/db");
+const log = require("../../config/logger");
+
+// ─── Terrain ownership middleware ──────────────────────────
+async function verifyTerrainAccess(req, res, next) {
+  try {
+    const terrainId = req.params.terrainId;
+    if (!terrainId) return next();
+    if (req.userRole === 'platform_super_admin') return next();
+    const { rows } = await corePool.query(
+      `SELECT t.id FROM terrains t
+       JOIN sites s ON s.id = t.site_id
+       JOIN org_members om ON om.org_id = s.org_id
+       WHERE t.id = $1 AND om.user_id = $2 LIMIT 1`,
+      [terrainId, req.userId]
+    );
+    if (!rows.length) return res.status(403).json({ ok: false, error: 'Forbidden: no access to this terrain' });
+    next();
+  } catch (e) {
+    log.error({ err: e.message }, "[verifyTerrainAccess]");
+    res.status(500).json({ ok: false, error: 'Access check failed' });
+  }
+}
+
+router.use('/terrains/:terrainId', verifyTerrainAccess);
 
 // Try to require Excel library for report exports
 let ExcelJS;
 try {
   ExcelJS = require("exceljs");
 } catch (e) {
-  console.warn("[telemetry-routes] ExcelJS not available, Excel export will not work. Install with: npm install exceljs");
+  log.warn("[telemetry-routes] ExcelJS not available, Excel export will not work. Install with: npm install exceljs");
 }
 
 // ─── Shared Acrel column list (DRY) ────────────────────────
@@ -76,8 +100,8 @@ router.get("/terrains/:terrainId/readings/latest", async (req, res) => {
 
     res.json({ ok: true, terrain_id: terrainId, count: readings.length, readings });
   } catch (e) {
-    console.error("[telemetry/readings/latest]", e.message, e.stack);
-    res.status(500).json({ ok: false, error: e.message });
+    log.error({ err: e.message }, "[telemetry/readings/latest]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
 
@@ -118,8 +142,8 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     const r = await telemetryPool.query(sql, params);
     res.json({ ok: true, terrain_id: terrainId, count: r.rows.length, readings: r.rows });
   } catch (e) {
-    console.error("[telemetry/readings]", e.message, e.stack);
-    res.status(500).json({ ok: false, error: e.message });
+    log.error({ err: e.message }, "[telemetry/readings]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
 
@@ -200,8 +224,8 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       last_update: lastUpdate,
     });
   } catch (e) {
-    console.error("[telemetry/dashboard]", e.message, e.stack);
-    res.status(500).json({ ok: false, error: e.message });
+    log.error({ err: e.message }, "[telemetry/dashboard]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
 
@@ -272,8 +296,8 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
       zones_count: zones.length,
     });
   } catch (e) {
-    console.error("[telemetry/overview]", e.message, e.stack);
-    res.status(500).json({ ok: false, error: e.message });
+    log.error({ err: e.message }, "[telemetry/overview]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
 
@@ -369,8 +393,8 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
 
     await workbook.xlsx.write(res);
   } catch (e) {
-    console.error("[telemetry/reports/point/excel]", e.message, e.stack);
-    res.status(500).json({ ok: false, error: e.message });
+    log.error({ err: e.message }, "[telemetry/reports/point/excel]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
 

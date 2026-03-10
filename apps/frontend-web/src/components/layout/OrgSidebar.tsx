@@ -127,8 +127,8 @@ export function OrgSidebar({ onClose }: { onClose?: () => void } = {}) {
             {canAccessOrgRoute(role, 'energyAudit') && (
               <NavItem to="/energy-audit" icon={ShieldCheck} label="Audit énergétique" />
             )}
-            {canAccessOrgRoute(role, 'reports') && (
-              <NavItem to="/reports" icon={FileText} label="Rapports" />
+            {canAccessOrgRoute(role, 'exports') && (
+              <NavItem to="/exports" icon={FileText} label="Exports" />
             )}
             {canAccessOrgRoute(role, 'forecasts') && (
               <NavItem to="/forecasts" icon={TrendingUp} label="Prévisions (bientôt)" />

@@ -10,9 +10,10 @@ import {
 } from '@/components/ui/select';
 import {
   AlertTriangle, Bell, BellOff, CheckCircle, CheckCircle2, ShieldAlert,
-  Activity, Loader2, Brain, TrendingDown,
+  Activity, Loader2, Brain, TrendingDown, Settings2,
 } from 'lucide-react';
 import { useIncidents, useIncidentStats, useTerrainOverview, useUpdateIncident } from '@/hooks/useApi';
+import { AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
 import { useAlarmEngine } from '@/hooks/useAlarmEngine';
 import { cn } from '@/lib/utils';
 
@@ -241,7 +242,7 @@ export default function Anomalies() {
             <Card className="border-dashed">
               <CardContent className="py-12 text-center text-muted-foreground flex flex-col items-center gap-3">
                 <BellOff className="w-8 h-8" />
-                <span>Aucune alarme détectée. Configurez des règles dans le tableau de bord.</span>
+                <span>Aucune alarme détectée. Configurez des règles ci-dessous.</span>
               </CardContent>
             </Card>
           ) : (
@@ -281,6 +282,9 @@ export default function Anomalies() {
               <Button variant="outline" size="sm" className="h-7 text-xs text-destructive" onClick={alarmEngine.clearHistory}>Effacer l'historique</Button>
             </div>
           )}
+
+          {/* Alarm rules configuration — inline */}
+          {selectedTerrainId && <AlarmConfigPanel terrainId={selectedTerrainId} />}
         </>
       ) : (
         /* ── AI Anomaly Detection (future) ── */

@@ -1,5 +1,6 @@
 import { useMemo, useEffect, useRef, useCallback } from 'react';
 import { useTerrainOverview } from './useApi';
+import api from '@/lib/api';
 
 /* ── Types ── */
 
@@ -64,8 +65,41 @@ export function loadRules(): AlarmRule[] {
   } catch { return []; }
 }
 
+// Debounce timer for server sync of alarm rules
+let _alarmSyncTimer: ReturnType<typeof setTimeout> | null = null;
+
 export function saveRules(rules: AlarmRule[]) {
   localStorage.setItem(RULES_KEY, JSON.stringify(rules));
+  // Debounced server sync
+  if (_alarmSyncTimer) clearTimeout(_alarmSyncTimer);
+  _alarmSyncTimer = setTimeout(() => {
+    api.patchSettings({ alarmRules: rules }).catch(() => {/* silent */});
+  }, 500);
+}
+
+/** Load alarm rules from server and merge into local cache */
+export async function loadAlarmSettingsFromServer(): Promise<void> {
+  try {
+    const res = await api.getSettings();
+    if (res.ok && res.settings) {
+      const serverRules = res.settings.alarmRules as AlarmRule[] | undefined;
+      if (Array.isArray(serverRules) && serverRules.length > 0) {
+        localStorage.setItem(RULES_KEY, JSON.stringify(serverRules));
+      }
+      const serverMapConfig = res.settings.mapConfig;
+      if (serverMapConfig && typeof serverMapConfig === 'object') {
+        localStorage.setItem('simes-map-config', JSON.stringify(serverMapConfig));
+      }
+      const serverWidgetLayout = res.settings.widgetLayout;
+      if (serverWidgetLayout && typeof serverWidgetLayout === 'object') {
+        // Store under the versioned key — will be loaded by WidgetBoard
+        const userId = (res.settings as any)._userId; // not available here, so use generic approach
+        // Widget layout sync is handled differently — see WidgetBoard
+      }
+    }
+  } catch {
+    // Server unavailable — use local cache
+  }
 }
 
 /* ── Evaluation ── */

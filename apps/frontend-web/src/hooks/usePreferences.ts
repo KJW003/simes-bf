@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useSyncExternalStore } from 'react';
+import { useSyncExternalStore } from 'react';
+import api from '@/lib/api';
 
 export interface UserPreferences {
   theme: 'light' | 'dark' | 'system';
@@ -72,20 +73,51 @@ function getSnapshot() {
   return cached;
 }
 
-export function savePreferences(prefs: UserPreferences) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
-  // Apply theme
-  if (prefs.theme === 'dark') {
+function applyTheme(theme: string) {
+  if (theme === 'dark') {
     document.documentElement.classList.add('dark');
-  } else if (prefs.theme === 'light') {
+  } else if (theme === 'light') {
     document.documentElement.classList.remove('dark');
   } else {
     const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
     document.documentElement.classList.toggle('dark', prefersDark);
   }
-  localStorage.setItem('simes-theme', prefs.theme);
+  localStorage.setItem('simes-theme', theme);
+}
+
+// Debounce timer for server sync
+let _syncTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function savePreferences(prefs: UserPreferences) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(prefs));
+  applyTheme(prefs.theme);
   cached = { ...prefs };
   window.dispatchEvent(new Event(PREFS_EVENT));
+
+  // Debounced server sync (500ms)
+  if (_syncTimer) clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(() => {
+    api.patchSettings({ preferences: prefs }).catch(() => {/* silent */});
+  }, 500);
+}
+
+/** Load preferences from server and merge into local cache */
+export async function loadPreferencesFromServer(): Promise<void> {
+  try {
+    const res = await api.getSettings();
+    if (res.ok && res.settings) {
+      const serverPrefs = res.settings.preferences as Partial<UserPreferences> | undefined;
+      if (serverPrefs && typeof serverPrefs === 'object') {
+        const merged = { ...PREF_DEFAULTS, ...serverPrefs };
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(merged));
+        applyTheme(merged.theme);
+        cached = merged;
+        window.dispatchEvent(new Event(PREFS_EVENT));
+      }
+    }
+  } catch {
+    // Server unavailable — use local cache
+  }
 }
 
 export function usePreferences(): UserPreferences {

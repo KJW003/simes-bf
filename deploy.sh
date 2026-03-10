@@ -116,18 +116,31 @@ docker exec -i simes-telemetry-db psql \
   < "$SCHEMA_DIR/schema-telemetry.sql"
 ok "telemetry-db schema applied."
 
-# ── Run core migrations ──────────────────────────────────────
-info "Applying core-db migrations..."
-for mig in "$SCHEMA_DIR"/migrations/*.sql; do
-  [ -f "$mig" ] || continue
-  mig_name=$(basename "$mig")
-  info "  → $mig_name"
-  docker exec -i simes-core-db psql \
-    -U "${CORE_DB_USER}" \
-    -d "${CORE_DB_NAME}" \
-    < "$mig" 2>&1 || warn "Migration $mig_name had warnings (may already be applied)"
+# ── Run migrations via the migration runner ──────────────────
+# Wait for api-core container to be running (needed for docker exec)
+info "Waiting for api-core container..."
+RETRIES=15
+until docker inspect --format='{{.State.Status}}' simes-api-core 2>/dev/null | grep -q 'running'; do
+  RETRIES=$((RETRIES - 1))
+  if [ $RETRIES -le 0 ]; then error "api-core container not running — cannot run migrations."; fi
+  sleep 2
 done
-ok "Core migrations applied."
+
+# Copy migration files into the api-core container (which has pg installed)
+info "Copying migration runner into api-core container..."
+docker cp "$SCHEMA_DIR/migrate.js" simes-api-core:/tmp/migrate.js
+docker cp "$SCHEMA_DIR/migrations" simes-api-core:/tmp/migrations
+
+info "Running core-db migrations..."
+docker exec -w /app simes-api-core node /tmp/migrate.js --db core 2>&1 || warn "Core migrations had warnings"
+ok "Core migrations done."
+
+info "Running telemetry-db migrations..."
+docker exec -w /app simes-api-core node /tmp/migrate.js --db telemetry 2>&1 || warn "Telemetry migrations had warnings"
+ok "Telemetry migrations done."
+
+# Cleanup
+docker exec simes-api-core rm -rf /tmp/migrate.js /tmp/migrations 2>/dev/null || true
 
 # ── Wait for api-core to be healthy ──────────────────────────
 info "Waiting for api-core to be healthy..."
@@ -144,6 +157,16 @@ until docker inspect --format='{{.State.Health.Status}}' simes-api-core 2>/dev/n
 done
 if [ $RETRIES -gt 0 ]; then ok "api-core is healthy."; fi
 
+# ── Quick status check for remaining services ────────────────
+for svc in simes-ingestion simes-worker-jobs; do
+  STATUS=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
+  if [ "$STATUS" = "running" ]; then
+    ok "$svc is running."
+  else
+    warn "$svc status: $STATUS"
+  fi
+done
+
 # ── Summary ──────────────────────────────────────────────────
 echo ""
 ok "═══════════════════════════════════════════════════"
@@ -153,8 +176,10 @@ echo ""
 info "Services:"
 info "  UI         → http://localhost/"
 info "  API        → http://localhost/api"
+info "  API Docs   → http://localhost/api/api-docs"
 info "  Ingestion  → http://localhost/ingest"
 info "  pgAdmin    → http://localhost:5050"
+info "  Portainer  → https://localhost:9443"
 info "  Traefik    → http://localhost:8080 (if dashboard enabled)"
 echo ""
 info "Default credentials:"

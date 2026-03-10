@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { corePool: db } = require('../../config/db');
+const log = require("../../config/logger");
 
 // GET /logs — list audit logs with filters
 router.get('/logs', async (req, res) => {
@@ -31,7 +32,7 @@ router.get('/logs', async (req, res) => {
 
     res.json({ ok: true, logs: rows, total: countRes.rows[0].count });
   } catch (e) {
-    console.error('[logs] list error:', e.message);
+    log.error({ err: e.message }, "[logs] list error:");
     res.status(500).json({ ok: false, error: e.message });
   }
 });

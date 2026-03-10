@@ -12,6 +12,7 @@ const {
 } = require("../shared/acrel");
 const { isUG67Batch, normalizeUG67 } = require("../shared/ug67-normalizer");
 const { auditLog } = require("../shared/audit-log");
+const log = require("../config/logger");
 
 // ─────────────────────────────────────────────────────────────
 // POST /milesight
@@ -20,13 +21,13 @@ const { auditLog } = require("../shared/audit-log");
 router.post("/milesight", async (req, res) => {
   try {
     let payload = req.body || {};
-    console.log("[INGEST/MILESIGHT] payload received:", JSON.stringify(payload).substring(0, 500));
+    log.debug({ gatewayId: payload.gateway?.id ?? payload.gateway_id, devices: (payload.devices || []).length }, 'milesight payload received');
     if (isUG67Batch(payload)) {
       payload = normalizeUG67(payload);
     }
 
     const gatewayId = payload.gateway?.id ?? payload.gateway_id;
-    console.log("[INGEST/MILESIGHT] gatewayId:", gatewayId);
+    log.debug({ gatewayId }, 'gateway resolved');
 
     if (!gatewayId) {
       return res.status(400).json({ ok: false, error: "gateway_id is required (payload.gateway.id)" });
@@ -36,7 +37,7 @@ router.post("/milesight", async (req, res) => {
       ? new Date(payload.time).toISOString()
       : new Date().toISOString();
     const source = payload.source || {};
-    console.log("[INGEST/MILESIGHT] time:", time, "source:", source);
+    log.debug({ time, source }, 'milesight time/source');
 
     // ── Normalise to devices array ──
     let devices;
@@ -53,15 +54,15 @@ router.post("/milesight", async (req, res) => {
         },
       ];
     }
-    console.log("[INGEST/MILESIGHT] devices normalized:", devices.length);
+    log.debug({ count: devices.length }, 'devices normalized');
 
     // ── 1) Gateway lookup ──
-    console.log("[INGEST/MILESIGHT] querying gateway_registry for:", gatewayId);
+    log.debug({ gatewayId }, 'querying gateway_registry');
     const gw = await corePool.query(
       `SELECT terrain_id FROM gateway_registry WHERE gateway_id = $1`,
       [gatewayId]
     );
-    console.log("[INGEST/MILESIGHT] gateway lookup result:", gw.rows.length);
+    log.debug({ gatewayId, found: gw.rows.length }, 'gateway lookup result');
     const terrainId = gw.rows[0]?.terrain_id || null;
 
     // ── 2) Gateway NOT mapped → buffer everything ──
@@ -210,7 +211,7 @@ router.post("/milesight", async (req, res) => {
       results,
     });
   } catch (e) {
-    console.error("[INGEST/MILESIGHT] ERROR:", e);
+    log.error({ err: e.message }, 'milesight ingestion error');
     auditLog('error', `Ingestion Milesight erreur: ${e.message}`, { error: e.message });
     res.status(500).json({ ok: false, error: e.message });
   }

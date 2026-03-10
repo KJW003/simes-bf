@@ -1,6 +1,7 @@
 // ============================================================
 // Ingestion service audit logging — writes to audit_logs table
 // ============================================================
+const log = require("../config/logger");
 const { corePool } = require("../config/db");
 
 /**
@@ -18,7 +19,7 @@ async function auditLog(level, message, metadata = {}) {
       [level, message, JSON.stringify(metadata)]
     );
   } catch (e) {
-    console.error("[audit-log/ingestion] insert failed:", e.message);
+    log.error({ err: e.message }, "[audit-log/ingestion] insert failed:");
   }
 }
 

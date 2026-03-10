@@ -1,6 +1,8 @@
 const express = require("express");
 const router = express.Router();
 const {corePool: db} = require("../../config/db");
+const { validate } = require("../../shared/validate");
+const { nameSchema, siteSchema, terrainSchema, zoneSchema, createPointSchema, updatePointSchema, assignZoneSchema } = require("../../shared/schemas");
 
 // Helpers
 function bad(res, message) {
@@ -8,10 +10,9 @@ function bad(res, message) {
 }
 
 /** ORGS **/
-router.post("/orgs", async (req, res) => {
+router.post("/orgs", validate(nameSchema), async (req, res) => {
   try {
-    const { name } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name } = req.body;
 
     const r = await db.query(
       `INSERT INTO organizations (name)
@@ -67,11 +68,10 @@ router.get("/terrains", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.put("/orgs/:orgId", async (req, res) => {
+router.put("/orgs/:orgId", validate(nameSchema), async (req, res) => {
   try {
     const { orgId } = req.params;
-    const { name } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name } = req.body;
     const r = await db.query(
       `UPDATE organizations SET name = $2 WHERE id = $1 RETURNING id, name, created_at`,
       [orgId, name.trim()]
@@ -91,11 +91,10 @@ router.delete("/orgs/:orgId", async (req, res) => {
 });
 
 /** SITES **/
-router.post("/orgs/:orgId/sites", async (req, res) => {
+router.post("/orgs/:orgId/sites", validate(siteSchema), async (req, res) => {
   try {
     const { orgId } = req.params;
-    const { name, location } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, location } = req.body;
 
     const r = await db.query(
       `INSERT INTO sites (organization_id, name, location)
@@ -126,11 +125,10 @@ router.get("/orgs/:orgId/sites", async (req, res) => {
   }
 });
 
-router.put("/sites/:siteId", async (req, res) => {
+router.put("/sites/:siteId", validate(siteSchema), async (req, res) => {
   try {
     const { siteId } = req.params;
-    const { name, location } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, location } = req.body;
     const r = await db.query(
       `UPDATE sites SET name = $2, location = $3 WHERE id = $1
        RETURNING id, organization_id, name, location, created_at`,
@@ -224,11 +222,10 @@ router.get("/sites/:siteId/tree", async (req, res) => {
 });
 
 /** TERRAINS **/
-router.post("/sites/:siteId/terrains", async (req, res) => {
+router.post("/sites/:siteId/terrains", validate(terrainSchema), async (req, res) => {
   try {
     const { siteId } = req.params;
-    const { name, gateway_model, gateway_id } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, gateway_model, gateway_id } = req.body;
 
     const r = await db.query(
       `INSERT INTO terrains (site_id, name, gateway_model, gateway_id)
@@ -259,11 +256,10 @@ router.get("/sites/:siteId/terrains", async (req, res) => {
   }
 });
 
-router.put("/terrains/:terrainId", async (req, res) => {
+router.put("/terrains/:terrainId", validate(terrainSchema), async (req, res) => {
   try {
     const { terrainId } = req.params;
-    const { name, gateway_model, gateway_id } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, gateway_model, gateway_id } = req.body;
     const r = await db.query(
       `UPDATE terrains SET name = $2, gateway_model = COALESCE($3, gateway_model), gateway_id = COALESCE($4, gateway_id)
        WHERE id = $1 RETURNING id, site_id, name, gateway_model, gateway_id, created_at`,
@@ -294,11 +290,10 @@ router.delete("/terrains/:terrainId", async (req, res) => {
 });
 
 /** ZONES **/
-router.post("/terrains/:terrainId/zones", async (req, res) => {
+router.post("/terrains/:terrainId/zones", validate(zoneSchema), async (req, res) => {
   try {
     const { terrainId } = req.params;
-    const { name, description } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, description } = req.body;
 
     const r = await db.query(
       `INSERT INTO zones (terrain_id, name, description)
@@ -329,11 +324,10 @@ router.get("/terrains/:terrainId/zones", async (req, res) => {
   }
 });
 
-router.put("/zones/:zoneId", async (req, res) => {
+router.put("/zones/:zoneId", validate(zoneSchema), async (req, res) => {
   try {
     const { zoneId } = req.params;
-    const { name, description } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, description } = req.body;
     const r = await db.query(
       `UPDATE zones SET name = $2, description = $3 WHERE id = $1
        RETURNING id, terrain_id, name, description, created_at`,
@@ -356,7 +350,7 @@ router.delete("/zones/:zoneId", async (req, res) => {
 });
 
 /** MEASUREMENT POINTS **/
-router.post("/terrains/:terrainId/points", async (req, res) => {
+router.post("/terrains/:terrainId/points", validate(createPointSchema), async (req, res) => {
   try {
     const { terrainId } = req.params;
     const {
@@ -369,10 +363,7 @@ router.post("/terrains/:terrainId/points", async (req, res) => {
       ct_ratio,
       meta,
       status,
-    } = req.body ?? {};
-
-    if (!name || typeof name !== "string") return bad(res, "name is required");
-    if (!device || typeof device !== "string") return bad(res, "device is required");
+    } = req.body;
 
     const r = await db.query(
       `INSERT INTO measurement_points
@@ -415,11 +406,10 @@ router.get("/terrains/:terrainId/points", async (req, res) => {
   }
 });
 
-router.put("/points/:pointId", async (req, res) => {
+router.put("/points/:pointId", validate(updatePointSchema), async (req, res) => {
   try {
     const { pointId } = req.params;
-    const { name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, zone_id } = req.body ?? {};
-    if (!name || typeof name !== "string") return bad(res, "name is required");
+    const { name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, zone_id } = req.body;
     const r = await db.query(
       `UPDATE measurement_points
        SET name = $2, device = COALESCE($3, device), measure_category = COALESCE($4, measure_category),
@@ -472,18 +462,13 @@ router.delete("/points/:pointId", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.patch("/points/:pointId/assign-zone", async (req, res) => {
+router.patch("/points/:pointId/assign-zone", validate(assignZoneSchema), async (req, res) => {
   try {
     const { pointId } = req.params;
-    const { zone_id } = req.body ?? {};
+    const { zone_id } = req.body;
 
     // Autoriser null pour "désaffecter"
     const wantsUnassign = zone_id === null;
-
-    // Si zone_id est undefined => erreur (client n'a rien envoyé)
-    if (zone_id === undefined) {
-      return res.status(400).json({ ok: false, error: "zone_id is required (can be null to unassign)" });
-    }
 
     // 1) Récupérer le point + son terrain
     const p = await db.query(

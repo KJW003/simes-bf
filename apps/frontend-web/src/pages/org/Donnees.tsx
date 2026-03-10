@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -12,8 +13,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Database, Download, Zap, TrendingUp, BarChart3,
-  Activity, Loader2, AlertCircle, Leaf, GitCompareArrows, Table, CalendarDays,
+  Database, Zap, TrendingUp, BarChart3,
+  Activity, Loader2, AlertCircle, Leaf, GitCompareArrows, Table, CalendarDays, ExternalLink,
 } from 'lucide-react';
 import {
   LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -27,24 +28,49 @@ const RANGES = [
 ] as const;
 
 const METRICS = [
-  { key: 'active_power_total', label: 'Puissance active (kW)', unit: 'kW' },
+  { key: 'active_power_total', label: 'Puissance active totale (kW)', unit: 'kW' },
+  { key: 'active_power_a', label: 'Puissance active A (kW)', unit: 'kW' },
+  { key: 'active_power_b', label: 'Puissance active B (kW)', unit: 'kW' },
+  { key: 'active_power_c', label: 'Puissance active C (kW)', unit: 'kW' },
   { key: 'reactive_power_total', label: 'Puissance réactive (kVar)', unit: 'kVar' },
   { key: 'apparent_power_total', label: 'Puissance apparente (kVA)', unit: 'kVA' },
   { key: 'voltage_a', label: 'Tension phase A (V)', unit: 'V' },
   { key: 'voltage_b', label: 'Tension phase B (V)', unit: 'V' },
   { key: 'voltage_c', label: 'Tension phase C (V)', unit: 'V' },
+  { key: 'voltage_ab', label: 'Tension ligne AB (V)', unit: 'V' },
+  { key: 'voltage_bc', label: 'Tension ligne BC (V)', unit: 'V' },
+  { key: 'voltage_ca', label: 'Tension ligne CA (V)', unit: 'V' },
   { key: 'current_a', label: 'Courant phase A (A)', unit: 'A' },
   { key: 'current_b', label: 'Courant phase B (A)', unit: 'A' },
   { key: 'current_c', label: 'Courant phase C (A)', unit: 'A' },
-  { key: 'power_factor_total', label: 'Facteur de puissance', unit: '' },
+  { key: 'current_sum', label: 'Courant somme (A)', unit: 'A' },
+  { key: 'power_factor_total', label: 'Facteur de puissance total', unit: '' },
+  { key: 'power_factor_a', label: 'Facteur de puissance A', unit: '' },
+  { key: 'power_factor_b', label: 'Facteur de puissance B', unit: '' },
+  { key: 'power_factor_c', label: 'Facteur de puissance C', unit: '' },
   { key: 'energy_import', label: 'Énergie importée (kWh)', unit: 'kWh' },
+  { key: 'energy_export', label: 'Énergie exportée (kWh)', unit: 'kWh' },
+  { key: 'energy_total', label: 'Énergie totale (kWh)', unit: 'kWh' },
+  { key: 'frequency', label: 'Fréquence (Hz)', unit: 'Hz' },
   { key: 'thdi_a', label: 'THD courant A (%)', unit: '%' },
+  { key: 'thdi_b', label: 'THD courant B (%)', unit: '%' },
+  { key: 'thdi_c', label: 'THD courant C (%)', unit: '%' },
+  { key: 'thdu_a', label: 'THD tension A (%)', unit: '%' },
+  { key: 'thdu_b', label: 'THD tension B (%)', unit: '%' },
+  { key: 'thdu_c', label: 'THD tension C (%)', unit: '%' },
+  { key: 'voltage_unbalance', label: 'Déséquilibre tension (%)', unit: '%' },
+  { key: 'current_unbalance', label: 'Déséquilibre courant (%)', unit: '%' },
+  { key: 'temp_a', label: 'Température A (°C)', unit: '°C' },
+  { key: 'temp_b', label: 'Température B (°C)', unit: '°C' },
+  { key: 'temp_c', label: 'Température C (°C)', unit: '°C' },
+  { key: 'temp_n', label: 'Température N (°C)', unit: '°C' },
 ] as const;
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
 
 export default function History() {
   const { selectedTerrainId } = useAppContext();
+  const navigate = useNavigate();
   const prefs = usePreferences();
   const [range, setRange] = useState<string>('1D');
   const [metric, setMetric] = useState<string>('active_power_total');
@@ -63,6 +89,7 @@ export default function History() {
 
   const rangeObj = RANGES.find(r => r.key === range) ?? RANGES[0];
   const metricObj = METRICS.find(m => m.key === metric) ?? METRICS[0];
+  // Stabilize 'now' per range change — only recalculate on range switch
   const now = useMemo(() => new Date(), [range]); // eslint-disable-line react-hooks/exhaustive-deps
   const from = useMemo(() => new Date(now.getTime() - rangeObj.hours * 3600_000).toISOString(), [now, rangeObj]);
 
@@ -218,26 +245,6 @@ export default function History() {
 
   const co2 = useMemo(() => energyDelta * prefs.co2Factor, [energyDelta, prefs.co2Factor]);
 
-  // ─── CSV export (multi-metric)
-  const exportCsv = useCallback(() => {
-    if (!readings.length) return;
-    const columns = ['time', 'point_id', 'active_power_total', 'reactive_power_total', 'apparent_power_total',
-      'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c',
-      'power_factor_total', 'energy_import', 'thdi_a'];
-    const header = columns.join(',') + '\n';
-    const rows = [...readings]
-      .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
-      .map(r => columns.map(c => r[c] ?? '').join(','))
-      .join('\n');
-    const blob = new Blob([header + rows], { type: 'text/csv' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `simes_donnees_${range}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [readings, range]);
-
   if (!selectedTerrainId) {
     return (
       <div className="space-y-6">
@@ -268,8 +275,8 @@ export default function History() {
             >
               <Table className="w-4 h-4 mr-1" />Tableau
             </Button>
-            <Button variant="outline" size="sm" onClick={exportCsv} disabled={!readings.length}>
-              <Download className="w-4 h-4 mr-2" />CSV
+            <Button variant="outline" size="sm" onClick={() => navigate('/exports')}>
+              <ExternalLink className="w-4 h-4 mr-2" />Exports
             </Button>
           </div>
         }
@@ -497,12 +504,33 @@ export default function History() {
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ia (A)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ib (A)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Ic (A)</th>
-                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">P (kW)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">I∑ (A)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">P tot (kW)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Pa (kW)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Pb (kW)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Pc (kW)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Q (kvar)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">S (kVA)</th>
-                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF</th>
-                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">E imp.</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF tot</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF a</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF b</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">PF c</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">E imp (kWh)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">E exp (kWh)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">E tot (kWh)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Freq (Hz)</th>
                           <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDi A</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDi B</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDi C</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDu A</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDu B</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">THDu C</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Déséq. U</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">Déséq. I</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">T°A (°C)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">T°B (°C)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">T°C (°C)</th>
+                          <th className="pb-2 px-2 font-medium text-right whitespace-nowrap">T°N (°C)</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -526,12 +554,33 @@ export default function History() {
                                 <td className="py-1 px-2 text-right mono">{fmt(r.current_a)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.current_b)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.current_c)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.current_sum)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.active_power_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.active_power_a)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.active_power_b)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.active_power_c)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.reactive_power_total)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.apparent_power_total)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.power_factor_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.power_factor_a)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.power_factor_b)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.power_factor_c)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.energy_import)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.energy_export)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.energy_total)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.frequency)}</td>
                                 <td className="py-1 px-2 text-right mono">{fmt(r.thdi_a)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.thdi_b)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.thdi_c)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.thdu_a)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.thdu_b)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.thdu_c)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.voltage_unbalance)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.current_unbalance)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.temp_a, 1)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.temp_b, 1)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.temp_c, 1)}</td>
+                                <td className="py-1 px-2 text-right mono">{fmt(r.temp_n, 1)}</td>
                               </tr>
                             );
                           })}

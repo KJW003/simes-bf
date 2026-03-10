@@ -1,43 +1,12 @@
 const { Worker } = require("bullmq");
 const { connection, setRunStatus, insertJobResult, telemetryDb, db } = require("./shared");
 const { auditLog } = require("./audit-log");
+const log = require("./config/logger");
 
 if (!connection) {
-  console.warn("[telemetry-worker] Skipped – no Redis connection.");
+  log.warn("telemetry-worker skipped – no Redis connection");
   return;
 }
-
-// ─── Logging helper ───────────────────────────────────────────
-const fs = require("fs");
-const path = require("path");
-const LOG_DIR = "/app/logs";
-const LOG_FILE = path.join(LOG_DIR, "cleanup.log");
-
-function ensureLogDir() {
-  try {
-    if (!fs.existsSync(LOG_DIR)) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-    }
-  } catch (e) {
-    // Log dir creation failed, will just use console
-  }
-}
-
-function log(prefix, msg) {
-  const ts = new Date().toISOString();
-  const line = `[${ts}] ${prefix}: ${msg}`;
-  console.log(line);
-  try {
-    if (fs.existsSync(LOG_DIR) || fs.existsSync(path.dirname(LOG_FILE))) {
-      fs.appendFileSync(LOG_FILE, line + "\n", { flag: "a" });
-    }
-  } catch (e) {
-    // File logging failed, console is already logged
-  }
-}
-
-// Call once on startup
-ensureLogDir();
 
 
 function isIso(s) {
@@ -47,7 +16,7 @@ function isIso(s) {
 async function runAggregate(payload = {}) {
   if (!telemetryDb) {
     const msg = "telemetryDb not available - aggregation cannot run";
-    log("runAggregate", `✗ ${msg}`);
+    log.info(`✗ ${msg}`);
     throw new Error(msg);
   }
 
@@ -119,7 +88,7 @@ async function runAggregate(payload = {}) {
   `;
 
   const r15 = await telemetryDb.query(sql15m, params);
-  log("runAggregate", `15m aggregation: ${r15.rowCount} rows affected`);
+  log.info(`15m aggregation: ${r15.rowCount} rows affected`);
   // r15.rowCount = nombre de lignes insert/update
 
   // 2) daily aggregation
@@ -154,7 +123,7 @@ async function runAggregate(payload = {}) {
   `;
 
   const rDay = await telemetryDb.query(sqlDaily, params);
-  log("runAggregate", `Daily aggregation: ${rDay.rowCount} rows affected`);
+  log.info(`Daily aggregation: ${rDay.rowCount} rows affected`);
 
   const result = {
     window: { from: from.toISOString(), to: to.toISOString() },
@@ -172,7 +141,7 @@ async function runProcessHistoricalMessages(payload = {}) {
   }
 
   try {
-    log("process-historical", `Processing messages for device ${device_key} terrain ${terrain_id}`);
+    log.info(`Processing messages for device ${device_key} terrain ${terrain_id}`);
 
     // Find all incoming_messages for this device
     const msgs = await db.query(
@@ -186,7 +155,7 @@ async function runProcessHistoricalMessages(payload = {}) {
     );
 
     if (!msgs.rows.length) {
-      log("process-historical", `No messages found for device ${device_key}`);
+      log.info(`No messages found for device ${device_key}`);
       return {
         ok: true,
         message: "No messages to process",
@@ -195,7 +164,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       };
     }
 
-    log("process-historical", `Found ${msgs.rows.length} messages to process`);
+    log.info(`Found ${msgs.rows.length} messages to process`);
     const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     const results = [];
     let processed = 0;
@@ -232,7 +201,7 @@ async function runProcessHistoricalMessages(payload = {}) {
 
         const data = await resp.json().catch(() => ({}));
         if (!resp.ok) {
-          log("process-historical", `✗ Ingest failed for msg ${msg.id}: ${data.error || resp.status}`);
+          log.info(`✗ Ingest failed for msg ${msg.id}: ${data.error || resp.status}`);
           failed++;
           results.push({ message_id: msg.id, ok: false, error: data.error || "ingest failed" });
           continue;
@@ -244,14 +213,14 @@ async function runProcessHistoricalMessages(payload = {}) {
         processed++;
         results.push({ message_id: msg.id, ok: true, ingested: true });
       } catch (e) {
-        log("process-historical", `✗ Error for msg ${msg.id}: ${e.message}`);
+        log.info(`✗ Error for msg ${msg.id}: ${e.message}`);
         failed++;
         results.push({ message_id: msg.id, ok: false, error: e.message });
       }
     }
 
     const summary = { total: msgs.rows.length, processed, failed };
-    log("process-historical", `Done: ${JSON.stringify(summary)}`);
+    log.info(`Done: ${JSON.stringify(summary)}`);
 
     return {
       ok: true,
@@ -260,7 +229,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       results: results.slice(0, 20),
     };
   } catch (e) {
-    log("process-historical", `✗ Fatal error: ${e.message}`);
+    log.info(`✗ Fatal error: ${e.message}`);
     return { ok: false, error: e.message };
   }
 }
@@ -275,7 +244,7 @@ async function runCheckStaleDevices(payload = {}) {
   if (!db) throw new Error("Core DB not available");
 
   try {
-    log("stale-check", `Starting stale device check (warn=${WARN_MINUTES}m, crit=${CRITICAL_MINUTES}m)`);
+    log.info(`Starting stale device check (warn=${WARN_MINUTES}m, crit=${CRITICAL_MINUTES}m)`);
 
     // 1) Find stale devices
     const staleDevices = await db.query(
@@ -290,7 +259,7 @@ async function runCheckStaleDevices(payload = {}) {
          AND dr.last_seen_at < NOW() - INTERVAL '${WARN_MINUTES} minutes'`
     );
 
-    log("stale-check", `Found ${staleDevices.rows.length} stale device(s)`);
+    log.info(`Found ${staleDevices.rows.length} stale device(s)`);
 
     let created = 0;
     let escalated = 0;
@@ -322,7 +291,7 @@ async function runCheckStaleDevices(payload = {}) {
             [`Appareil "${deviceLabel}" silencieux depuis ${minutesSilent} minutes (escaladé en critique)`, inc.id]
           );
           escalated++;
-          log("stale-check", `↑ Escalated incident ${inc.id} for ${dev.device_key} (${minutesSilent}m)`);
+          log.info(`↑ Escalated incident ${inc.id} for ${dev.device_key} (${minutesSilent}m)`);
         }
         continue; // Already tracked
       }
@@ -346,7 +315,7 @@ async function runCheckStaleDevices(payload = {}) {
         ]
       );
       created++;
-      log("stale-check", `+ Created ${severity} incident for ${dev.device_key} (${minutesSilent}m)`);
+      log.info('Created ${severity} incident for ${dev.device_key} (${minutesSilent}m)');
       auditLog(severity === 'critical' ? 'error' : 'warn', 'worker',
         `Appareil silencieux détecté: ${deviceLabel} (${minutesSilent}min)`,
         { device_key: dev.device_key, minutes_silent: minutesSilent, severity });
@@ -367,17 +336,17 @@ async function runCheckStaleDevices(payload = {}) {
 
     resolved = autoResolved.rowCount;
     for (const r of autoResolved.rows) {
-      log("stale-check", `✓ Auto-resolved incident ${r.id} for ${r.device_key}`);
+      log.info(`✓ Auto-resolved incident ${r.id} for ${r.device_key}`);
     }
 
     const summary = { stale_found: staleDevices.rows.length, created, escalated, resolved };
-    log("stale-check", `Done: ${JSON.stringify(summary)}`);
+    log.info(`Done: ${JSON.stringify(summary)}`);
     if (created > 0 || escalated > 0 || resolved > 0) {
       auditLog('info', 'worker', `Stale check: ${created} créé(s), ${escalated} escaladé(s), ${resolved} résolu(s)`, summary);
     }
     return { ok: true, summary };
   } catch (e) {
-    log("stale-check", `✗ Fatal error: ${e.message}`);
+    log.info(`✗ Fatal error: ${e.message}`);
     auditLog('error', 'worker', `Stale device check failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
@@ -387,7 +356,7 @@ async function runCheckStaleDevices(payload = {}) {
 // and re-send them to the ingestion service to create actual acrel_readings.
 async function runCleanupUnmappedMessages(payload = {}) {
   try {
-    log("cleanup", "Starting cleanup of mapped messages...");
+    log.info('Starting cleanup of mapped messages...');
 
     // Find mapped messages + join device_registry to get terrain_id and point_id
     // NOTE: device_registry has point_id directly (no separate point_registry table)
@@ -404,11 +373,11 @@ async function runCleanupUnmappedMessages(payload = {}) {
     );
 
     if (!messages.rows.length) {
-      log("cleanup", "No mapped messages found - nothing to do");
+      log.info('No mapped messages found - nothing to do');
       return { ok: true, message: "No mapped messages to process", processed: 0 };
     }
 
-    log("cleanup", `Found ${messages.rows.length} mapped messages to process`);
+    log.info(`Found ${messages.rows.length} mapped messages to process`);
 
     const ingestServiceUrl = process.env.INGESTION_SERVICE_URL || "http://ingestion-service:3001";
     let processed = 0;
@@ -421,7 +390,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
         const terrainId = msg.terrain_id || msg.mapped_terrain_id;
 
         if (!terrainId) {
-          log("cleanup", `Skipping msg ${msg.id}: no terrain_id`);
+          log.info(`Skipping msg ${msg.id}: no terrain_id`);
           failed++;
           errors.push({ id: msg.id, error: "no terrain_id" });
           continue;
@@ -447,7 +416,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
           }],
         };
 
-        log("cleanup", `Processing msg ${msg.id} (device: ${msg.device_key}, time: ${msgTime})`);
+        log.info(`Processing msg ${msg.id} (device: ${msg.device_key}, time: ${msgTime})`);
 
         const resp = await fetch(`${ingestServiceUrl}/acrel`, {
           method: "POST",
@@ -458,7 +427,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
         const data = await resp.json().catch(() => ({}));
 
         if (!resp.ok) {
-          log("cleanup", `✗ Ingestion failed for msg ${msg.id}: ${data.error || resp.status}`);
+          log.info(`✗ Ingestion failed for msg ${msg.id}: ${data.error || resp.status}`);
           failed++;
           errors.push({ id: msg.id, error: data.error || `HTTP ${resp.status}` });
           continue;
@@ -467,16 +436,16 @@ async function runCleanupUnmappedMessages(payload = {}) {
         // Success: delete message from incoming_messages (no more "mapped" lingering)
         await db.query(`DELETE FROM incoming_messages WHERE id = $1`, [msg.id]);
         processed++;
-        log("cleanup", `✓ msg ${msg.id} ingested and removed`);
+        log.info(`✓ msg ${msg.id} ingested and removed`);
       } catch (e) {
-        log("cleanup", `✗ Error processing msg ${msg.id}: ${e.message}`);
+        log.info(`✗ Error processing msg ${msg.id}: ${e.message}`);
         failed++;
         errors.push({ id: msg.id, error: e.message });
       }
     }
 
     const summary = { total: messages.rows.length, processed, failed };
-    log("cleanup", `Done: ${JSON.stringify(summary)}`);
+    log.info(`Done: ${JSON.stringify(summary)}`);
     if (processed > 0 || failed > 0) {
       auditLog('info', 'worker', `Cleanup: ${processed} traité(s), ${failed} échec(s) sur ${messages.rows.length}`, summary);
     }
@@ -487,7 +456,7 @@ async function runCleanupUnmappedMessages(payload = {}) {
       errors: errors.length > 0 ? errors.slice(0, 20) : undefined,
     };
   } catch (e) {
-    log("cleanup", `✗ Fatal error: ${e.message}`);
+    log.info(`✗ Fatal error: ${e.message}`);
     auditLog('error', 'worker', `Cleanup failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
@@ -502,7 +471,7 @@ async function runCheckAggregationGaps(payload = {}) {
   const LOOKBACK_HOURS = payload.lookback_hours || 6;
 
   try {
-    log("agg-gaps", `Checking aggregation gaps (lookback=${LOOKBACK_HOURS}h)`);
+    log.info(`Checking aggregation gaps (lookback=${LOOKBACK_HOURS}h)`);
 
     // Find points that have readings in the last N hours but missing 15m agg buckets
     const gaps = await telemetryDb.query(`
@@ -529,11 +498,11 @@ async function runCheckAggregationGaps(payload = {}) {
     `);
 
     if (gaps.rows.length === 0) {
-      log("agg-gaps", "No aggregation gaps found");
+      log.info('No aggregation gaps found');
       return { ok: true, summary: { gaps_found: 0, repaired: 0 } };
     }
 
-    log("agg-gaps", `Found ${gaps.rows.length} missing aggregation bucket(s)`);
+    log.info(`Found ${gaps.rows.length} missing aggregation bucket(s)`);
 
     // Auto-repair: re-run aggregation for each gap
     let repaired = 0;
@@ -555,14 +524,14 @@ async function runCheckAggregationGaps(payload = {}) {
           point_id: pointId,
         });
         repaired += buckets.length;
-        log("agg-gaps", `✓ Repaired ${buckets.length} bucket(s) for point ${pointId}`);
+        log.info(`✓ Repaired ${buckets.length} bucket(s) for point ${pointId}`);
       } catch (e) {
-        log("agg-gaps", `✗ Repair failed for point ${pointId}: ${e.message}`);
+        log.info(`✗ Repair failed for point ${pointId}: ${e.message}`);
       }
     }
 
     const summary = { gaps_found: gaps.rows.length, repaired, points_affected: Object.keys(pointBuckets).length };
-    log("agg-gaps", `Done: ${JSON.stringify(summary)}`);
+    log.info(`Done: ${JSON.stringify(summary)}`);
 
     if (gaps.rows.length > 0) {
       auditLog(repaired < gaps.rows.length ? 'warn' : 'info', 'worker',
@@ -571,7 +540,7 @@ async function runCheckAggregationGaps(payload = {}) {
 
     return { ok: true, summary };
   } catch (e) {
-    log("agg-gaps", `✗ Fatal error: ${e.message}`);
+    log.info(`✗ Fatal error: ${e.message}`);
     auditLog('error', 'worker', `Aggregation gap check failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
@@ -589,7 +558,7 @@ async function runCheckQueueHealth(payload = {}) {
   const STUCK_THRESHOLD_MIN = payload.stuck_threshold_min || 15;
 
   try {
-    log("queue-health", "Checking BullMQ queue health");
+    log.info('Checking BullMQ queue health');
 
     const queues = ["telemetry", "ai", "reports"];
     const issues = [];
@@ -626,7 +595,7 @@ async function runCheckQueueHealth(payload = {}) {
         });
       }
 
-      log("queue-health", `Queue ${q}: waiting=${waiting} active=${active} failed=${failed}`);
+      log.info(`Queue ${q}: waiting=${waiting} active=${active} failed=${failed}`);
     }
 
     // Create/update incidents for issues
@@ -654,7 +623,7 @@ async function runCheckQueueHealth(payload = {}) {
           ]
         );
         created++;
-        log("queue-health", `+ Created ${issue.severity} incident for ${issue.queue}/${issue.issue}`);
+        log.info('Created ${issue.severity} incident for ${issue.queue}/${issue.issue}');
       }
     }
 
@@ -670,7 +639,7 @@ async function runCheckQueueHealth(payload = {}) {
     );
 
     const summary = { issues_found: issues.length, created, resolved: autoResolved.rowCount };
-    log("queue-health", `Done: ${JSON.stringify(summary)}`);
+    log.info(`Done: ${JSON.stringify(summary)}`);
 
     if (issues.length > 0) {
       auditLog('warn', 'worker', `Queue health: ${issues.length} problème(s) détecté(s)`, summary);
@@ -678,7 +647,7 @@ async function runCheckQueueHealth(payload = {}) {
 
     return { ok: true, summary };
   } catch (e) {
-    log("queue-health", `✗ Fatal error: ${e.message}`);
+    log.info(`✗ Fatal error: ${e.message}`);
     auditLog('error', 'worker', `Queue health check failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
@@ -690,7 +659,7 @@ async function runPipelineHeartbeat(payload = {}) {
   if (!db) throw new Error("Core DB not available");
 
   try {
-    log("heartbeat", "Running pipeline heartbeat check");
+    log.info('Running pipeline heartbeat check');
 
     const checks = {};
 
@@ -767,7 +736,7 @@ async function runPipelineHeartbeat(payload = {}) {
     const hasWarning = Object.values(checks).some(c => c.status === "warning");
     const overall = hasDown ? "degraded" : hasWarning ? "warning" : "healthy";
 
-    log("heartbeat", `Pipeline status: ${overall}`);
+    log.info(`Pipeline status: ${overall}`);
     auditLog('info', 'system', `Pipeline heartbeat: ${overall}`, checks);
 
     // Create incident if pipeline is degraded
@@ -805,7 +774,7 @@ async function runPipelineHeartbeat(payload = {}) {
 
     return { ok: true, overall, checks };
   } catch (e) {
-    log("heartbeat", `✗ Fatal error: ${e.message}`);
+    log.info(`✗ Fatal error: ${e.message}`);
     auditLog('error', 'system', `Pipeline heartbeat failed: ${e.message}`, { error: e.message });
     return { ok: false, error: e.message };
   }
@@ -823,12 +792,12 @@ new Worker(
       const { pointId, terrainId, siteId, orgId, time } = job.data || {};
       
       if (!pointId) {
-        log("acrel.ingested", `Skipped: no pointId in job data`);
+        log.info(`Skipped: no pointId in job data`);
         return { ok: true, skipped: "no pointId" };
       }
 
       try {
-        log("acrel.ingested", `Starting aggregation for point ${pointId}, time ${time}`);
+        log.info(`Starting aggregation for point ${pointId}, time ${time}`);
         
         // Aggregate the 15-minute bucket that contains this reading
         const readingTime = new Date(time || Date.now());
@@ -844,10 +813,10 @@ new Worker(
           site_id: siteId,
         });
 
-        log("acrel.ingested", `✓ Aggregation done for point ${pointId}: ${JSON.stringify(summary.upserted)}`);
+        log.info(`✓ Aggregation done for point ${pointId}: ${JSON.stringify(summary.upserted)}`);
         return { ok: true, summary };
       } catch (e) {
-        log("acrel.ingested", `✗ Aggregation failed for point ${pointId}: ${e.message}`);
+        log.info(`✗ Aggregation failed for point ${pointId}: ${e.message}`);
         auditLog('error', 'worker', `Aggregation failed for point ${pointId}: ${e.message}`, { pointId, error: e.message });
         // THROW to tell BullMQ this job failed
         throw e;
@@ -994,4 +963,4 @@ new Worker(
   { connection }
 );
 
-console.log("worker listening: telemetry");
+log.info("worker listening: telemetry");

@@ -21,7 +21,7 @@ let aiQueue;
 let reportsQueue;
 
 if (redisDisabled || !hasRedisUrl) {
-  console.warn(
+  log.warn(
     "[jobs] Redis disabled, using no-op queues. " +
       "Set DISABLE_REDIS=false and REDIS_URL to enable BullMQ."
   );

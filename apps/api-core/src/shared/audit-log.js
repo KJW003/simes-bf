@@ -2,6 +2,7 @@
 // Centralized audit logging — writes to audit_logs table
 // ============================================================
 const { corePool } = require("../config/db");
+const log = require("../config/logger");
 
 /**
  * Write an audit log entry to the database.
@@ -21,7 +22,7 @@ async function auditLog(level, source, message, metadata = {}, userId = null) {
     );
   } catch (e) {
     // Never let logging break the caller
-    console.error("[audit-log] insert failed:", e.message);
+    log.error({ err: e.message }, 'audit-log insert failed');
   }
 }
 

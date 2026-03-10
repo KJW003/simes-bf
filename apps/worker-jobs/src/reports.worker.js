@@ -1,8 +1,9 @@
 const { Worker } = require("bullmq");
 const { connection, setRunStatus, insertJobResult } = require("./shared");
+const log = require("./config/logger");
 
 if (!connection) {
-  console.warn("[reports-worker] Skipped – no Redis connection.");
+  log.warn("reports-worker skipped – no Redis connection");
   return;
 }
 
@@ -18,9 +19,9 @@ new Worker(
     
    try {
   await insertJobResult(runId, job.name, result);
-  console.log("✅ job_results inserted", { runId, type: job.name });
+  log.info({ runId, type: job.name }, 'job_results inserted');
 } catch (e) {
-  console.error("❌ job_results insert failed", { runId, type: job.name, err: e.message });
+  log.error({ runId, type: job.name, err: e.message }, 'job_results insert failed');
 } 
     await setRunStatus(runId, "success", {
       finished_at: new Date().toISOString(),
@@ -31,4 +32,4 @@ new Worker(
   { connection }
 );
 
-console.log("worker listening: reports");
+log.info("worker listening: reports");

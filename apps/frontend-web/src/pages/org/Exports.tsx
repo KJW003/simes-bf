@@ -7,13 +7,13 @@ import { Button } from '@/components/ui/button';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { FileText, Download, Loader2, CheckCircle, FileSpreadsheet, BarChart3, Zap } from 'lucide-react';
+import { FileText, Download, Loader2, CheckCircle, FileSpreadsheet, BarChart3, Zap, Image } from 'lucide-react';
 import { useAppContext } from '@/contexts/AppContext';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import api from '@/lib/api';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 
-export default function Reports() {
+export default function Exports() {
   const { selectedTerrainId } = useAppContext();
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
@@ -85,9 +85,17 @@ export default function Reports() {
   // Terrain-level CSV export (all readings)
   const exportTerrainCSV = useCallback(() => {
     if (!readings.length) return;
-    const columns = ['time', 'point_id', 'active_power_total', 'reactive_power_total', 'apparent_power_total',
-      'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c',
-      'power_factor_total', 'energy_import', 'energy_export', 'thdi_a', 'thdi_b', 'thdi_c'];
+    const columns = ['time', 'point_id',
+      'active_power_total', 'active_power_a', 'active_power_b', 'active_power_c',
+      'reactive_power_total', 'apparent_power_total',
+      'voltage_a', 'voltage_b', 'voltage_c', 'voltage_ab', 'voltage_bc', 'voltage_ca',
+      'current_a', 'current_b', 'current_c', 'current_sum',
+      'power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c',
+      'energy_import', 'energy_export', 'energy_total',
+      'frequency',
+      'thdi_a', 'thdi_b', 'thdi_c', 'thdu_a', 'thdu_b', 'thdu_c',
+      'voltage_unbalance', 'current_unbalance',
+      'temp_a', 'temp_b', 'temp_c', 'temp_n'];
     const header = columns.join(',') + '\n';
     const rows = [...readings]
       .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
@@ -130,8 +138,8 @@ export default function Reports() {
   if (!selectedTerrainId) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Rapports" description="Rapports énergétiques périodiques" />
-        <Card><CardContent className="py-12 text-center text-muted-foreground">Veuillez sélectionner un terrain pour accéder aux rapports.</CardContent></Card>
+        <PageHeader title="Exports" description="Exportez vos données énergétiques" />
+        <Card><CardContent className="py-12 text-center text-muted-foreground">Veuillez sélectionner un terrain pour accéder aux exports.</CardContent></Card>
       </div>
     );
   }
@@ -139,7 +147,7 @@ export default function Reports() {
   return (
     <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Rapports"
+        title="Exports"
         description="Exportez les données énergétiques de vos points de mesure"
         actions={
           <div className="flex items-center gap-2">

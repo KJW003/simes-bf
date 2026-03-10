@@ -6,6 +6,7 @@ const { requireAuth } = require("../../shared/auth-middleware");
 const { telemetryQueue } = require("../../jobs/queues");
 const { auditLog } = require("../../shared/audit-log");
 const JobTypes = require("../../jobs/jobTypes");
+const log = require("../../config/logger");
 
 // 1) Inject a fake "MQTT" message (for tomorrow tests / UI dev)
 router.post("/admin/incoming/sandbox", requireAuth, async (req, res) => {
@@ -226,7 +227,7 @@ router.put("/admin/devices/:deviceKey/map", requireAuth, async (req, res) => {
         { attempts: 1 }
       );
     } catch (jobErr) {
-      console.warn("Failed to enqueue PROCESS_HISTORICAL_MESSAGES job:", jobErr);
+      log.warn({ err: jobErr.message }, 'Failed to enqueue PROCESS_HISTORICAL_MESSAGES job');
       // Don't fail the entire request if job enqueue fails
     }
 
@@ -556,7 +557,36 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
       });
     }
 
-    // 3) Create measurement_point + device_registry per device
+    // 3) Batch-load existing mappings to avoid N+1 queries
+    const deviceKeys = msgs.rows.map(r => r.device_key);
+    const existingMappings = await corePool.query(
+      `SELECT device_key, point_id FROM device_registry WHERE terrain_id = $1 AND device_key = ANY($2)`,
+      [terrainId, deviceKeys]
+    );
+    const mappedDevices = new Map(existingMappings.rows.map(r => [r.device_key, r.point_id]));
+
+    // Batch-load existing measurement points by modbus/eui
+    const modbusAddrs = msgs.rows.map(r => r.modbus_addr).filter(a => a !== null);
+    const devEuis = msgs.rows.map(r => r.dev_eui).filter(e => e !== null);
+
+    const existingPointsByModbus = new Map();
+    const existingPointsByEui = new Map();
+
+    if (modbusAddrs.length > 0) {
+      const mpByModbus = await corePool.query(
+        `SELECT id, modbus_addr FROM measurement_points WHERE terrain_id = $1 AND modbus_addr = ANY($2)`,
+        [terrainId, modbusAddrs]
+      );
+      mpByModbus.rows.forEach(r => existingPointsByModbus.set(r.modbus_addr, r.id));
+    }
+    if (devEuis.length > 0) {
+      const mpByEui = await corePool.query(
+        `SELECT id, lora_dev_eui FROM measurement_points WHERE terrain_id = $1 AND lora_dev_eui = ANY($2)`,
+        [terrainId, devEuis]
+      );
+      mpByEui.rows.forEach(r => existingPointsByEui.set(r.lora_dev_eui, r.id));
+    }
+
     const created = [];
     const skipped = [];
 
@@ -565,32 +595,16 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
       const modbusAddr = row.modbus_addr;
       const devEui = row.dev_eui;
 
-      // Already mapped?
-      const existing = await corePool.query(
-        `SELECT point_id FROM device_registry WHERE terrain_id = $1 AND device_key = $2`,
-        [terrainId, deviceKey]
-      );
-      if (existing.rows.length) {
-        skipped.push({ device_key: deviceKey, point_id: existing.rows[0].point_id, reason: "already mapped" });
+      // Already mapped? (from batch lookup)
+      if (mappedDevices.has(deviceKey)) {
+        skipped.push({ device_key: deviceKey, point_id: mappedDevices.get(deviceKey), reason: "already mapped" });
         continue;
       }
 
-      // Check if measurement_point exists by modbus / eui
+      // Check if measurement_point exists (from batch lookup)
       let pointId = null;
-      if (modbusAddr !== null) {
-        const mp = await corePool.query(
-          `SELECT id FROM measurement_points WHERE terrain_id = $1 AND modbus_addr = $2`,
-          [terrainId, modbusAddr]
-        );
-        pointId = mp.rows[0]?.id;
-      }
-      if (!pointId && devEui) {
-        const mp = await corePool.query(
-          `SELECT id FROM measurement_points WHERE terrain_id = $1 AND lora_dev_eui = $2`,
-          [terrainId, devEui]
-        );
-        pointId = mp.rows[0]?.id;
-      }
+      if (modbusAddr !== null) pointId = existingPointsByModbus.get(modbusAddr) || null;
+      if (!pointId && devEui) pointId = existingPointsByEui.get(devEui) || null;
 
       // Create measurement_point if needed
       if (!pointId) {
@@ -636,18 +650,28 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
       created.push({ device_key: deviceKey, point_id: pointId, modbus_addr: modbusAddr, dev_eui: devEui });
     }
 
-    // 4) Mark buffered messages as mapped ONLY for devices that were actually provisioned
+    // 4) Batch-update buffered messages for all provisioned devices
     let messagesUpdated = 0;
-    for (const c of created) {
+    if (created.length > 0) {
+      const createdKeys = created.map(c => c.device_key);
+      // Build a device_key → point_id mapping for the UPDATE
+      const devicePointMap = new Map(created.map(c => [c.device_key, c.point_id]));
+      
+      // Use a CTE to join device_key with its point_id for batch update
       const upd = await corePool.query(
         `UPDATE incoming_messages
-         SET status = 'mapped', mapped_terrain_id = $2, mapped_point_id = $3
-         WHERE gateway_id = $1
-           AND device_key = $4
-           AND status = 'unmapped'`,
-        [gatewayId, terrainId, c.point_id, c.device_key]
+         SET status = 'mapped',
+             mapped_terrain_id = $2,
+             mapped_point_id = dr.point_id
+         FROM device_registry dr
+         WHERE incoming_messages.gateway_id = $1
+           AND incoming_messages.device_key = ANY($3)
+           AND incoming_messages.status = 'unmapped'
+           AND dr.terrain_id = $2
+           AND dr.device_key = incoming_messages.device_key`,
+        [gatewayId, terrainId, createdKeys]
       );
-      messagesUpdated += (upd.rowCount ?? 0);
+      messagesUpdated = upd.rowCount ?? 0;
     }
 
     res.json({
@@ -1012,7 +1036,7 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
       dayParams
     );
 
-    console.log(`[PURGE] point=${pointName} (${pointId}) from=${from || 'ALL'} to=${to || 'ALL'} → readings=${rReadings.rowCount} agg15m=${r15m.rowCount} aggDaily=${rDay.rowCount}`);
+    log.info({ point: pointName, pointId, from: from || 'ALL', to: to || 'ALL', readings: rReadings.rowCount, agg15m: r15m.rowCount, aggDaily: rDay.rowCount }, 'purge completed');
     auditLog('warn', 'api', `Purge données: ${pointName} (${rReadings.rowCount} readings, ${r15m.rowCount} agg15m, ${rDay.rowCount} daily)`, {
       point_id: pointId, point_name: pointName,
       from: from || null, to: to || null,
@@ -1030,7 +1054,7 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
       range: { from: from || null, to: to || null },
     });
   } catch (e) {
-    console.error("[PURGE] Error:", e.message);
+    log.error({ err: e.message }, 'purge error');
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -1057,92 +1081,46 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
       return res.status(404).json({ ok: false, error: "No valid points found" });
     }
     const pointMap = Object.fromEntries(foundPoints.map(p => [p.id, p.name]));
+    const ids = foundPoints.map(p => p.id);
 
-    const results = [];
-    let totalReadings = 0;
-    let totalAgg15m = 0;
-    let totalAggDaily = 0;
+    // Bulk delete using ANY($1) instead of per-point loop
+    const readingsConds = ['point_id = ANY($1)'];
+    const readingsParams = [ids];
+    let pIdx = 2;
+    if (from) { readingsConds.push(`time >= $${pIdx}`); readingsParams.push(from); pIdx++; }
+    if (to) { readingsConds.push(`time <= $${pIdx}`); readingsParams.push(to); pIdx++; }
+    const readingsWhere = readingsConds.join(' AND ');
 
-    // Purge each point
-    for (const pointId of foundPoints.map(p => p.id)) {
-      const conditions = ["point_id = $1"];
-      const params = [pointId];
-      let paramIdx = 2;
+    const rReadings = await telemetryPool.query(
+      `DELETE FROM acrel_readings WHERE ${readingsWhere}`, readingsParams
+    );
+    const r15m = await telemetryPool.query(
+      `DELETE FROM acrel_agg_15m WHERE ${readingsConds.map(c => c.replace(/\btime\b/g, 'bucket_start')).join(' AND ')}`, readingsParams
+    );
 
-      if (from) {
-        conditions.push(`time >= $${paramIdx}`);
-        params.push(from);
-        paramIdx++;
-      }
-      if (to) {
-        conditions.push(`time <= $${paramIdx}`);
-        params.push(to);
-        paramIdx++;
-      }
+    const dayConds = ['point_id = ANY($1)'];
+    const dayParams = [ids];
+    let dIdx = 2;
+    if (from) { dayConds.push(`day >= ($${dIdx})::date`); dayParams.push(from); dIdx++; }
+    if (to) { dayConds.push(`day <= ($${dIdx})::date`); dayParams.push(to); dIdx++; }
+    const rDay = await telemetryPool.query(
+      `DELETE FROM acrel_agg_daily WHERE ${dayConds.join(' AND ')}`, dayParams
+    );
 
-      const where = conditions.join(" AND ");
+    const totalReadings = rReadings.rowCount;
+    const totalAgg15m = r15m.rowCount;
+    const totalAggDaily = rDay.rowCount;
 
-      // Delete from acrel_readings
-      const rReadings = await telemetryPool.query(
-        `DELETE FROM acrel_readings WHERE ${where}`,
-        params
-      );
+    auditLog('warn', 'api', `Batch purge ${ids.length} points: ${totalReadings} readings, ${totalAgg15m} agg15m, ${totalAggDaily} daily`, {
+      point_ids: ids, from: from || null, to: to || null,
+    }, req.userId || null);
 
-      // Delete from acrel_agg_15m
-      const agg15Conditions = conditions.map(c => c.replace(/\btime\b/g, "bucket_start"));
-      const r15m = await telemetryPool.query(
-        `DELETE FROM acrel_agg_15m WHERE ${agg15Conditions.join(" AND ")}`,
-        params
-      );
-
-      // Delete from acrel_agg_daily
-      const aggDayConditions = ["point_id = $1"];
-      const dayParams = [pointId];
-      let dayIdx = 2;
-      if (from) {
-        aggDayConditions.push(`day >= ($${dayIdx})::date`);
-        dayParams.push(from);
-        dayIdx++;
-      }
-      if (to) {
-        aggDayConditions.push(`day <= ($${dayIdx})::date`);
-        dayParams.push(to);
-        dayIdx++;
-      }
-      const rDay = await telemetryPool.query(
-        `DELETE FROM acrel_agg_daily WHERE ${aggDayConditions.join(" AND ")}`,
-        dayParams
-      );
-
-      const pointName = pointMap[pointId];
-      const result = {
-        point_id: pointId,
-        point_name: pointName,
-        deleted: {
-          readings: rReadings.rowCount,
-          agg_15m: r15m.rowCount,
-          agg_daily: rDay.rowCount,
-        },
-      };
-      results.push(result);
-
-      totalReadings += rReadings.rowCount;
-      totalAgg15m += r15m.rowCount;
-      totalAggDaily += rDay.rowCount;
-
-      auditLog('warn', 'api', `Batch purge (${foundPoints.length} points): ${pointName} (${rReadings.rowCount} readings, ${r15m.rowCount} agg15m, ${rDay.rowCount} daily)`, {
-        point_id: pointId,
-        from: from || null,
-        to: to || null,
-      }, req.userId || null);
-    }
-
-    console.log(`[BATCH-PURGE] ${foundPoints.length} points from=${from || 'ALL'} to=${to || 'ALL'} → total readings=${totalReadings} agg15m=${totalAgg15m} daily=${totalAggDaily}`);
+    log.info({ points: foundPoints.length, from: from || 'ALL', to: to || 'ALL', totalReadings, totalAgg15m, totalAggDaily }, 'batch-purge completed');
 
     res.json({
       ok: true,
       points_purged: foundPoints.length,
-      details: results,
+      point_ids: ids,
       totals: {
         readings: totalReadings,
         agg_15m: totalAgg15m,
@@ -1151,7 +1129,7 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
       range: { from: from || null, to: to || null },
     });
   } catch (e) {
-    console.error("[BATCH-PURGE] Error:", e.message);
+    log.error({ err: e.message }, 'batch-purge error');
     res.status(500).json({ ok: false, error: e.message });
   }
 });

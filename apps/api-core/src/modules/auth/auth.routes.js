@@ -10,6 +10,9 @@ const { corePool } = require("../../config/db");
 const { jwtSecret } = require("../../config/env");
 const { requireAuth } = require("../../shared/auth-middleware");
 const { auditLog } = require("../../shared/audit-log");
+const { validate } = require("../../shared/validate");
+const { loginSchema, createUserSchema, updateUserSchema, settingsSchema } = require("../../shared/schemas");
+const log = require("../../config/logger");
 
 const router = express.Router();
 
@@ -18,13 +21,13 @@ const MAX_FAILED = 5;
 const LOCK_DURATION_MS = 5 * 60 * 1000; // 5 min
 
 // ── POST /auth/login ────────────────────────────────────────
-router.post("/auth/login", async (req, res) => {
+router.post("/auth/login", validate(loginSchema), async (req, res) => {
   try {
     if (!corePool) {
       return res.status(503).json({ ok: false, error: "Database unavailable" });
     }
 
-    const { email, password } = req.body || {};
+    const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ ok: false, error: "Email and password required" });
     }
@@ -108,7 +111,7 @@ router.post("/auth/login", async (req, res) => {
 
     return res.json({ ok: true, token, user: userResponse });
   } catch (e) {
-    console.error("[auth/login]", e.message);
+    log.error({ err: e.message }, "[auth/login]");
     auditLog('error', 'api', `Login error: ${e.message}`, { error: e.message });
     return res.status(500).json({ ok: false, error: e.message });
   }
@@ -145,7 +148,65 @@ router.get("/auth/me", requireAuth, async (req, res) => {
       },
     });
   } catch (e) {
-    console.error("[auth/me]", e.message);
+    log.error({ err: e.message }, "[auth/me]");
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── GET /auth/settings ──────────────────────────────────────
+router.get("/auth/settings", requireAuth, async (req, res) => {
+  try {
+    if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
+    const { rows } = await corePool.query(
+      `SELECT settings FROM users WHERE id = $1`,
+      [req.userId]
+    );
+    if (rows.length === 0) return res.status(404).json({ ok: false, error: "User not found" });
+    return res.json({ ok: true, settings: rows[0].settings || {} });
+  } catch (e) {
+    log.error({ err: e.message }, "[auth/settings GET]");
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── PUT /auth/settings ──────────────────────────────────────
+router.put("/auth/settings", requireAuth, validate(settingsSchema), async (req, res) => {
+  try {
+    if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
+    const { settings } = req.body ?? {};
+    if (!settings || typeof settings !== "object") {
+      return res.status(400).json({ ok: false, error: "settings object required" });
+    }
+    const { rows } = await corePool.query(
+      `UPDATE users SET settings = $2, updated_at = NOW() WHERE id = $1 RETURNING settings`,
+      [req.userId, JSON.stringify(settings)]
+    );
+    if (rows.length === 0) return res.status(404).json({ ok: false, error: "User not found" });
+    return res.json({ ok: true, settings: rows[0].settings });
+  } catch (e) {
+    log.error({ err: e.message }, "[auth/settings PUT]");
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── PATCH /auth/settings ────────────────────────────────────
+// Partial merge: merges req.body.settings into existing settings JSONB
+router.patch("/auth/settings", requireAuth, validate(settingsSchema), async (req, res) => {
+  try {
+    if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
+    const { settings } = req.body ?? {};
+    if (!settings || typeof settings !== "object") {
+      return res.status(400).json({ ok: false, error: "settings object required" });
+    }
+    const { rows } = await corePool.query(
+      `UPDATE users SET settings = COALESCE(settings, '{}'::jsonb) || $2::jsonb, updated_at = NOW()
+       WHERE id = $1 RETURNING settings`,
+      [req.userId, JSON.stringify(settings)]
+    );
+    if (rows.length === 0) return res.status(404).json({ ok: false, error: "User not found" });
+    return res.json({ ok: true, settings: rows[0].settings });
+  } catch (e) {
+    log.error({ err: e.message }, "[auth/settings PATCH]");
     return res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -168,13 +229,10 @@ router.get("/users", requireAuth, async (req, res) => {
 });
 
 // ── POST /users ─────────────────────────────────────────────
-router.post("/users", requireAuth, async (req, res) => {
+router.post("/users", requireAuth, validate(createUserSchema), async (req, res) => {
   try {
     if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
-    const { email, password, name, role, organization_id, site_access, avatar } = req.body ?? {};
-    if (!email || !password || !name) {
-      return res.status(400).json({ ok: false, error: "email, password, name required" });
-    }
+    const { email, password, name, role, organization_id, site_access, avatar } = req.body;
     const hash = await bcrypt.hash(password, 10);
     const { rows } = await corePool.query(
       `INSERT INTO users (email, password_hash, name, role, organization_id, site_access, avatar)
@@ -192,7 +250,7 @@ router.post("/users", requireAuth, async (req, res) => {
 });
 
 // ── PUT /users/:userId ──────────────────────────────────────
-router.put("/users/:userId", requireAuth, async (req, res) => {
+router.put("/users/:userId", requireAuth, validate(updateUserSchema), async (req, res) => {
   try {
     if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
     const { userId } = req.params;

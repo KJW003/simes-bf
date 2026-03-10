@@ -6,7 +6,7 @@
 // empty arrays or null so the UI can fall back to mock data.
 // ============================================================
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import api from '@/lib/api';
 import type { ApiOrg, ApiSite, ApiTerrain, ApiZone, ApiMeasurementPoint } from '@/lib/api';
 
@@ -101,21 +101,30 @@ export function useDashboard(terrainId: string | null) {
       };
     },
     enabled: !!terrainId,
-    refetchInterval: 15_000, // live refresh every 15s
-    staleTime: 10_000,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
     retry: 1,
   });
 }
 
 // ─── Latest Readings ───────────────────────────────────────
 
+export interface LatestReadingsData {
+  ok: boolean;
+  terrain_id: string;
+  count: number;
+  readings: Array<Record<string, any>>;
+}
+
 export function useLatestReadings(terrainId: string | null) {
-  return useQuery({
+  return useQuery<LatestReadingsData>({
     queryKey: ['readings-latest', terrainId],
     queryFn: () => api.getLatestReadings(terrainId!),
     enabled: !!terrainId,
-    refetchInterval: 15_000,
-    staleTime: 10_000,
+    refetchInterval: 30_000,
+    staleTime: 15_000,
+    placeholderData: keepPreviousData,
     retry: 1,
   });
 }
@@ -178,25 +187,43 @@ export function useTariffPlans() {
 
 // ─── Terrain Overview (points + zones + readings) ──────────
 
+export interface TerrainOverviewData {
+  ok: boolean;
+  terrain_id: string;
+  points: Array<Record<string, any>>;
+  zones: Array<Record<string, any>>;
+  points_count: number;
+  zones_count: number;
+}
+
 export function useTerrainOverview(terrainId: string | null) {
-  return useQuery({
+  return useQuery<TerrainOverviewData>({
     queryKey: ['terrain-overview', terrainId],
     queryFn: () => api.getTerrainOverview(terrainId!),
     enabled: !!terrainId,
     refetchInterval: 30_000,
     staleTime: 15_000,
+    placeholderData: keepPreviousData,
     retry: 1,
   });
 }
 
 // ─── Historical readings ───────────────────────────────────
 
+export interface ReadingsData {
+  ok: boolean;
+  terrain_id: string;
+  count: number;
+  readings: Array<Record<string, any>>;
+}
+
 export function useReadings(terrainId: string | null, params?: { from?: string; to?: string; point_id?: string; limit?: number }) {
-  return useQuery({
+  return useQuery<ReadingsData>({
     queryKey: ['readings', terrainId, params],
     queryFn: () => api.getReadings(terrainId!, params),
     enabled: !!terrainId,
     staleTime: 30_000,
+    placeholderData: keepPreviousData,
     retry: 1,
   });
 }

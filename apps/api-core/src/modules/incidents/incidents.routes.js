@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { corePool: db } = require('../../config/db');
+const log = require("../../config/logger");
 
 // GET /incidents — list incidents with optional filters
 router.get('/incidents', async (req, res) => {
@@ -32,7 +33,7 @@ router.get('/incidents', async (req, res) => {
 
     res.json({ ok: true, incidents: rows, total: countRes.rows[0].count });
   } catch (e) {
-    console.error('[incidents] list error:', e.message);
+    log.error({ err: e.message }, "[incidents] list error:");
     res.status(500).json({ ok: false, error: e.message });
   }
 });
@@ -87,7 +88,7 @@ router.post('/incidents', async (req, res) => {
 
     res.status(201).json({ ok: true, incident: rows[0] });
   } catch (e) {
-    console.error('[incidents] create error:', e.message);
+    log.error({ err: e.message }, "[incidents] create error:");
     res.status(500).json({ ok: false, error: e.message });
   }
 });

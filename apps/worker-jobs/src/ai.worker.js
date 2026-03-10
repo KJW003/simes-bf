@@ -1,8 +1,9 @@
 const { Worker } = require("bullmq");
 const { connection, db, telemetryDb, setRunStatus, insertJobResult } = require("./shared");
+const log = require("./config/logger");
 
 if (!connection) {
-  console.warn("[ai-worker] Skipped – no Redis connection.");
+  log.warn("ai-worker skipped – no Redis connection");
   return;
 }
 
@@ -204,4 +205,4 @@ new Worker(
   { connection }
 );
 
-console.log("worker listening: ai");
+log.info("worker listening: ai");

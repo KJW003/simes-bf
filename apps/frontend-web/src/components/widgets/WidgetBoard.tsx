@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -650,7 +650,6 @@ function buildDefaultLayout(terrainId?: string): WidgetLayoutItem[] {
     // Custom metric widgets
     { id: 'energy-quality-summary', size: 'md' },
     { id: 'live-load', size: 'lg' },
-    { id: 'cost-energy', size: 'md' },
     { id: 'active-alerts', size: 'md', state: 'partial' },
     { id: 'diagnostics', size: 'md' },
     { id: 'forecast', size: 'md' },
@@ -688,7 +687,7 @@ const stateBadgeMap: Record<WidgetRuntimeState, { label: string; className: stri
   offline: { label: 'Hors ligne', className: 'badge-warning' },
 };
 
-const STORAGE_VERSION = 'v7'; // bump: unified dashboard + custom widgets
+const STORAGE_VERSION = 'v8'; // bump: removed duplicate cost-energy, server sync
 const buildStorageKey = (userId?: string) => `simes_widget_layout_${STORAGE_VERSION}_${userId ?? 'guest'}`;
 
 function isValidLayout(data: unknown): data is WidgetLayoutItem[] {
@@ -706,6 +705,15 @@ function loadLayout(storageKey: string, terrainId?: string): WidgetLayoutItem[] 
     if (!stored) return fallback;
     const parsed = JSON.parse(stored);
     if (!isValidLayout(parsed)) return fallback;
+    // Auto-remove duplicate cost-energy if dashboard-daily-cost already present
+    const hasDailyCost = parsed.some((i: any) => i.id === 'dashboard-daily-cost');
+    if (hasDailyCost) {
+      const filtered = parsed.filter((i: any) => i.id !== 'cost-energy');
+      if (filtered.length !== parsed.length) {
+        localStorage.setItem(storageKey, JSON.stringify(filtered));
+        return filtered;
+      }
+    }
     return parsed;
   } catch {
     return fallback;
@@ -742,9 +750,18 @@ export function WidgetBoard() {
     setLayout(loadLayout(storageKey, selectedTerrainId));
   }, [storageKey, selectedTerrainId]);
 
+  // Debounced server sync for widget layout
+  const layoutSyncTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     localStorage.setItem(storageKey, JSON.stringify(layout));
+    // Sync to server (debounced 1s)
+    if (layoutSyncTimer.current) clearTimeout(layoutSyncTimer.current);
+    layoutSyncTimer.current = setTimeout(() => {
+      import('@/lib/api').then(({ default: api }) => {
+        api.patchSettings({ widgetLayout: layout }).catch(() => {/* silent */});
+      });
+    }, 1000);
   }, [layout, storageKey]);
 
   // Build a Map<definitionId, WidgetDefinition> for quick look-up

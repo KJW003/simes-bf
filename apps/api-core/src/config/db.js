@@ -1,11 +1,12 @@
 const { Pool } = require("pg");
 const { coreDbUrl, telemetryDbUrl } = require("./env");
+const log = require("./logger");
 
 let corePool = null;
 let telemetryPool = null;
 
 if (!coreDbUrl) {
-  console.warn("[db] CORE_DB_URL is missing — core-db pool disabled.");
+  log.warn("CORE_DB_URL is missing — core-db pool disabled");
 } else {
   corePool = new Pool({
     connectionString: coreDbUrl,
@@ -13,12 +14,12 @@ if (!coreDbUrl) {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 5000,
   });
-  corePool.on("connect", () => console.log("✅ Connected to core-db"));
-  corePool.on("error", (err) => console.error("❌ core-db pool error", err));
+  corePool.on("connect", () => log.info("Connected to core-db"));
+  corePool.on("error", (err) => log.error({ err: err.message }, "core-db pool error"));
 }
 
 if (!telemetryDbUrl) {
-  console.warn("[db] TELEMETRY_DB_URL is missing — telemetry-db pool disabled.");
+  log.warn("TELEMETRY_DB_URL is missing — telemetry-db pool disabled");
 } else {
   telemetryPool = new Pool({
     connectionString: telemetryDbUrl,
@@ -26,8 +27,8 @@ if (!telemetryDbUrl) {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
   });
-  telemetryPool.on("connect", () => console.log("✅ Connected to telemetry-db"));
-  telemetryPool.on("error", (err) => console.error("❌ telemetry-db pool error", err));
+  telemetryPool.on("connect", () => log.info("Connected to telemetry-db"));
+  telemetryPool.on("error", (err) => log.error({ err: err.message }, "telemetry-db pool error"));
 }
 
 module.exports = { corePool, telemetryPool };

@@ -12,12 +12,19 @@ volumes:
   redis_data:
   minio_data:
   pgadmin_data:
+  ml_models_data:
+  letsencrypt_data:
+  portainer_data:
 
 services:
   # ===== DATA =====
   core-db:
     image: postgres:16
     container_name: simes-core-db
+    labels:
+      - com.simes.service=core-database
+      - com.simes.tier=data
+      - com.simes.description=PostgreSQL 16 - core referential data
     environment:
       POSTGRES_DB: ${CORE_DB_NAME}
       POSTGRES_USER: ${CORE_DB_USER}
@@ -29,6 +36,8 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${CORE_DB_USER} -d ${CORE_DB_NAME}"]
       interval: 10s
@@ -38,6 +47,10 @@ services:
   telemetry-db:
     image: timescale/timescaledb:latest-pg16
     container_name: simes-telemetry-db
+    labels:
+      - com.simes.service=telemetry-database
+      - com.simes.tier=data
+      - com.simes.description=TimescaleDB - time-series telemetry
     environment:
       POSTGRES_DB: ${TELEMETRY_DB_NAME}
       POSTGRES_USER: ${TELEMETRY_DB_USER}
@@ -49,6 +62,8 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    mem_limit: 2g
+    cpus: 2.0
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${TELEMETRY_DB_USER} -d ${TELEMETRY_DB_NAME}"]
       interval: 10s
@@ -58,12 +73,18 @@ services:
   redis:
     image: redis:7-alpine
     container_name: simes-redis
+    labels:
+      - com.simes.service=cache-queue
+      - com.simes.tier=data
+      - com.simes.description=Redis 7 - cache and BullMQ job queues
     command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
     networks:
       - internal
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
     healthcheck:
       test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 10s
@@ -103,6 +124,25 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 0.5
+
+  # ===== CONTAINER MANAGEMENT =====
+  portainer:
+    image: portainer/portainer-ce:lts
+    container_name: simes-portainer
+    command: -H unix:///var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/data
+    ports:
+      - "9443:9443"
+    networks:
+      - edge
+      - internal
+    restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
 
   # ===== EDGE / ROUTER =====
   traefik:
@@ -113,17 +153,27 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
-      - --entrypoints.web.transport.respondingTimeouts.readTimeout=60s
-      - --entrypoints.web.transport.respondingTimeouts.writeTimeout=60s
-      - --entrypoints.web.transport.respondingTimeouts.idleTimeout=120s
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=60s
+      - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=60s
+      - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=120s
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
     ports:
       - "80:80"
-      # - "8080:8080"
+      - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt_data:/letsencrypt
     networks:
       - edge
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
 
   # ===== UI (statique) =====
   frontend-web:
@@ -133,16 +183,22 @@ services:
         VITE_API_URL: /api
     container_name: simes-frontend-web
     labels:
+      - com.simes.service=frontend
+      - com.simes.tier=ui
+      - com.simes.description=React SPA - energy monitoring dashboard
       - traefik.enable=true
       - traefik.docker.network=simes-edge
       - traefik.http.routers.ui.rule=PathPrefix(`/`)
-      - traefik.http.routers.ui.entrypoints=web
+      - traefik.http.routers.ui.entrypoints=websecure
+      - traefik.http.routers.ui.tls.certresolver=letsencrypt
       - traefik.http.routers.ui.priority=1
       - traefik.http.routers.ui.service=ui
       - traefik.http.services.ui.loadbalancer.server.port=80
     networks:
       - edge
     restart: unless-stopped
+    mem_limit: 256m
+    cpus: 0.5
 
   # ===== API CORE =====
   api-core:
@@ -154,6 +210,7 @@ services:
       TELEMETRY_DB_URL: "postgres://${TELEMETRY_DB_USER}:${TELEMETRY_DB_PASSWORD}@telemetry-db:5432/${TELEMETRY_DB_NAME}"
       REDIS_URL: "redis://:${REDIS_PASSWORD}@redis:6379"
       JWT_SECRET: ${JWT_SECRET}
+      ML_SERVICE_URL: "http://ml-service:8000"
       TZ: ${TZ}
     depends_on:
       core-db:
@@ -162,11 +219,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      ml-service:
+        condition: service_healthy
     labels:
       - traefik.enable=true
       - traefik.docker.network=simes-edge
       - traefik.http.routers.apicore.rule=PathPrefix(`/api`)
-      - traefik.http.routers.apicore.entrypoints=web
+      - traefik.http.routers.apicore.entrypoints=websecure
+      - traefik.http.routers.apicore.tls.certresolver=letsencrypt
       - traefik.http.routers.apicore.priority=100
       - traefik.http.middlewares.apicore-strip.stripprefix.prefixes=/api
       - traefik.http.routers.apicore.middlewares=apicore-strip
@@ -178,6 +238,8 @@ services:
       - edge
       - internal
     restart: unless-stopped
+    mem_limit: 512m
+    cpus: 1.0
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://localhost:3000/health').then(r=>{if(!r.ok)throw r;process.exit(0)}).catch(()=>process.exit(1))"]
       interval: 10s
@@ -203,10 +265,14 @@ services:
       redis:
         condition: service_healthy
     labels:
+      - com.simes.service=ingestion
+      - com.simes.tier=backend
+      - com.simes.description=IoT data ingestion (Milesight/Acrel)
       - traefik.enable=true
       - traefik.docker.network=simes-edge
       - traefik.http.routers.ingest.rule=PathPrefix(`/ingest`)
-      - traefik.http.routers.ingest.entrypoints=web
+      - traefik.http.routers.ingest.entrypoints=websecure
+      - traefik.http.routers.ingest.tls.certresolver=letsencrypt
       - traefik.http.routers.ingest.priority=100
       - traefik.http.middlewares.ingest-strip.stripprefix.prefixes=/ingest
       - traefik.http.routers.ingest.middlewares=ingest-strip
@@ -216,11 +282,17 @@ services:
       - edge
       - internal
     restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.5
 
   # ===== WORKERS =====
   worker-jobs:
     build: ../../apps/worker-jobs
     container_name: simes-worker-jobs
+    labels:
+      - com.simes.service=worker-jobs
+      - com.simes.tier=backend
+      - com.simes.description=BullMQ workers - facture, telemetry agg, AI, reports
     environment:
       CORE_DB_URL: "postgres://${CORE_DB_USER}:${CORE_DB_PASSWORD}@core-db:5432/${CORE_DB_NAME}"
       TELEMETRY_DB_URL: "postgres://${TELEMETRY_DB_USER}:${TELEMETRY_DB_PASSWORD}@telemetry-db:5432/${TELEMETRY_DB_NAME}"
@@ -236,4 +308,39 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    mem_limit: 384m
+    cpus: 0.5
+
+  # ===== ML SERVICE (LightGBM) =====
+  ml-service:
+    build: ../../apps/ml-service
+    container_name: simes-ml-service
+    labels:
+      - com.simes.service=ml-forecasting
+      - com.simes.tier=backend
+      - com.simes.description=FastAPI LightGBM energy forecasting
+    environment:
+      TELEMETRY_DB_HOST: telemetry-db
+      TELEMETRY_DB_PORT: "5432"
+      TELEMETRY_DB_NAME: ${TELEMETRY_DB_NAME}
+      TELEMETRY_DB_USER: ${TELEMETRY_DB_USER}
+      TELEMETRY_DB_PASSWORD: ${TELEMETRY_DB_PASSWORD}
+      MODEL_DIR: /data/models
+      TZ: ${TZ}
+    volumes:
+      - ml_models_data:/data/models
+    depends_on:
+      telemetry-db:
+        condition: service_healthy
+    networks:
+      - internal
+    restart: unless-stopped
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 

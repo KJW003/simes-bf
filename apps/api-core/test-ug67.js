@@ -4,7 +4,7 @@
  */
 
 // Direct require of pure modules (no side effects)
-const { ACREL_TO_DB, mapSnapshot } = require("./src/modules/webhook/acrel-field-map");
+const { ACREL_TO_DB, mapSnapshot } = require("../ingestion-service/src/shared/acrel-field-map");
 
 // ── 1) Test mapSnapshot ──
 const snapshot = {
@@ -38,7 +38,7 @@ console.log("");
 // ── 2) Test isUG67Batch + normalizeUG67 ──
 // We can't require ug67-normalizer because it requires acrel-field-map
 // which would work, but let's be safe and inline the test.
-const { isUG67Batch, normalizeUG67 } = require("./src/modules/webhook/ug67-normalizer");
+const { isUG67Batch, normalizeUG67 } = require("../ingestion-service/src/shared/ug67-normalizer");
 
 const payload = {
   gateway: { id: "UG67-OUAGA-01", ts_batch_start: "2026-03-02T00:30:42.875Z", ts_batch_end: "2026-03-02T00:31:42.875Z" },

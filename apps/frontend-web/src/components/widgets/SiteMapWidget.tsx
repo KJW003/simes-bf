@@ -345,6 +345,10 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId }: { 
   const saveConfig = useCallback((updated: SiteMapConfig) => {
     setConfig(updated);
     localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    // Sync to server (debounced via patchSettings)
+    import('@/lib/api').then(({ default: api }) => {
+      api.patchSettings({ mapConfig: updated }).catch(() => {/* silent */});
+    });
   }, []);
 
   const getPointStatus = useCallback((p: Record<string, any>) => {

@@ -1,3 +1,4 @@
+const log = require("./logger");
 const { redisUrl } = require("./env");
 
 const redisDisabled =
@@ -5,9 +6,9 @@ const redisDisabled =
 
 if (redisDisabled || !redisUrl) {
   if (!redisUrl && !redisDisabled) {
-    console.warn("[redis] REDIS_URL is missing — Redis client disabled.");
+    log.warn("[redis] REDIS_URL is missing — Redis client disabled.");
   } else {
-    console.warn("[redis] DISABLE_REDIS=true — Redis client disabled.");
+    log.warn("[redis] DISABLE_REDIS=true — Redis client disabled.");
   }
   module.exports = null;
 } else {

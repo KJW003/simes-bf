@@ -1,3 +1,4 @@
+import React, { Suspense } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -7,40 +8,46 @@ import { AppProvider, useAppContext } from "@/contexts/AppContext";
 import { canAccessOrgRoute } from "@/lib/access-control";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { Loader2 } from "lucide-react";
 
-// Auth
+// Auth – keep eager (first paint)
 import Login from "./pages/Login";
-// Org Mode Pages
-import Dashboard from "./pages/org/Dashboard";
-import DataMonitor from "./pages/org/DataMonitor";
-import Anomalies from "./pages/org/Anomalies";
-import PowerQuality from "./pages/org/PowerQuality";
-import History from "./pages/org/Donnees";
-import Forecasts from "./pages/org/Forecasts";
-import Invoice from "./pages/org/Invoice";
-import PvBattery from "./pages/org/SolairePerformance";
-import Predimensionnement from "./pages/org/Predimensionnement";
-import EnergyAudit from "./pages/org/EnergyAudit";
-import Reports from "./pages/org/Reports";
-import Administration from "./pages/org/Administration";
-import ZonePage from "./pages/org/ZonePage";
-import PointDetails from "./pages/org/PointDetails";
-import Points from "./pages/org/Points";
-import ZonesPoints from "./pages/org/ZonesPoints";
-import SettingsPage from "./pages/org/Settings";
 
-// Platform Mode Pages
-import NocOverview from "./pages/platform/NocOverview";
-import Incidents from "./pages/platform/Incidents";
-import Tenants from "./pages/platform/Tenants";
-import Sites from "./pages/platform/Sites";
-import Gateways from "./pages/platform/Gateways";
-import Devices from "./pages/platform/Devices";
-import PipelineHealth from "./pages/platform/PipelineHealth";
-import Logs from "./pages/platform/Logs";
-import PurgeReadings from "./pages/platform/PurgeReadings";
+// Lazy-loaded Org pages
+const Dashboard = React.lazy(() => import("./pages/org/Dashboard"));
+const Anomalies = React.lazy(() => import("./pages/org/Anomalies"));
+const PowerQuality = React.lazy(() => import("./pages/org/PowerQuality"));
+const History = React.lazy(() => import("./pages/org/Donnees"));
+const Forecasts = React.lazy(() => import("./pages/org/Forecasts"));
+const Invoice = React.lazy(() => import("./pages/org/Invoice"));
+const PvBattery = React.lazy(() => import("./pages/org/SolairePerformance"));
+const Predimensionnement = React.lazy(() => import("./pages/org/Predimensionnement"));
+const EnergyAudit = React.lazy(() => import("./pages/org/EnergyAudit"));
+const Exports = React.lazy(() => import("./pages/org/Exports"));
+const Administration = React.lazy(() => import("./pages/org/Administration"));
+const ZonePage = React.lazy(() => import("./pages/org/ZonePage"));
+const PointDetails = React.lazy(() => import("./pages/org/PointDetails"));
+const ZonesPoints = React.lazy(() => import("./pages/org/ZonesPoints"));
+const SettingsPage = React.lazy(() => import("./pages/org/Settings"));
+
+// Lazy-loaded Platform pages
+const NocOverview = React.lazy(() => import("./pages/platform/NocOverview"));
+const Incidents = React.lazy(() => import("./pages/platform/Incidents"));
+const Tenants = React.lazy(() => import("./pages/platform/Tenants"));
+const Sites = React.lazy(() => import("./pages/platform/Sites"));
+const Gateways = React.lazy(() => import("./pages/platform/Gateways"));
+const Devices = React.lazy(() => import("./pages/platform/Devices"));
+const PipelineHealth = React.lazy(() => import("./pages/platform/PipelineHealth"));
+const Logs = React.lazy(() => import("./pages/platform/Logs"));
+const PurgeReadings = React.lazy(() => import("./pages/platform/PurgeReadings"));
 
 import NotFound from "./pages/NotFound";
+
+const LazyFallback = () => (
+  <div className="flex items-center justify-center min-h-[40vh]">
+    <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+  </div>
+);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -60,47 +67,49 @@ function AppRoutes() {
   const isPlatformMode = isPlatformUser || mode === 'platform';
   
   return (
+    <Suspense fallback={<LazyFallback />}>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedLayout />}>
         {isPlatformMode ? (
           <>
-            <Route path="/" element={<NocOverview />} />
-            <Route path="/platform" element={<NocOverview />} />
-            <Route path="/platform/incidents" element={<Incidents />} />
-            <Route path="/platform/tenants" element={<Tenants />} />
-            <Route path="/platform/sites" element={<Sites />} />
-            <Route path="/platform/gateways" element={<Gateways />} />
-            <Route path="/platform/devices" element={<Devices />} />
-            <Route path="/platform/pipeline" element={<PipelineHealth />} />
-            <Route path="/platform/logs" element={<Logs />} />
-            {isPlatformUser && <Route path="/platform/purge" element={<PurgeReadings />} />}
-            <Route path="/platform/admin" element={<Administration />} />
+            <Route path="/" element={<ErrorBoundary><NocOverview /></ErrorBoundary>} />
+            <Route path="/platform" element={<ErrorBoundary><NocOverview /></ErrorBoundary>} />
+            <Route path="/platform/incidents" element={<ErrorBoundary><Incidents /></ErrorBoundary>} />
+            <Route path="/platform/tenants" element={<ErrorBoundary><Tenants /></ErrorBoundary>} />
+            <Route path="/platform/sites" element={<ErrorBoundary><Sites /></ErrorBoundary>} />
+            <Route path="/platform/gateways" element={<ErrorBoundary><Gateways /></ErrorBoundary>} />
+            <Route path="/platform/devices" element={<ErrorBoundary><Devices /></ErrorBoundary>} />
+            <Route path="/platform/pipeline" element={<ErrorBoundary><PipelineHealth /></ErrorBoundary>} />
+            <Route path="/platform/logs" element={<ErrorBoundary><Logs /></ErrorBoundary>} />
+            {isPlatformUser && <Route path="/platform/purge" element={<ErrorBoundary><PurgeReadings /></ErrorBoundary>} />}
+            <Route path="/platform/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />
           </>
         ) : (
           <>
-            {canAccessOrgRoute(role, "dashboard") && <Route path="/" element={<Dashboard />} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<ZonesPoints />} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<ZonesPoints />} />}
-            {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<PowerQuality />} />}
-            {canAccessOrgRoute(role, "history") && <Route path="/donnees" element={<History />} />}
-            {canAccessOrgRoute(role, "history") && <Route path="/history" element={<History />} />}
-            {canAccessOrgRoute(role, "forecasts") && <Route path="/forecasts" element={<Forecasts />} />}
-            {canAccessOrgRoute(role, "invoice") && <Route path="/invoice" element={<Invoice />} />}
-            {hasSolar && canAccessOrgRoute(role, "pvBattery") && <Route path="/pv-battery" element={<PvBattery />} />}
-            {canAccessOrgRoute(role, "predimensionnement") && <Route path="/predimensionnement" element={<Predimensionnement />} />}
-            {canAccessOrgRoute(role, "energyAudit") && <Route path="/energy-audit" element={<EnergyAudit />} />}
-            {canAccessOrgRoute(role, "anomalies") && <Route path="/anomalies" element={<Anomalies />} />}
-            {canAccessOrgRoute(role, "reports") && <Route path="/reports" element={<Reports />} />}
-            {canAccessOrgRoute(role, "admin") && <Route path="/admin" element={<Administration />} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/terrain/:terrainId/zones/:zoneId" element={<ZonePage />} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points/:pointId" element={<PointDetails />} />}
-            <Route path="/settings" element={<SettingsPage />} />
+            {canAccessOrgRoute(role, "dashboard") && <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<ErrorBoundary><ZonesPoints /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<ErrorBoundary><ZonesPoints /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<ErrorBoundary><PowerQuality /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "history") && <Route path="/donnees" element={<ErrorBoundary><History /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "history") && <Route path="/history" element={<ErrorBoundary><History /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "forecasts") && <Route path="/forecasts" element={<ErrorBoundary><Forecasts /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "invoice") && <Route path="/invoice" element={<ErrorBoundary><Invoice /></ErrorBoundary>} />}
+            {hasSolar && canAccessOrgRoute(role, "pvBattery") && <Route path="/pv-battery" element={<ErrorBoundary><PvBattery /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "predimensionnement") && <Route path="/predimensionnement" element={<ErrorBoundary><Predimensionnement /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "energyAudit") && <Route path="/energy-audit" element={<ErrorBoundary><EnergyAudit /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "anomalies") && <Route path="/anomalies" element={<ErrorBoundary><Anomalies /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "exports") && <Route path="/exports" element={<ErrorBoundary><Exports /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "admin") && <Route path="/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/terrain/:terrainId/zones/:zoneId" element={<ErrorBoundary><ZonePage /></ErrorBoundary>} />}
+            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points/:pointId" element={<ErrorBoundary><PointDetails /></ErrorBoundary>} />}
+            <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
           </>
         )}
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>
+    </Suspense>
   );
 }
 

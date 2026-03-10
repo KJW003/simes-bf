@@ -9,10 +9,12 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  TrendingUp, Loader2, Calendar, Activity, Zap, Target, BarChart3,
+  TrendingUp, Loader2, Calendar, Activity, Zap, Target, BarChart3, Brain, RefreshCw,
 } from 'lucide-react';
 import { useReadings, useTerrainOverview } from '@/hooks/useApi';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend, ReferenceLine,
@@ -127,6 +129,7 @@ export default function Forecasts() {
   const currSym = getCurrencySymbol(prefs.currency);
   const [horizon, setHorizon] = useState<string>('1D');
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
+  const queryClient = useQueryClient();
 
   const h = FORECAST_HORIZONS.find(f => f.key === horizon) ?? FORECAST_HORIZONS[0];
   const from = useMemo(() => new Date(Date.now() - h.historyDays * 86400_000).toISOString(), [h]);
@@ -140,13 +143,39 @@ export default function Forecasts() {
     limit: 10000,
   });
 
+  // LightGBM ML forecast API
+  const { data: mlForecast, isLoading: mlLoading, isError: mlError } = useQuery({
+    queryKey: ['ml-forecast', selectedTerrainId, h.days],
+    queryFn: () => api.getMLForecast(selectedTerrainId!, h.days),
+    enabled: !!selectedTerrainId,
+    staleTime: 5 * 60_000,
+    retry: false,
+    placeholderData: (prev: unknown) => prev,
+  });
+
+  const trainMutation = useMutation({
+    mutationFn: () => api.trainMLModel(selectedTerrainId!),
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ml-forecast', selectedTerrainId] }); },
+  });
+
+  const useML = !!mlForecast && !mlError;
+
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
 
-  const { history, forecast, dailyAvg, trend } = useMemo(
+  // Client-side fallback forecast
+  const clientForecast = useMemo(
     () => computeForecast(readings, h.days),
     [readings, h.days],
   );
+
+  // Use ML data if available, otherwise fallback
+  const history = clientForecast.history;
+  const forecast = useML
+    ? mlForecast.forecast.map(d => ({ day: d.day, predicted: d.predicted_kwh, upper: d.upper, lower: d.lower }))
+    : clientForecast.forecast;
+  const dailyAvg = clientForecast.dailyAvg;
+  const trend = clientForecast.trend;
 
   const hourlyProfile = useMemo(() => computeHourlyProfile(readings), [readings]);
 
@@ -194,10 +223,21 @@ export default function Forecasts() {
         title="Prévisions"
         description="Prévision de consommation basée sur l'historique récent"
         actions={
-          <Badge variant="outline" className="text-xs">
-            <Activity className="w-3 h-3 mr-1" />
-            Modèle: Moyenne mobile + régression linéaire
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={useML ? 'default' : 'outline'} className="text-xs">
+              {useML ? <Brain className="w-3 h-3 mr-1" /> : <Activity className="w-3 h-3 mr-1" />}
+              {useML ? `LightGBM (MAPE: ${mlForecast?.model_mape?.toFixed(1) ?? '?'}%)` : 'Régression linéaire (fallback)'}
+            </Badge>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => trainMutation.mutate()}
+              disabled={trainMutation.isPending || !selectedTerrainId}
+            >
+              {trainMutation.isPending ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RefreshCw className="w-3 h-3 mr-1" />}
+              Entraîner
+            </Button>
+          </div>
         }
       />
 

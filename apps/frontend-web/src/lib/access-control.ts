@@ -10,7 +10,7 @@ export type OrgRouteKey =
   | 'pvBattery'
   | 'predimensionnement'
   | 'anomalies'
-  | 'reports'
+  | 'exports'
   | 'energyAudit'
   | 'admin';
 
@@ -24,7 +24,7 @@ const ORG_ROUTE_ACCESS: Record<OrgRouteKey, UserRole[]> = {
   pvBattery: ['org_admin', 'operator'],
   predimensionnement: ['org_admin'],
   anomalies: ['org_admin', 'operator', 'manager'],
-  reports: ['org_admin', 'operator', 'manager'],
+  exports: ['org_admin', 'operator', 'manager'],
   energyAudit: ['org_admin', 'operator', 'manager'],
   admin: ['platform_super_admin'],
 };
