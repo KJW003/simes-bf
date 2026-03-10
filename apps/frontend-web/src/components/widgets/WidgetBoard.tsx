@@ -18,7 +18,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { useAppContext } from '@/contexts/AppContext';
-import { useTerrainOverview, useReadings } from '@/hooks/useApi';
+import { useTerrainOverview, useReadings, stableFrom, stableNow } from '@/hooks/useApi';
 import { ConfigureWidgetModal } from '@/components/widgets/ConfigureWidgetModal';
 import { getWidgetDefinition, getWidgetDefinitions } from '@/lib/widget-registry';
 import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWidget, AlarmWidget, AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
@@ -218,7 +218,7 @@ function renderWidgetContent(
     case 'dashboard-kpis':
       return ctx?.terrainId ? <LiveKPIs terrainId={ctx.terrainId} /> : null;
     case 'dashboard-load-curve':
-      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.from ?? new Date(Date.now() - 86400_000).toISOString()} to={ctx.to ?? new Date().toISOString()} /> : null;
+      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.from ?? stableFrom(86400_000)} to={ctx.to ?? stableNow()} /> : null;
     case 'dashboard-map':
       return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} size={size} /> : null;
     case 'dashboard-alarms':
@@ -230,7 +230,7 @@ function renderWidgetContent(
     case 'dashboard-carbon':
       return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} /> : null;
     case 'dashboard-power-peaks':
-      return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} from={ctx.from ?? new Date(Date.now() - 86400_000).toISOString()} to={ctx.to ?? new Date().toISOString()} /> : null;
+      return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} from={ctx.from ?? stableFrom(86400_000)} to={ctx.to ?? stableNow()} /> : null;
 
     // ── Core metric widgets ──
     case 'energy-quality-summary':
@@ -735,8 +735,8 @@ export function WidgetBoard() {
   const periodMs = TIME_PERIOD_OPTIONS.find(o => o.value === timePeriod)?.ms ?? 24 * 60 * 60 * 1000;
 
   // Fetch historical readings for chart widgets
-  const readingsFrom = useMemo(() => new Date(Date.now() - periodMs).toISOString(), [periodMs]);
-  const readingsTo = useMemo(() => new Date().toISOString(), [readingsFrom]);
+  const readingsFrom = useMemo(() => stableFrom(periodMs), [periodMs]);
+  const readingsTo = useMemo(() => stableNow(), [readingsFrom]);
   const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, limit: 5000 });
 
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));

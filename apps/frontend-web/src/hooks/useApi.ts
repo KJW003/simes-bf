@@ -8,6 +8,21 @@
 
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import api from '@/lib/api';
+
+/**
+ * Round a "from" timestamp down to the nearest `slotMin`-minute boundary
+ * so that query keys remain stable for that window — preventing refetches
+ * when a component remounts a few seconds later.
+ */
+export function stableFrom(agoMs: number, slotMin = 15): string {
+  const slot = slotMin * 60_000;
+  const now = Math.floor(Date.now() / slot) * slot;
+  return new Date(now - agoMs).toISOString();
+}
+export function stableNow(slotMin = 15): string {
+  const slot = slotMin * 60_000;
+  return new Date(Math.floor(Date.now() / slot) * slot).toISOString();
+}
 import type { ApiOrg, ApiSite, ApiTerrain, ApiZone, ApiMeasurementPoint, TerrainOverviewPoint, TerrainOverviewZone } from '@/lib/api';
 
 // ─── Type Definitions ──────────────────────────────────────
@@ -103,8 +118,8 @@ export function useDashboard(terrainId: string | null) {
       };
     },
     enabled: !!terrainId,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: 60_000,
+    staleTime: 2 * 60_000,
     placeholderData: keepPreviousData,
     retry: 1,
   });
@@ -124,8 +139,8 @@ export function useLatestReadings(terrainId: string | null) {
     queryKey: ['readings-latest', terrainId],
     queryFn: () => api.getLatestReadings(terrainId!),
     enabled: !!terrainId,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: 60_000,
+    staleTime: 2 * 60_000,
     placeholderData: keepPreviousData,
     retry: 1,
   });
@@ -203,8 +218,8 @@ export function useTerrainOverview(terrainId: string | null) {
     queryKey: ['terrain-overview', terrainId],
     queryFn: () => api.getTerrainOverview(terrainId!),
     enabled: !!terrainId,
-    refetchInterval: 30_000,
-    staleTime: 15_000,
+    refetchInterval: 60_000,
+    staleTime: 2 * 60_000,
     placeholderData: keepPreviousData,
     retry: 1,
   });
@@ -224,7 +239,8 @@ export function useReadings(terrainId: string | null, params?: { from?: string; 
     queryKey: ['readings', terrainId, params],
     queryFn: () => api.getReadings(terrainId!, params),
     enabled: !!terrainId,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
     placeholderData: keepPreviousData,
     retry: 1,
   });

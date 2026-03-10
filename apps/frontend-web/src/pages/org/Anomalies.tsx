@@ -1,69 +1,27 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
-import {
   AlertTriangle, Bell, BellOff, CheckCircle, CheckCircle2, ShieldAlert,
-  Activity, Loader2, Brain, TrendingDown, Settings2,
+  Activity, Brain, TrendingDown,
 } from 'lucide-react';
-import { useIncidents, useIncidentStats, useTerrainOverview, useUpdateIncident } from '@/hooks/useApi';
+import { useTerrainOverview } from '@/hooks/useApi';
 import { AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
 import { useAlarmEngine } from '@/hooks/useAlarmEngine';
 import { cn } from '@/lib/utils';
 
-const SEVERITY_CONFIG: Record<string, { label: string; color: string; bg: string }> = {
-  critical: { label: 'Critique', color: 'text-red-700', bg: 'bg-red-100 border-red-200' },
-  warning: { label: 'Attention', color: 'text-amber-700', bg: 'bg-amber-100 border-amber-200' },
-  info: { label: 'Info', color: 'text-blue-700', bg: 'bg-blue-100 border-blue-200' },
-};
-
 export default function Anomalies() {
   const { selectedTerrainId } = useAppContext();
-  const [statusFilter, setStatusFilter] = useState<string>('_all');
-  const [severityFilter, setSeverityFilter] = useState<string>('_all');
-  const [tab, setTab] = useState<'alerts' | 'local' | 'ai'>('alerts');
+  const [tab, setTab] = useState<'local' | 'ai'>('local');
 
-  const { data: statsData, isLoading: statsLoading } = useIncidentStats();
-  const { data: incidentsData, isLoading: incLoading } = useIncidents({
-    terrain_id: selectedTerrainId ?? undefined,
-    status: statusFilter !== '_all' ? statusFilter : undefined,
-    severity: severityFilter !== '_all' ? severityFilter : undefined,
-    limit: 100,
-  });
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
-  const updateIncident = useUpdateIncident();
   const alarmEngine = useAlarmEngine(selectedTerrainId);
 
-  const incidents = (incidentsData?.incidents ?? []) as Array<Record<string, any>>;
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
-  const stats = statsData ?? { open_count: 0, critical_count: 0, total: 0, breakdown: [] };
-
-  // Count alerts per device
-  const alertsByDevice = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const inc of incidents) {
-      const pid = String(inc.point_id ?? 'unknown');
-      map.set(pid, (map.get(pid) ?? 0) + 1);
-    }
-    return map;
-  }, [incidents]);
-
-  // Resolved count
-  const resolvedCount = useMemo(() => incidents.filter(i => i.status === 'resolved' || i.status === 'closed').length, [incidents]);
-
-  const handleResolve = async (id: string) => {
-    await updateIncident.mutateAsync({ id, status: 'resolved' });
-  };
-
-  const handleAcknowledge = async (id: string) => {
-    await updateIncident.mutateAsync({ id, status: 'acknowledged' });
-  };
 
   return (
     <div className="space-y-6">
@@ -74,9 +32,6 @@ export default function Anomalies() {
 
       {/* Tabs */}
       <div className="flex flex-wrap gap-2">
-        <Button variant={tab === 'alerts' ? 'default' : 'outline'} size="sm" onClick={() => setTab('alerts')}>
-          <Bell className="w-4 h-4 mr-1" /> Alertes serveur
-        </Button>
         <Button variant={tab === 'local' ? 'default' : 'outline'} size="sm" onClick={() => setTab('local')}>
           <AlertTriangle className="w-4 h-4 mr-1" /> Détection locale
           {alarmEngine.stats.active > 0 && <Badge className="ml-1 bg-red-500 text-white text-[9px]">{alarmEngine.stats.active}</Badge>}
@@ -86,149 +41,7 @@ export default function Anomalies() {
         </Button>
       </div>
 
-      {tab === 'alerts' ? (
-        <>
-          {/* KPI row */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
-            <KpiCard
-              label="Alertes actives"
-              value={stats.open_count}
-              icon={<Bell className="w-4 h-4" />}
-              variant={stats.open_count > 0 ? 'warning' : 'default'}
-            />
-            <KpiCard
-              label="Critiques"
-              value={stats.critical_count}
-              icon={<ShieldAlert className="w-4 h-4" />}
-              variant={stats.critical_count > 0 ? 'critical' : 'default'}
-            />
-            <KpiCard
-              label="Résolues"
-              value={resolvedCount}
-              icon={<CheckCircle className="w-4 h-4" />}
-              variant="success"
-            />
-            <KpiCard
-              label="Total"
-              value={stats.total}
-              icon={<Activity className="w-4 h-4" />}
-            />
-          </div>
-
-          {/* Alerts per device summary */}
-          {alertsByDevice.size > 0 && (
-            <Card>
-              <CardHeader className="pb-2">
-                <CardTitle className="text-base font-medium">Alertes par appareil</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex flex-wrap gap-2">
-                  {Array.from(alertsByDevice.entries())
-                    .sort((a, b) => b[1] - a[1])
-                    .map(([pid, count]) => {
-                      const pointName = points.find(p => String(p.id) === pid)?.name ?? pid;
-                      return (
-                        <Badge key={pid} variant="outline" className="text-xs px-2 py-1 gap-1">
-                          <AlertTriangle className="w-3 h-3 text-amber-500" />
-                          {String(pointName)}: {count}
-                        </Badge>
-                      );
-                    })}
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Filters */}
-          <div className="flex flex-wrap items-end gap-3">
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Statut</label>
-              <Select value={statusFilter} onValueChange={setStatusFilter}>
-                <SelectTrigger className="w-40 h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_all">Tous</SelectItem>
-                  <SelectItem value="open">Ouvert</SelectItem>
-                  <SelectItem value="acknowledged">Reconnu</SelectItem>
-                  <SelectItem value="resolved">Résolu</SelectItem>
-                  <SelectItem value="closed">Fermé</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <label className="text-xs font-medium text-muted-foreground">Sévérité</label>
-              <Select value={severityFilter} onValueChange={setSeverityFilter}>
-                <SelectTrigger className="w-40 h-8 text-xs"><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="_all">Toutes</SelectItem>
-                  <SelectItem value="critical">Critique</SelectItem>
-                  <SelectItem value="warning">Attention</SelectItem>
-                  <SelectItem value="info">Info</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-
-          {/* Alert list */}
-          {(incLoading || statsLoading) && (
-            <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>
-          )}
-
-          {!incLoading && incidents.length === 0 && (
-            <Card className="border-dashed">
-              <CardContent className="py-12 text-center text-muted-foreground flex flex-col items-center gap-3">
-                <BellOff className="w-8 h-8" />
-                <span>Aucune alerte pour les filtres sélectionnés</span>
-              </CardContent>
-            </Card>
-          )}
-
-          {!incLoading && incidents.length > 0 && (
-            <div className="space-y-2">
-              {incidents.map(inc => {
-                const sev = SEVERITY_CONFIG[inc.severity] ?? SEVERITY_CONFIG.info;
-                const pointName = points.find(p => String(p.id) === String(inc.point_id))?.name;
-                const isActive = inc.status === 'open' || inc.status === 'acknowledged';
-                const created = new Date(inc.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
-
-                return (
-                  <Card key={inc.id} className={cn('transition-all', isActive && 'border-l-4', inc.severity === 'critical' && 'border-l-red-500', inc.severity === 'warning' && 'border-l-amber-400')}>
-                    <CardContent className="p-4 flex items-start gap-3">
-                      <div className={cn('rounded-full p-1.5 mt-0.5', sev.bg)}>
-                        <AlertTriangle className={cn('w-4 h-4', sev.color)} />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-sm">{inc.title}</span>
-                          <Badge className={cn('text-[9px]', sev.bg, sev.color)}>{sev.label}</Badge>
-                          <Badge variant="outline" className="text-[9px]">{inc.status}</Badge>
-                          {pointName && <Badge variant="outline" className="text-[9px]">{String(pointName)}</Badge>}
-                        </div>
-                        {inc.description && <p className="text-xs text-muted-foreground mt-1">{inc.description}</p>}
-                        <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-3">
-                          <span>{created}</span>
-                          {inc.source && <span>Source: {inc.source}</span>}
-                        </div>
-                      </div>
-                      {isActive && (
-                        <div className="flex items-center gap-1 flex-shrink-0">
-                          {inc.status === 'open' && (
-                            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => handleAcknowledge(inc.id)}>
-                              Reconnaître
-                            </Button>
-                          )}
-                          <Button variant="outline" size="sm" className="h-7 text-xs text-green-700" onClick={() => handleResolve(inc.id)}>
-                            <CheckCircle className="w-3 h-3 mr-1" /> Résoudre
-                          </Button>
-                        </div>
-                      )}
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          )}
-        </>
-      ) : tab === 'local' ? (
+      {tab === 'local' ? (
         /* ── Local alarm detection (based on configured rules + device alarm_state) ── */
         <>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">

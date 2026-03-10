@@ -11,7 +11,7 @@ import {
 import {
   TrendingUp, Loader2, Calendar, Activity, Zap, Target, BarChart3, Brain, RefreshCw,
 } from 'lucide-react';
-import { useReadings, useTerrainOverview } from '@/hooks/useApi';
+import { useReadings, useTerrainOverview, stableFrom, stableNow } from '@/hooks/useApi';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
@@ -62,24 +62,29 @@ function computeForecast(
       return (ma * 100 + da) - (mb * 100 + db);
     });
 
-  if (days.length < 2) return { history: days, forecast: [], dailyAvg: 0, trend: 0 };
+  if (days.length < 1) return { history: days, forecast: [], dailyAvg: 0, trend: 0 };
 
-  // Compute rolling average (window 3) and linear trend
+  // With only 1 day, use flat forecast (no trend possible)
   const n = days.length;
   const avgPower = days.reduce((s, d) => s + d.avg, 0) / n;
 
-  // Linear regression for trend
-  const xMean = (n - 1) / 2;
-  const yMean = avgPower;
-  let numerator = 0, denominator = 0;
-  for (let i = 0; i < n; i++) {
-    numerator += (i - xMean) * (days[i].avg - yMean);
-    denominator += (i - xMean) ** 2;
+  let slope = 0;
+  if (n >= 2) {
+    // Linear regression for trend
+    const xMean = (n - 1) / 2;
+    const yMean = avgPower;
+    let numerator = 0, denominator = 0;
+    for (let i = 0; i < n; i++) {
+      numerator += (i - xMean) * (days[i].avg - yMean);
+      denominator += (i - xMean) ** 2;
+    }
+    slope = denominator !== 0 ? numerator / denominator : 0;
   }
-  const slope = denominator !== 0 ? numerator / denominator : 0;
 
-  // Standard deviation for confidence bands
-  const stdDev = Math.sqrt(days.reduce((s, d) => s + (d.avg - avgPower) ** 2, 0) / n);
+  // Standard deviation for confidence bands (use 30% of avg if only 1 day)
+  const stdDev = n >= 2
+    ? Math.sqrt(days.reduce((s, d) => s + (d.avg - avgPower) ** 2, 0) / n)
+    : avgPower * 0.3;
 
   // Generate forecast points
   const forecast: Array<{ day: string; predicted: number; upper: number; lower: number }> = [];
@@ -87,7 +92,7 @@ function computeForecast(
   for (let i = 1; i <= forecastDays; i++) {
     const futureDate = new Date(lastDate.getTime() + i * 86400_000);
     const dayLabel = futureDate.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-    const predicted = Math.max(0, yMean + slope * (n - 1 + i - xMean));
+    const predicted = Math.max(0, avgPower + slope * (n >= 2 ? (n - 1 + i - (n - 1) / 2) : 0));
     const confidence = stdDev * 1.5 * Math.sqrt(1 + i / n);
     forecast.push({
       day: dayLabel,
@@ -132,8 +137,8 @@ export default function Forecasts() {
   const queryClient = useQueryClient();
 
   const h = FORECAST_HORIZONS.find(f => f.key === horizon) ?? FORECAST_HORIZONS[0];
-  const from = useMemo(() => new Date(Date.now() - h.historyDays * 86400_000).toISOString(), [h]);
-  const to = useMemo(() => new Date().toISOString(), []);
+  const from = useMemo(() => stableFrom(h.historyDays * 86400_000), [h]);
+  const to = useMemo(() => stableNow(), []);
 
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
   const { data, isLoading } = useReadings(selectedTerrainId, {
@@ -322,7 +327,7 @@ export default function Forecasts() {
           ) : (
             <Card>
               <CardContent className="py-12 text-center text-muted-foreground">
-                Données insuffisantes pour générer une prévision. Attendez au moins 2 jours de données.
+                Aucune donnée de mesure disponible pour cette période. Vérifiez que les appareils transmettent des données.
               </CardContent>
             </Card>
           )}

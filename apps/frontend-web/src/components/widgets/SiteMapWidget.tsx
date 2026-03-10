@@ -9,8 +9,9 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
-  MapPin, Settings2, Cloud, Thermometer, Wind, Droplets,
-  Wifi, WifiOff, Clock, Radio, X, Edit3, MousePointerClick, Hexagon,
+  MapPin, Settings2, Thermometer, Wind, Droplets,
+  Wifi, WifiOff, Clock,
+  X, Edit3, MousePointerClick, Hexagon,
   Lock, Unlock,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -90,6 +91,7 @@ function makeDotIcon(color: string) {
 const ICON_ONLINE = makeDotIcon('#22c55e');
 const ICON_STALE = makeDotIcon('#f59e0b');
 const ICON_OFFLINE = makeDotIcon('#ef4444');
+const ICON_POINT = makeDotIcon('#6b7280');
 
 const ICON_GATEWAY = L.divIcon({
   className: '',
@@ -176,11 +178,15 @@ function WeatherPanel({ lat, lng }: { lat: number; lng: number }) {
   );
 }
 
-/* ─── Recenter helper ─────────────────────────────────── */
+/* ─── Recenter helper (only on mount) ─────────────────── */
 function RecenterMap({ lat, lng, zoom }: { lat: number; lng: number; zoom: number }) {
   const map = useMap();
+  const doneRef = useRef(false);
   useEffect(() => {
-    map.setView([lat, lng], zoom);
+    if (!doneRef.current) {
+      map.setView([lat, lng], zoom);
+      doneRef.current = true;
+    }
   }, [lat, lng, zoom, map]);
   return null;
 }
@@ -206,7 +212,6 @@ function ConfigDialog({ open, onClose, config, onSave }: {
   const [newZoneName, setNewZoneName] = useState('');
 
   const handleSave = () => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
     onSave(cfg);
     onClose();
   };
@@ -361,15 +366,6 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
     });
   }, []);
 
-  const getPointStatus = useCallback((p: Record<string, any>) => {
-    if (!p) return 'offline';
-    const lastSeen = p.lastSeen as string | null;
-    const minutesAgo = lastSeen ? Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000) : null;
-    if (minutesAgo == null) return 'offline';
-    if (minutesAgo < (config?.staleThresholdMin ?? 15)) return 'online';
-    if (minutesAgo < (config?.offlineThresholdMin ?? 60)) return 'stale';
-    return 'offline';
-  }, [config?.staleThresholdMin, config?.offlineThresholdMin]);
 
   // Compute point positions — only show points with explicit coordinates
   const pointMarkers = useMemo(() => {
@@ -378,11 +374,18 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
       if (!p) return null;
       const custom = config.pointLocations?.[String(p.id)];
       if (!custom) return null; // no position set → don't show on map
-      const status = getPointStatus(p);
+      // Status based on lastSeen thresholds
+      const lastSeen = p.lastSeen as string | null;
+      const minutesAgo = lastSeen ? Math.floor((Date.now() - new Date(lastSeen).getTime()) / 60000) : null;
+      let status: 'online' | 'stale' | 'offline' = 'offline';
+      if (minutesAgo != null) {
+        if (minutesAgo < (config.staleThresholdMin ?? 15)) status = 'online';
+        else if (minutesAgo < (config.offlineThresholdMin ?? 60)) status = 'stale';
+      }
       const r = p.readings;
       return { ...p, lat: custom.lat, lng: custom.lng, status, r };
     }).filter(Boolean);
-  }, [points, config, getPointStatus]);
+  }, [points, config]);
 
   // Points that have no position yet
   const unpositionedPoints = useMemo(() => {
@@ -658,7 +661,7 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
         </div>
       </CardContent>
 
-      <ConfigDialog open={configOpen} onClose={() => setConfigOpen(false)} config={config} onSave={setConfig} />
+      <ConfigDialog open={configOpen} onClose={() => setConfigOpen(false)} config={config} onSave={saveConfig} />
     </Card>
   );
 });

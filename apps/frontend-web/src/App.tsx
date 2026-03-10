@@ -52,8 +52,8 @@ const LazyFallback = () => (
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      gcTime: 10 * 60 * 1000,       // keep cache 10 min (survives navigation)
-      staleTime: 30_000,              // consider fresh for 30s
+      gcTime: 30 * 60 * 1000,       // keep cache 30 min (survives navigation)
+      staleTime: 2 * 60_000,          // consider fresh for 2 min
       refetchOnWindowFocus: false,    // don't refetch when tab refocused
       retry: 1,
     },

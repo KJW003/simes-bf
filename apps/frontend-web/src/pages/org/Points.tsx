@@ -14,7 +14,7 @@ import {
   Activity, ExternalLink, Loader2, Eye, AlertTriangle,
   Search, LayoutGrid, Table, FolderTree, Pencil, Check, X,
 } from 'lucide-react';
-import { useTerrainOverview, useReadings, useUpdatePoint } from '@/hooks/useApi';
+import { useTerrainOverview, useReadings, useUpdatePoint, stableFrom } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
 import { MiniSparkline } from '@/components/ui/mini-sparkline';
 
@@ -36,14 +36,14 @@ export default function Points({ embedded }: { embedded?: boolean }) {
   const updatePoint = useUpdatePoint();
 
   // Fetch recent readings for the selected point
-  const readingsFrom = useMemo(() => new Date(Date.now() - 24 * 3600_000).toISOString(), []);
+  const readingsFrom = stableFrom(24 * 3600_000);
   const { data: pointReadings } = useReadings(
     selectedPointId ? selectedTerrainId : null,
     selectedPointId ? { point_id: selectedPointId, from: readingsFrom, limit: 50 } : undefined,
   );
 
   // Fetch 24h readings for sparklines (all points)
-  const sparklineFrom = useMemo(() => new Date(Date.now() - 24 * 3600_000).toISOString(), []);
+  const sparklineFrom = stableFrom(24 * 3600_000);
   const { data: allReadingsData } = useReadings(
     selectedTerrainId,
     { from: sparklineFrom, limit: 5000 },

@@ -22,7 +22,7 @@ import {
 } from 'lucide-react';
 import {
   useTerrainOverview, useZones, useCreateZone, useUpdateZone, useDeleteZone,
-  useReadings, useUpdatePoint,
+  useReadings, useUpdatePoint, stableFrom,
 } from '@/hooks/useApi';
 import api from '@/lib/api';
 import { useQueryClient } from '@tanstack/react-query';
@@ -59,8 +59,8 @@ export default function ZonesPoints() {
   const [renameValue, setRenameValue] = useState('');
   const [viewMode, setViewMode] = useState<'grid' | 'table' | 'tree'>('tree');
 
-  // Sparkline data
-  const sparklineFrom = useMemo(() => new Date(Date.now() - 24 * 3600_000).toISOString(), []);
+  // Sparkline data — stableFrom keeps the query key stable within 15-min windows
+  const sparklineFrom = stableFrom(24 * 3600_000);
   const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom, limit: 5000 });
   const sparklineMap = useMemo(() => {
     const map = new Map<string, number[]>();
@@ -82,7 +82,7 @@ export default function ZonesPoints() {
   }, [allReadingsData]);
 
   // Point detail readings
-  const readingsFrom = useMemo(() => new Date(Date.now() - 24 * 3600_000).toISOString(), []);
+  const readingsFrom = stableFrom(24 * 3600_000);
   const { data: pointReadings } = useReadings(
     selectedPointId ? selectedTerrainId : null,
     selectedPointId ? { point_id: selectedPointId, from: readingsFrom, limit: 50 } : undefined,

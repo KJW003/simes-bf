@@ -14,7 +14,7 @@ import {
   DollarSign, AlertTriangle, Bell,
   Settings2, CheckCircle2, Plus, X,
 } from 'lucide-react';
-import { useDashboard, useReadings, useTerrainOverview, useIncidentStats } from '@/hooks/useApi';
+import { useDashboard, useReadings, useTerrainOverview, useIncidentStats, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -288,8 +288,8 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, 
 export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
-  const from = useMemo(() => new Date(Date.now() - 30 * 86400_000).toISOString(), []);
-  const to = useMemo(() => new Date().toISOString(), []);
+  const from = useMemo(() => stableFrom(30 * 86400_000), []);
+  const to = useMemo(() => stableNow(), []);
   const { data } = useReadings(terrainId, { from, to, limit: 10000 });
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
 
@@ -349,8 +349,8 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
   const [period, setPeriod] = useState<string>('30d');
 
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
-  const from = useMemo(() => new Date(Date.now() - periodDays * 86400_000).toISOString(), [periodDays]);
-  const to = useMemo(() => new Date().toISOString(), []);
+  const from = useMemo(() => stableFrom(periodDays * 86400_000), [periodDays]);
+  const to = useMemo(() => stableNow(), []);
   const { data } = useReadings(terrainId, { from, to, limit: 50000 });
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
 

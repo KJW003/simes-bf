@@ -88,7 +88,19 @@ export async function loadAlarmSettingsFromServer(): Promise<void> {
       }
       const serverMapConfig = res.settings.mapConfig;
       if (serverMapConfig && typeof serverMapConfig === 'object') {
-        localStorage.setItem('simes-map-config', JSON.stringify(serverMapConfig));
+        // Merge server config with local config to preserve local-only fields (e.g. mapLocked)
+        try {
+          const local = localStorage.getItem('simes-map-config');
+          const localCfg = local ? JSON.parse(local) : {};
+          const merged = { ...localCfg, ...serverMapConfig };
+          // Preserve mapLocked from local if server doesn't have it
+          if (localCfg.mapLocked !== undefined && (serverMapConfig as any).mapLocked === undefined) {
+            merged.mapLocked = localCfg.mapLocked;
+          }
+          localStorage.setItem('simes-map-config', JSON.stringify(merged));
+        } catch {
+          localStorage.setItem('simes-map-config', JSON.stringify(serverMapConfig));
+        }
       }
       const serverWidgetLayout = res.settings.widgetLayout;
       if (serverWidgetLayout && typeof serverWidgetLayout === 'object') {
