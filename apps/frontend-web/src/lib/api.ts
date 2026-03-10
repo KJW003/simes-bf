@@ -105,6 +105,25 @@ export interface ApiUser {
   lastLoginAt?: string | null;
 }
 
+/**
+ * Point data from terrain overview endpoint
+ */
+export interface TerrainOverviewPoint {
+  id: string;
+  name: string;
+  readings?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+/**
+ * Zone data from terrain overview endpoint
+ */
+export interface TerrainOverviewZone {
+  id: string;
+  name: string;
+  [key: string]: unknown;
+}
+
 export const api = {
   // ── Auth ──
   login: (email: string, password: string) =>
@@ -299,7 +318,7 @@ export const api = {
     request<Record<string, unknown>>(`/terrains/${terrainId}/contract`),
 
   getTerrainOverview: (terrainId: string) =>
-    request<{ ok: boolean; terrain_id: string; points: Array<Record<string, unknown>>; zones: Array<Record<string, unknown>> }>(
+    request<{ ok: boolean; terrain_id: string; points: TerrainOverviewPoint[]; zones: TerrainOverviewZone[] }>(
       `/terrains/${terrainId}/overview`,
     ),
 

@@ -8,7 +8,9 @@
 
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import api from '@/lib/api';
-import type { ApiOrg, ApiSite, ApiTerrain, ApiZone, ApiMeasurementPoint } from '@/lib/api';
+import type { ApiOrg, ApiSite, ApiTerrain, ApiZone, ApiMeasurementPoint, TerrainOverviewPoint, TerrainOverviewZone } from '@/lib/api';
+
+// ─── Type Definitions ──────────────────────────────────────
 
 // ─── Referential ───────────────────────────────────────────
 
@@ -89,7 +91,7 @@ export interface DashboardData {
 }
 
 export function useDashboard(terrainId: string | null) {
-  return useQuery<DashboardData>({
+  return useQuery<DashboardData, Error, DashboardData>({
     queryKey: ['dashboard', terrainId],
     queryFn: async () => {
       const r = await api.getDashboard(terrainId!);
@@ -118,7 +120,7 @@ export interface LatestReadingsData {
 }
 
 export function useLatestReadings(terrainId: string | null) {
-  return useQuery<LatestReadingsData>({
+  return useQuery<LatestReadingsData, Error, LatestReadingsData>({
     queryKey: ['readings-latest', terrainId],
     queryFn: () => api.getLatestReadings(terrainId!),
     enabled: !!terrainId,
@@ -190,14 +192,14 @@ export function useTariffPlans() {
 export interface TerrainOverviewData {
   ok: boolean;
   terrain_id: string;
-  points: Array<Record<string, any>>;
-  zones: Array<Record<string, any>>;
+  points: TerrainOverviewPoint[];
+  zones: TerrainOverviewZone[];
   points_count: number;
   zones_count: number;
 }
 
 export function useTerrainOverview(terrainId: string | null) {
-  return useQuery<TerrainOverviewData>({
+  return useQuery<TerrainOverviewData, Error, TerrainOverviewData>({
     queryKey: ['terrain-overview', terrainId],
     queryFn: () => api.getTerrainOverview(terrainId!),
     enabled: !!terrainId,
@@ -218,7 +220,7 @@ export interface ReadingsData {
 }
 
 export function useReadings(terrainId: string | null, params?: { from?: string; to?: string; point_id?: string; limit?: number }) {
-  return useQuery<ReadingsData>({
+  return useQuery<ReadingsData, Error, ReadingsData>({
     queryKey: ['readings', terrainId, params],
     queryFn: () => api.getReadings(terrainId!, params),
     enabled: !!terrainId,
