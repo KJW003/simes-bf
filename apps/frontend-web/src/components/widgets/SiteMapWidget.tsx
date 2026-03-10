@@ -28,6 +28,7 @@ interface SiteMapConfig {
   /** minutes thresholds: online < staleThreshold, stale < offlineThreshold, else offline */
   staleThresholdMin: number;
   offlineThresholdMin: number;
+  mapLocked?: boolean;
 }
 
 interface WeatherData {
@@ -328,8 +329,17 @@ function PointCoordsInput({ point, onSave }: { point: Record<string, any>; onSav
   );
 }
 
+/* ─── Height classes by widget size ────────────────────── */
+function sizeHeightClass(size?: 'sm' | 'md' | 'lg') {
+  switch (size) {
+    case 'lg': return 'h-[400px] sm:h-[480px] md:h-[550px]';
+    case 'md': return 'h-[320px] sm:h-[400px] md:h-[450px]';
+    default:   return 'h-[280px] sm:h-[350px] md:h-[400px]';
+  }
+}
+
 /* ─── Main Widget ─────────────────────────────────────── */
-export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId }: { terrainId: string }) {
+export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size }: { terrainId: string; size?: 'sm' | 'md' | 'lg' }) {
   const [config, setConfig] = useState<SiteMapConfig>(loadConfig);
   const [configOpen, setConfigOpen] = useState(false);
   const { data: overviewData } = useTerrainOverview(terrainId);
@@ -380,8 +390,17 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId }: { 
     return points.filter(p => !config.pointLocations?.[String(p.id)]);
   }, [points, config.pointLocations]);
 
-  // Map lock state
-  const [mapLocked, setMapLocked] = useState(false);
+  // Map lock state — persisted in config
+  const [mapLocked, setMapLocked] = useState(config.mapLocked ?? false);
+
+  const toggleMapLock = useCallback(() => {
+    setMapLocked(prev => {
+      const next = !prev;
+      const updated = { ...config, mapLocked: next };
+      saveConfig(updated);
+      return next;
+    });
+  }, [config, saveConfig]);
 
   const onlineCount = pointMarkers.filter(p => p.status === 'online').length;
   const staleCount = pointMarkers.filter(p => p.status === 'stale').length;
@@ -463,7 +482,7 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId }: { 
             <Button variant={editMode !== 'none' ? 'default' : 'outline'} size="sm" className="h-7 text-xs gap-1" onClick={() => setEditMode(editMode !== 'none' ? 'none' : 'place-point')}>
               <Edit3 className="w-3 h-3" /> Éditer
             </Button>
-            <Button variant={mapLocked ? 'default' : 'outline'} size="sm" className="h-7 text-xs gap-1" onClick={() => setMapLocked(v => !v)}>
+            <Button variant={mapLocked ? 'default' : 'outline'} size="sm" className="h-7 text-xs gap-1" onClick={toggleMapLock}>
               {mapLocked ? <Lock className="w-3 h-3" /> : <Unlock className="w-3 h-3" />}
               {mapLocked ? 'Verrouillé' : 'Verrouiller'}
             </Button>
@@ -542,24 +561,9 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId }: { 
           </div>
         )}
 
-        {/* Coordinate input for unpositioned points */}
-        {unpositionedPoints.length > 0 && editMode === 'none' && (
-          <div className="p-2 border rounded-lg bg-amber-50 dark:bg-amber-950/30 border-amber-200 dark:border-amber-800 text-xs space-y-2">
-            <div className="font-medium text-amber-700 dark:text-amber-400">{unpositionedPoints.length} point(s) sans position — saisissez les coordonnées :</div>
-            {unpositionedPoints.map(p => (
-              <PointCoordsInput
-                key={String(p.id)}
-                point={p}
-                onSave={(lat, lng) => {
-                  const updated = { ...config, pointLocations: { ...config.pointLocations, [String(p.id)]: { lat, lng } } };
-                  saveConfig(updated);
-                }}
-              />
-            ))}
-          </div>
-        )}
+        {/* Coordinate input for unpositioned points — handled via edit toolbar */}
 
-        <div className="rounded-lg overflow-hidden border h-[280px] sm:h-[350px] md:h-[400px]">
+        <div className={cn("rounded-lg overflow-hidden border", sizeHeightClass(size))}>
           <MapContainer
             center={[config.lat, config.lng]}
             zoom={config.zoom}

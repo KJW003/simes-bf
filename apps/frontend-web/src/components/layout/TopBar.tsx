@@ -40,6 +40,7 @@ import { cn } from '@/lib/utils';
 export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
   const {
     mode,
+    setMode,
     currentUser,
     selectedOrg,
     selectedSite,
@@ -111,9 +112,15 @@ export function TopBar({ onToggleSidebar }: { onToggleSidebar?: () => void }) {
         <Badge variant="outline" className="text-[10px] px-1.5 py-0">
           {mode === 'org' ? 'ORG' : 'NOC'}
         </Badge>
+        {currentUser.role === 'platform_super_admin' && (
+          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1" onClick={() => setMode(mode === 'org' ? 'platform' : 'org')}>
+            {mode === 'platform' ? <ToggleLeft className="w-4 h-4" /> : <ToggleRight className="w-4 h-4" />}
+            {mode === 'platform' ? 'Org' : 'NOC'}
+          </Button>
+        )}
       </div>
 
-      {mode === 'org' && currentUser.role !== 'platform_super_admin' && (
+      {mode === 'org' && (
         <div className="flex items-center gap-1 md:gap-2 overflow-x-auto">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>

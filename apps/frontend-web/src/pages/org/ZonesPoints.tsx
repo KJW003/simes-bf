@@ -18,7 +18,7 @@ import {
 import {
   Map as MapIcon, Zap, Activity, Gauge, Radio, Plus, Pencil, Trash2,
   Loader2, Search, ChevronDown, ChevronRight, Eye, ExternalLink,
-  FolderTree, AlertTriangle, Check, X,
+  FolderTree, AlertTriangle, Check, X, LayoutGrid, Table,
 } from 'lucide-react';
 import {
   useTerrainOverview, useZones, useCreateZone, useUpdateZone, useDeleteZone,
@@ -57,6 +57,7 @@ export default function ZonesPoints() {
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  const [viewMode, setViewMode] = useState<'grid' | 'table' | 'tree'>('tree');
 
   // Sparkline data
   const sparklineFrom = useMemo(() => new Date(Date.now() - 24 * 3600_000).toISOString(), []);
@@ -124,6 +125,12 @@ export default function ZonesPoints() {
 
     return { grouped: groupedArr, unassigned: unassignedPts, filteredCount: count };
   }, [points, zones, searchQuery, categoryFilter]);
+
+  // Flat list of all filtered points (for grid/table views)
+  const allFilteredPoints = useMemo(() => {
+    const all = grouped.flatMap(g => g.points).concat(unassigned);
+    return all;
+  }, [grouped, unassigned]);
 
   // KPIs
   const totalPower = useMemo(
@@ -295,9 +302,166 @@ export default function ZonesPoints() {
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={expandAll}>Tout ouvrir</Button>
           <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={collapseAll}>Tout fermer</Button>
         </div>
+        <div className="flex gap-1 ml-auto">
+          <Button variant={viewMode === 'grid' ? 'default' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('grid')} title="Vue grille">
+            <LayoutGrid className="w-4 h-4" />
+          </Button>
+          <Button variant={viewMode === 'table' ? 'default' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('table')} title="Vue tableau">
+            <Table className="w-4 h-4" />
+          </Button>
+          <Button variant={viewMode === 'tree' ? 'default' : 'outline'} size="sm" className="h-8 w-8 p-0" onClick={() => setViewMode('tree')} title="Vue par zone">
+            <FolderTree className="w-4 h-4" />
+          </Button>
+        </div>
         <Badge variant="outline" className="text-xs">{filteredCount} point{filteredCount !== 1 ? 's' : ''}</Badge>
       </div>
 
+      {/* ════ GRID VIEW ════ */}
+      {viewMode === 'grid' && (
+        allFilteredPoints.length === 0 ? (
+          <Card className="border-dashed"><CardContent className="py-12 text-center text-muted-foreground">Aucun point de mesure trouvé.</CardContent></Card>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
+            {allFilteredPoints.map(p => {
+              const status = getPointStatus(p);
+              const r = p.readings as Record<string, any> | null;
+              const pf = r?.power_factor_total != null ? Number(r.power_factor_total) : null;
+              const zoneName = zones.find(z => String(z.id) === String(p.zone_id))?.name as string | undefined;
+              const sparkData = sparklineMap.get(String(p.id));
+
+              return (
+                <Card
+                  key={String(p.id)}
+                  className={cn(
+                    'transition-all hover:shadow-md cursor-pointer',
+                    status.alarm > 0 && 'border-red-300 bg-red-50/30',
+                    status.stale && !status.alarm && 'border-amber-200 bg-amber-50/20',
+                  )}
+                  onClick={() => setSelectedPointId(String(p.id))}
+                >
+                  <CardHeader className="pb-2 pt-3 px-4">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className={cn(
+                          'w-2 h-2 rounded-full flex-shrink-0',
+                          status.alarm > 0 ? 'bg-red-500 animate-pulse' : status.isOnline ? 'bg-emerald-500' : status.stale ? 'bg-amber-400' : 'bg-gray-300'
+                        )} />
+                        <CardTitle className="text-sm font-medium truncate">{String(p.name)}</CardTitle>
+                      </div>
+                      <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setSelectedPointId(String(p.id)); }}>
+                        <Eye className="w-3 h-3" />
+                      </Button>
+                    </div>
+                    <div className="flex items-center gap-1 mt-1 flex-wrap">
+                      <Badge variant="outline" className="text-[9px] px-1">{String(p.measure_category ?? '—')}</Badge>
+                      <Badge variant={status.isOnline ? 'default' : 'secondary'} className={cn('text-[9px] px-1', status.isOnline ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-100 text-gray-500')}>
+                        {status.isOnline ? 'En ligne' : 'Hors ligne'}
+                      </Badge>
+                      {zoneName && <span className="text-[10px] text-muted-foreground">Zone: {String(zoneName)}</span>}
+                      {status.minutesAgo != null && <span className={cn('text-[10px]', status.stale && 'text-amber-600 font-medium')}>il y a {status.minutesAgo} min</span>}
+                    </div>
+                  </CardHeader>
+                  {r && (
+                    <CardContent className="px-4 pb-3 pt-1">
+                      <div className="grid grid-cols-3 gap-2 text-xs mb-2">
+                        <div className="rounded-md bg-muted/40 p-1.5 text-center">
+                          <div className="text-[10px] text-muted-foreground">P Active</div>
+                          <div className="mono font-semibold">{fmt(r.active_power_total)} <span className="text-[9px] font-normal">kW</span></div>
+                        </div>
+                        <div className="rounded-md bg-muted/40 p-1.5 text-center">
+                          <div className="text-[10px] text-muted-foreground">Q Réactive</div>
+                          <div className="mono font-semibold">{fmt(r.reactive_power_total)} <span className="text-[9px] font-normal">kvar</span></div>
+                        </div>
+                        <div className="rounded-md bg-muted/40 p-1.5 text-center">
+                          <div className="text-[10px] text-muted-foreground">S Apparente</div>
+                          <div className="mono font-semibold">{fmt(r.apparent_power_total)} <span className="text-[9px] font-normal">kVA</span></div>
+                        </div>
+                      </div>
+                      <div className="space-y-1.5 text-xs">
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Va / Vb / Vc</span>
+                          <span className="mono font-medium">{fmt(r.voltage_a)} / {fmt(r.voltage_b)} / {fmt(r.voltage_c)} V</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">PF</span>
+                          <span className={cn('mono font-medium', pf != null && pf < 0.85 && 'text-amber-600')}>{fmt(r.power_factor_total)}</span>
+                        </div>
+                      </div>
+                      {sparkData && sparkData.length > 2 && (
+                        <div className="mt-2 pt-2 border-t border-border/40 flex items-center justify-between">
+                          <span className="text-[10px] text-muted-foreground">24h</span>
+                          <MiniSparkline data={sparkData} width={100} height={24} color={status.isOnline ? 'hsl(var(--primary))' : 'hsl(var(--muted-foreground))'} />
+                        </div>
+                      )}
+                    </CardContent>
+                  )}
+                </Card>
+              );
+            })}
+          </div>
+        )
+      )}
+
+      {/* ════ TABLE VIEW ════ */}
+      {viewMode === 'table' && (
+        allFilteredPoints.length === 0 ? (
+          <Card className="border-dashed"><CardContent className="py-12 text-center text-muted-foreground">Aucun point de mesure trouvé.</CardContent></Card>
+        ) : (
+          <Card>
+            <CardContent className="p-0">
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b bg-muted/50 text-left text-muted-foreground">
+                      <th className="px-4 py-2 font-medium">Statut</th>
+                      <th className="px-4 py-2 font-medium">Nom</th>
+                      <th className="px-4 py-2 font-medium">Catégorie</th>
+                      <th className="px-4 py-2 font-medium">Zone</th>
+                      <th className="px-4 py-2 font-medium text-right">P (kW)</th>
+                      <th className="px-4 py-2 font-medium text-right">PF</th>
+                      <th className="px-4 py-2 font-medium text-right">E imp (kWh)</th>
+                      <th className="px-4 py-2 font-medium text-right">Dernière donnée</th>
+                      <th className="px-4 py-2 font-medium"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allFilteredPoints.map(p => {
+                      const status = getPointStatus(p);
+                      const r = p.readings as Record<string, any> | null;
+                      const zoneName = zones.find(z => String(z.id) === String(p.zone_id))?.name as string | undefined;
+                      return (
+                        <tr key={String(p.id)} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                          <td className="px-4 py-2">
+                            <Badge variant={status.isOnline ? 'default' : 'secondary'} className={cn('text-[9px]', status.isOnline ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : 'bg-gray-100 text-gray-500')}>
+                              {status.isOnline ? 'En ligne' : 'Hors ligne'}
+                            </Badge>
+                          </td>
+                          <td className="px-4 py-2 font-medium">{String(p.name)}</td>
+                          <td className="px-4 py-2"><Badge variant="outline" className="text-[9px]">{String(p.measure_category ?? '—')}</Badge></td>
+                          <td className="px-4 py-2 text-muted-foreground text-xs">{zoneName ? String(zoneName) : '—'}</td>
+                          <td className="px-4 py-2 text-right mono">{r ? fmt(r.active_power_total) : '—'}</td>
+                          <td className="px-4 py-2 text-right mono">{r ? fmt(r.power_factor_total, 3) : '—'}</td>
+                          <td className="px-4 py-2 text-right mono">{r ? fmt(r.energy_import, 1) : '—'}</td>
+                          <td className="px-4 py-2 text-right text-xs text-muted-foreground">{status.minutesAgo != null ? `il y a ${status.minutesAgo} min` : '—'}</td>
+                          <td className="px-4 py-2">
+                            <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setSelectedPointId(String(p.id))}>
+                              <Eye className="w-3 h-3" />
+                            </Button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      )}
+
+      {/* ════ TREE VIEW (Zone sections) ════ */}
+      {viewMode === 'tree' && (
+        <>
       {/* Zone sections */}
       {grouped.map(({ zone, points: zonePoints }) => {
         const zid = String(zone.id);
@@ -375,6 +539,8 @@ export default function ZonesPoints() {
             </Button>
           </CardContent>
         </Card>
+      )}
+        </>
       )}
 
       {/* Point detail modal */}

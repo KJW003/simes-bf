@@ -71,9 +71,8 @@ function AppRoutes() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedLayout />}>
-        {isPlatformMode ? (
+        {isPlatformMode && (
           <>
-            <Route path="/" element={<ErrorBoundary><NocOverview /></ErrorBoundary>} />
             <Route path="/platform" element={<ErrorBoundary><NocOverview /></ErrorBoundary>} />
             <Route path="/platform/incidents" element={<ErrorBoundary><Incidents /></ErrorBoundary>} />
             <Route path="/platform/tenants" element={<ErrorBoundary><Tenants /></ErrorBoundary>} />
@@ -85,27 +84,25 @@ function AppRoutes() {
             {isPlatformUser && <Route path="/platform/purge" element={<ErrorBoundary><PurgeReadings /></ErrorBoundary>} />}
             <Route path="/platform/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />
           </>
-        ) : (
-          <>
-            {canAccessOrgRoute(role, "dashboard") && <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<ErrorBoundary><ZonesPoints /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<ErrorBoundary><ZonesPoints /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<ErrorBoundary><PowerQuality /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "history") && <Route path="/donnees" element={<ErrorBoundary><History /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "history") && <Route path="/history" element={<ErrorBoundary><History /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "forecasts") && <Route path="/forecasts" element={<ErrorBoundary><Forecasts /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "invoice") && <Route path="/invoice" element={<ErrorBoundary><Invoice /></ErrorBoundary>} />}
-            {hasSolar && canAccessOrgRoute(role, "pvBattery") && <Route path="/pv-battery" element={<ErrorBoundary><PvBattery /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "predimensionnement") && <Route path="/predimensionnement" element={<ErrorBoundary><Predimensionnement /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "energyAudit") && <Route path="/energy-audit" element={<ErrorBoundary><EnergyAudit /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "anomalies") && <Route path="/anomalies" element={<ErrorBoundary><Anomalies /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "exports") && <Route path="/exports" element={<ErrorBoundary><Exports /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "admin") && <Route path="/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/terrain/:terrainId/zones/:zoneId" element={<ErrorBoundary><ZonePage /></ErrorBoundary>} />}
-            {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points/:pointId" element={<ErrorBoundary><PointDetails /></ErrorBoundary>} />}
-            <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
-          </>
         )}
+        {/* Org routes — always rendered (access-control handles permissions) */}
+        {canAccessOrgRoute(role, "dashboard") && <Route path="/" element={<ErrorBoundary><Dashboard /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "dataMonitor") && <Route path="/data-monitor" element={<ErrorBoundary><ZonesPoints /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points" element={<ErrorBoundary><ZonesPoints /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "powerQuality") && <Route path="/power-quality" element={<ErrorBoundary><PowerQuality /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "history") && <Route path="/donnees" element={<ErrorBoundary><History /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "history") && <Route path="/history" element={<ErrorBoundary><History /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "forecasts") && <Route path="/forecasts" element={<ErrorBoundary><Forecasts /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "invoice") && <Route path="/invoice" element={<ErrorBoundary><Invoice /></ErrorBoundary>} />}
+        {hasSolar && canAccessOrgRoute(role, "pvBattery") && <Route path="/pv-battery" element={<ErrorBoundary><PvBattery /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "predimensionnement") && <Route path="/predimensionnement" element={<ErrorBoundary><Predimensionnement /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "energyAudit") && <Route path="/energy-audit" element={<ErrorBoundary><EnergyAudit /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "anomalies") && <Route path="/anomalies" element={<ErrorBoundary><Anomalies /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "exports") && <Route path="/exports" element={<ErrorBoundary><Exports /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "admin") && <Route path="/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "dataMonitor") && <Route path="/terrain/:terrainId/zones/:zoneId" element={<ErrorBoundary><ZonePage /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "dataMonitor") && <Route path="/points/:pointId" element={<ErrorBoundary><PointDetails /></ErrorBoundary>} />}
+        <Route path="/settings" element={<ErrorBoundary><SettingsPage /></ErrorBoundary>} />
         <Route path="*" element={<NotFound />} />
       </Route>
     </Routes>

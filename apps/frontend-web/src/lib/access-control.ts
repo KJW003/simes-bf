@@ -30,6 +30,7 @@ const ORG_ROUTE_ACCESS: Record<OrgRouteKey, UserRole[]> = {
 };
 
 export function canAccessOrgRoute(role: UserRole, key: OrgRouteKey) {
+  if (role === 'platform_super_admin') return true;
   const allowed = ORG_ROUTE_ACCESS[key];
   return allowed ? allowed.includes(role) : false;
 }

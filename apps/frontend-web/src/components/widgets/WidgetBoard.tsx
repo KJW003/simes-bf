@@ -220,7 +220,7 @@ function renderWidgetContent(
     case 'dashboard-load-curve':
       return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.from ?? new Date(Date.now() - 86400_000).toISOString()} to={ctx.to ?? new Date().toISOString()} /> : null;
     case 'dashboard-map':
-      return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} /> : null;
+      return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} size={size} /> : null;
     case 'dashboard-alarms':
       return ctx?.terrainId ? <AlarmWidget terrainId={ctx.terrainId} /> : null;
     case 'dashboard-alarm-config':
