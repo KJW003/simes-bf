@@ -155,19 +155,10 @@ services:
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --entrypoints.web.address=:80
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      - --entrypoints.websecure.address=:443
-      - --entrypoints.websecure.transport.respondingTimeouts.readTimeout=60s
-      - --entrypoints.websecure.transport.respondingTimeouts.writeTimeout=60s
-      - --entrypoints.websecure.transport.respondingTimeouts.idleTimeout=120s
-      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
-      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
-      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
-      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      # HTTPS/TLS disabled for now (no valid certificate)
+      # To enable: configure a domain + valid SSL certificate
     ports:
       - "80:80"
-      - "443:443"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - letsencrypt_data:/letsencrypt
@@ -191,8 +182,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=simes-edge
       - traefik.http.routers.ui.rule=PathPrefix(`/`)
-      - traefik.http.routers.ui.entrypoints=websecure
-      - traefik.http.routers.ui.tls.certresolver=letsencrypt
+      - traefik.http.routers.ui.entrypoints=web
       - traefik.http.routers.ui.priority=1
       - traefik.http.routers.ui.service=ui
       - traefik.http.services.ui.loadbalancer.server.port=80
@@ -227,8 +217,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=simes-edge
       - traefik.http.routers.apicore.rule=PathPrefix(`/api`)
-      - traefik.http.routers.apicore.entrypoints=websecure
-      - traefik.http.routers.apicore.tls.certresolver=letsencrypt
+      - traefik.http.routers.apicore.entrypoints=web
       - traefik.http.routers.apicore.priority=100
       - traefik.http.middlewares.apicore-strip.stripprefix.prefixes=/api
       - traefik.http.routers.apicore.middlewares=apicore-strip
