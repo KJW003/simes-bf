@@ -150,11 +150,14 @@ services:
     image: traefik:v2.11
     container_name: simes-traefik
     command:
+      - --log.level=debug
       - --api.dashboard=true
       - --api.insecure=true
+      - --api.debug=true
       - --providers.docker=true
       - --providers.docker.exposedbydefault=false
       - --providers.docker.network=simes-edge
+      - --providers.docker.watch=true
       - --entrypoints.web.address=:80
     ports:
       - "80:80"
