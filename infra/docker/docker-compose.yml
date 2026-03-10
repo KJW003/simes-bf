@@ -186,8 +186,8 @@ services:
       - traefik.http.routers.ui.priority=1
       - traefik.http.routers.ui.service=ui
       - traefik.http.services.ui.loadbalancer.server.port=80
-    ports:
-      - "80:80"
+    expose:
+      - "80"
     networks:
       - edge
     restart: unless-stopped
