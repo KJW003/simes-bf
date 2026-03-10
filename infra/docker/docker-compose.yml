@@ -262,8 +262,7 @@ services:
       - traefik.enable=true
       - traefik.docker.network=simes-edge
       - traefik.http.routers.ingest.rule=PathPrefix(`/ingest`)
-      - traefik.http.routers.ingest.entrypoints=websecure
-      - traefik.http.routers.ingest.tls.certresolver=letsencrypt
+      - traefik.http.routers.ingest.entrypoints=web
       - traefik.http.routers.ingest.priority=100
       - traefik.http.middlewares.ingest-strip.stripprefix.prefixes=/ingest
       - traefik.http.routers.ingest.middlewares=ingest-strip
