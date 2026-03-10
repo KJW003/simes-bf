@@ -11,7 +11,7 @@ const createUserSchema = z.object({
   email: z.string().email().max(255),
   password: z.string().min(6, 'Password must be at least 6 characters').max(255),
   name: z.string().min(1).max(255).transform(s => s.trim()),
-  role: z.enum(['admin', 'manager', 'operator']).optional().default('operator'),
+  role: z.enum(['platform_super_admin', 'org_admin', 'manager', 'operator']).optional().default('operator'),
   organization_id: z.string().uuid().nullable().optional(),
   site_access: z.any().optional(),
   avatar: z.string().max(500).optional(),
@@ -20,7 +20,7 @@ const createUserSchema = z.object({
 const updateUserSchema = z.object({
   name: z.string().min(1).max(255).transform(s => s.trim()),
   email: z.string().email().max(255).optional(),
-  role: z.enum(['admin', 'manager', 'operator']).optional(),
+  role: z.enum(['platform_super_admin', 'org_admin', 'manager', 'operator']).optional(),
   organization_id: z.string().uuid().nullable().optional(),
   site_access: z.any().optional(),
   avatar: z.string().max(500).optional(),

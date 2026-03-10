@@ -35,7 +35,7 @@ if (!connection) {
         }
       );
 
-      log("scheduler", "✓ Cleanup job scheduled: runs every 2 minutes");
+      log.info("✓ Cleanup job scheduled: runs every 2 minutes");
 
       // ── Stale device monitoring: every 5 minutes ──
       for (const job of jobs) {
@@ -58,7 +58,7 @@ if (!connection) {
         }
       );
 
-      log("scheduler", "✓ Stale device check scheduled: runs every 5 minutes (warn=30m, crit=60m)");
+      log.info("✓ Stale device check scheduled: runs every 5 minutes (warn=30m, crit=60m)");
 
       // ── Aggregation gap check: every 15 minutes ──
       for (const job of jobs) {
@@ -79,7 +79,7 @@ if (!connection) {
         }
       );
 
-      log("scheduler", "✓ Aggregation gap check scheduled: runs every 15 minutes");
+      log.info("✓ Aggregation gap check scheduled: runs every 15 minutes");
 
       // ── Queue health check: every 10 minutes ──
       for (const job of jobs) {
@@ -100,7 +100,7 @@ if (!connection) {
         }
       );
 
-      log("scheduler", "✓ Queue health check scheduled: runs every 10 minutes");
+      log.info("✓ Queue health check scheduled: runs every 10 minutes");
 
       // ── Pipeline heartbeat: every 10 minutes ──
       for (const job of jobs) {
@@ -121,9 +121,9 @@ if (!connection) {
         }
       );
 
-      log("scheduler", "✓ Pipeline heartbeat scheduled: runs every 10 minutes");
+      log.info("✓ Pipeline heartbeat scheduled: runs every 10 minutes");
     } catch (e) {
-      log("scheduler", `✗ Failed to setup cleanup job: ${e.message}`);
+      log.error(`✗ Failed to setup scheduler: ${e.message}`);
     }
   }
 

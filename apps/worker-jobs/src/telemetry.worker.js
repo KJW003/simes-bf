@@ -256,7 +256,8 @@ async function runCheckStaleDevices(payload = {}) {
        LEFT JOIN measurement_points mp ON mp.id = dr.point_id
        LEFT JOIN terrains t ON t.id = dr.terrain_id
        WHERE dr.last_seen_at IS NOT NULL
-         AND dr.last_seen_at < NOW() - INTERVAL '${WARN_MINUTES} minutes'`
+         AND dr.last_seen_at < NOW() - ($1 * INTERVAL '1 minute')`,
+      [WARN_MINUTES]
     );
 
     log.info(`Found ${staleDevices.rows.length} stale device(s)`);
@@ -315,7 +316,7 @@ async function runCheckStaleDevices(payload = {}) {
         ]
       );
       created++;
-      log.info('Created ${severity} incident for ${dev.device_key} (${minutesSilent}m)');
+      log.info(`Created ${severity} incident for ${dev.device_key} (${minutesSilent}m)`);
       auditLog(severity === 'critical' ? 'error' : 'warn', 'worker',
         `Appareil silencieux détecté: ${deviceLabel} (${minutesSilent}min)`,
         { device_key: dev.device_key, minutes_silent: minutesSilent, severity });
@@ -329,9 +330,10 @@ async function runCheckStaleDevices(payload = {}) {
          AND status IN ('open', 'acknowledged')
          AND metadata->>'device_key' IN (
            SELECT device_key FROM device_registry
-           WHERE last_seen_at >= NOW() - INTERVAL '${WARN_MINUTES} minutes'
+           WHERE last_seen_at >= NOW() - ($1 * INTERVAL '1 minute')
          )
-       RETURNING id, metadata->>'device_key' AS device_key`
+       RETURNING id, metadata->>'device_key' AS device_key`,
+      [WARN_MINUTES]
     );
 
     resolved = autoResolved.rowCount;
@@ -480,13 +482,13 @@ async function runCheckAggregationGaps(payload = {}) {
                time_bucket('15 minutes', time) AS bucket,
                count(*)::int AS reading_count
         FROM acrel_readings
-        WHERE time > now() - interval '${LOOKBACK_HOURS} hours'
+        WHERE time > now() - ($1 * INTERVAL '1 hour')
         GROUP BY point_id, bucket
       ),
       agg_buckets AS (
         SELECT point_id, bucket_start AS bucket
         FROM acrel_agg_15m
-        WHERE bucket_start > now() - interval '${LOOKBACK_HOURS} hours'
+        WHERE bucket_start > now() - ($1 * INTERVAL '1 hour')
       )
       SELECT rb.point_id, rb.bucket, rb.reading_count
       FROM reading_buckets rb
@@ -495,7 +497,7 @@ async function runCheckAggregationGaps(payload = {}) {
         AND rb.bucket < now() - interval '20 minutes'
       ORDER BY rb.bucket DESC
       LIMIT 100
-    `);
+    `, [LOOKBACK_HOURS]);
 
     if (gaps.rows.length === 0) {
       log.info('No aggregation gaps found');
@@ -623,19 +625,21 @@ async function runCheckQueueHealth(payload = {}) {
           ]
         );
         created++;
-        log.info('Created ${issue.severity} incident for ${issue.queue}/${issue.issue}');
+        log.info(`Created ${issue.severity} incident for ${issue.queue}/${issue.issue}`);
       }
     }
 
     // Auto-resolve issues that are no longer present
-    const queueNames = queues.map(q => `'${q}'`).join(",");
+    const issueQueues = issues.length > 0 ? issues.map(i => i.queue) : ['__none__'];
+    const placeholders = issueQueues.map((_, i) => `$${i + 1}`).join(",");
     const autoResolved = await db.query(
       `UPDATE incidents SET status = 'resolved', resolved_at = NOW(), updated_at = NOW(),
               description = description || ' — Auto-résolu.'
        WHERE source = 'queue_health_monitor'
          AND status IN ('open', 'acknowledged')
-         AND metadata->>'queue' NOT IN (${issues.map(i => `'${i.queue}'`).join(",") || "'__none__'"})
-       RETURNING id`
+         AND metadata->>'queue' NOT IN (${placeholders})
+       RETURNING id`,
+      issueQueues
     );
 
     const summary = { issues_found: issues.length, created, resolved: autoResolved.rowCount };

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS device_registry (
   UNIQUE (terrain_id, device_key)
 );
 
-CREATE INDEX IF NOT EXISTS gateway_registry_terrain_idx ON gateway_registry (terrain_id);\nCREATE UNIQUE INDEX IF NOT EXISTS gateway_registry_terrain_unique ON gateway_registry (terrain_id);
+CREATE INDEX IF NOT EXISTS gateway_registry_terrain_idx ON gateway_registry (terrain_id);
+CREATE UNIQUE INDEX IF NOT EXISTS gateway_registry_terrain_unique ON gateway_registry (terrain_id);
 CREATE INDEX IF NOT EXISTS device_registry_point_idx ON device_registry (point_id);
 CREATE INDEX IF NOT EXISTS device_registry_last_seen_idx ON device_registry (last_seen_at DESC);

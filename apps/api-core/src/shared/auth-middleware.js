@@ -15,7 +15,7 @@ function requireAuth(req, res, next) {
     const token = authHeader.slice(7);
     let decoded;
     try {
-      decoded = jwt.verify(token, jwtSecret);
+      decoded = jwt.verify(token, jwtSecret, { algorithms: ['HS256'] });
     } catch {
       return res.status(401).json({ ok: false, error: "Invalid token" });
     }
