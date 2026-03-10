@@ -7,7 +7,7 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Map as MapIcon, Zap, Activity, Gauge, ChevronRight, Loader2, Radio, Plus, Pencil, Trash2 } from 'lucide-react';
 import { useTerrainOverview, useZones, useCreateZone, useUpdateZone, useDeleteZone } from '@/hooks/useApi';
@@ -226,6 +226,7 @@ export default function DataMonitor({ embedded }: { embedded?: boolean }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingZone ? 'Modifier la zone' : 'Créer une zone'}</DialogTitle>
+            <DialogDescription className="sr-only">Formulaire de gestion de zone</DialogDescription>
           </DialogHeader>
           <div className="space-y-3 py-2">
             <Input placeholder="Nom de la zone" value={zoneName} onChange={e => setZoneName(e.target.value)} />
@@ -252,6 +253,7 @@ export default function DataMonitor({ embedded }: { embedded?: boolean }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Supprimer la zone ?</DialogTitle>
+            <DialogDescription className="sr-only">Confirmation de suppression</DialogDescription>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">Les points de mesure assignés à cette zone seront désassignés mais pas supprimés.</p>
           <DialogFooter>

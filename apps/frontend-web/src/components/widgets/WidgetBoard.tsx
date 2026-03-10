@@ -218,7 +218,7 @@ function renderWidgetContent(
     case 'dashboard-kpis':
       return ctx?.terrainId ? <LiveKPIs terrainId={ctx.terrainId} /> : null;
     case 'dashboard-load-curve':
-      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.from ?? stableFrom(86400_000)} to={ctx.to ?? stableNow()} /> : null;
+      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} /> : null;
     case 'dashboard-map':
       return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} size={size} /> : null;
     case 'dashboard-alarms':
@@ -1221,12 +1221,12 @@ export function WidgetBoard() {
 
       {/* Library Dialog – shows ALL widget types (duplicates allowed) */}
       <Dialog open={libraryOpen} onOpenChange={setLibraryOpen}>
-        <DialogContent className="max-w-3xl">
+        <DialogContent className="max-w-3xl max-h-[80vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Bibliothèque de widgets</DialogTitle>
             <DialogDescription>Ajouter un widget au tableau de bord</DialogDescription>
           </DialogHeader>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 overflow-y-auto pr-1">
             {allWidgetDefs.map(w => (
               <Card key={w.id} className="border-dashed">
                 <CardHeader className="pb-2">

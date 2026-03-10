@@ -12,7 +12,7 @@ import {
 import {
   Zap, Activity, Clock, Loader2, Leaf, TrendingUp,
   DollarSign, AlertTriangle, Bell,
-  Settings2, CheckCircle2, Plus, X,
+  Settings2, CheckCircle2, Plus, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import { useDashboard, useReadings, useTerrainOverview, useIncidentStats, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
@@ -120,10 +120,25 @@ export const LiveKPIs = React.memo(function LiveKPIs({ terrainId }: { terrainId:
   );
 });
 
-/* ── UnifiedLoadCurve ── */
-export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
+/* ── Periods for Courbe des points ── */
+const LOAD_PERIODS = [
+  { key: '24h', label: '24h', ms: 24 * 3600_000 },
+  { key: '48h', label: '48h', ms: 48 * 3600_000 },
+  { key: '7d', label: '7 jours', ms: 7 * 86400_000 },
+  { key: '30d', label: '30 jours', ms: 30 * 86400_000 },
+] as const;
+
+/* ── UnifiedLoadCurve (Courbe des points) ── */
+export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId }: { terrainId: string; from?: string; to?: string }) {
+  const [period, setPeriod] = useState<string>('24h');
+  const [offsetDays, setOffsetDays] = useState(0);
+  const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
+  const from = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
+  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data, isLoading } = useReadings(terrainId, { from, to, limit: 5000 });
+  const readLimit = periodMs <= 2 * 86400_000 ? 3000 : 5000;
+  const { data, isLoading } = useReadings(terrainId, { from, to, limit: readLimit });
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
@@ -170,12 +185,31 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base font-medium flex items-center gap-2">
-          <Activity className="w-4 h-4 text-primary" />
-          Courbe de charge
-          <span className="text-xs font-normal text-muted-foreground ml-1">(cliquez légende pour isoler)</span>
-          <Badge variant="outline" className="text-[10px] ml-auto">{readings.length} mesures</Badge>
-        </CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary" />
+            Courbe des points
+            <span className="text-xs font-normal text-muted-foreground ml-1">(cliquez légende pour isoler)</span>
+          </CardTitle>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => d + (periodMs / 86400_000))} title="Période précédente">
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            {LOAD_PERIODS.map(p => (
+              <Button key={p.key} variant={period === p.key ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => { setPeriod(p.key); setOffsetDays(0); }}>
+                {p.label}
+              </Button>
+            ))}
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => Math.max(0, d - (periodMs / 86400_000)))} disabled={offsetDays === 0} title="Période suivante">
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+            {offsetDays > 0 && <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setOffsetDays(0)}>Auj.</Button>}
+          </div>
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          <Badge variant="outline" className="text-[10px]">{readings.length} mesures</Badge>
+          {offsetDays > 0 && <span className="text-[10px] text-muted-foreground">({new Date(Date.now() - (offsetDays + periodMs / 86400_000) * 86400_000).toLocaleDateString('fr-FR')} → {new Date(Date.now() - offsetDays * 86400_000).toLocaleDateString('fr-FR')})</span>}
+        </div>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={350}>
@@ -189,7 +223,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
                 if (!payload?.length) return '';
                 return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
               }}
-              formatter={(v: number) => [v != null ? v.toFixed(2) : '—', 'kW']}
+              formatter={(v: number, name: string) => [v != null ? v.toFixed(2) + ' kW' : '—', name]}
             />
             <Legend
               wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
@@ -285,12 +319,22 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, 
 });
 
 /* ── DailyCostWidget ── */
+const COST_PERIODS = [
+  { key: '7d', label: '7j', days: 7 },
+  { key: '30d', label: '30j', days: 30 },
+  { key: '90d', label: '3 mois', days: 90 },
+  { key: '365d', label: '1 an', days: 365 },
+] as const;
+
 export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
-  const from = useMemo(() => stableFrom(30 * 86400_000), []);
-  const to = useMemo(() => stableNow(), []);
-  const { data } = useReadings(terrainId, { from, to, limit: 10000 });
+  const [period, setPeriod] = useState<string>('30d');
+  const [offsetDays, setOffsetDays] = useState(0);
+  const periodDays = COST_PERIODS.find(p => p.key === period)?.days ?? 30;
+  const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
+  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const { data } = useReadings(terrainId, { from, to, limit: 5000 });
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
 
   const dailyCost = useMemo(() => {
@@ -315,11 +359,28 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base font-medium flex items-center gap-2">
-          <DollarSign className="w-4 h-4 text-amber-600" />
-          Coût journalier — évolution
-          <span className="text-xs font-normal text-muted-foreground">({prefs.tariffRate} {currSym}/kWh)</span>
-        </CardTitle>
+        <div className="flex items-center justify-between flex-wrap gap-2">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <DollarSign className="w-4 h-4 text-amber-600" />
+            Coût journalier
+            <span className="text-xs font-normal text-muted-foreground">({prefs.tariffRate} {currSym}/kWh)</span>
+          </CardTitle>
+          <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => d + periodDays)} title="Période précédente">
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            {COST_PERIODS.map(p => (
+              <Button key={p.key} variant={period === p.key ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => { setPeriod(p.key); setOffsetDays(0); }}>
+                {p.label}
+              </Button>
+            ))}
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => Math.max(0, d - periodDays))} disabled={offsetDays === 0} title="Période suivante">
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+            {offsetDays > 0 && <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setOffsetDays(0)}>Auj.</Button>}
+          </div>
+        </div>
+        {offsetDays > 0 && <span className="text-[10px] text-muted-foreground mt-1">{new Date(Date.now() - (offsetDays + periodDays) * 86400_000).toLocaleDateString('fr-FR')} → {new Date(Date.now() - offsetDays * 86400_000).toLocaleDateString('fr-FR')}</span>}
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={180}>
@@ -327,7 +388,7 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
             <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
             <YAxis tick={{ fontSize: 10 }} unit={` ${currSym}`} />
-            <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number, name: string) => [v.toFixed(2), name === 'cost' ? currSym : 'kWh']} />
+            <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number, name: string) => [v.toFixed(2) + ' ' + (name === 'Coût' ? currSym : 'kWh'), name]} />
             <Bar dataKey="cost" fill="#f59e0b" radius={[4, 4, 0, 0]} name="Coût" />
           </BarChart>
         </ResponsiveContainer>
@@ -347,11 +408,12 @@ const CARBON_PERIODS = [
 export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
   const [period, setPeriod] = useState<string>('30d');
+  const [offsetDays, setOffsetDays] = useState(0);
 
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
-  const from = useMemo(() => stableFrom(periodDays * 86400_000), [periodDays]);
-  const to = useMemo(() => stableNow(), []);
-  const { data } = useReadings(terrainId, { from, to, limit: 50000 });
+  const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
+  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const { data } = useReadings(terrainId, { from, to, limit: 5000 });
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
 
   const dailyCarbon = useMemo(() => {
@@ -399,17 +461,25 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
             <span className="text-xs font-normal text-muted-foreground">({prefs.co2Factor} kgCO₂/kWh)</span>
           </CardTitle>
           <div className="flex items-center gap-1">
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => d + periodDays)} title="Période précédente">
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
             {CARBON_PERIODS.map(p => (
-              <Button key={p.key} variant={period === p.key ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setPeriod(p.key)}>
+              <Button key={p.key} variant={period === p.key ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => { setPeriod(p.key); setOffsetDays(0); }}>
                 {p.label}
               </Button>
             ))}
+            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => Math.max(0, d - periodDays))} disabled={offsetDays === 0} title="Période suivante">
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+            {offsetDays > 0 && <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setOffsetDays(0)}>Auj.</Button>}
           </div>
         </div>
-        <div className="flex gap-4 mt-1 text-xs text-muted-foreground">
+        <div className="flex gap-4 mt-1 text-xs text-muted-foreground flex-wrap">
           <span>Total: <b className="text-foreground">{totalCO2.toFixed(1)} kg CO₂</b></span>
           <span>Conso: <b className="text-foreground">{totalKwh.toFixed(1)} kWh</b></span>
           <span>Moy/jour: <b className="text-foreground">{(totalCO2 / dailyCarbon.length).toFixed(2)} kg</b></span>
+          {offsetDays > 0 && <span>({new Date(Date.now() - (offsetDays + periodDays) * 86400_000).toLocaleDateString('fr-FR')} → {new Date(Date.now() - offsetDays * 86400_000).toLocaleDateString('fr-FR')})</span>}
         </div>
       </CardHeader>
       <CardContent>

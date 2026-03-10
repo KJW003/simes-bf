@@ -572,7 +572,7 @@ export function useIncidentStats() {
   return useQuery({
     queryKey: ['incident-stats'],
     queryFn: () => api.getIncidentStats(),
-    staleTime: 15_000,
+    staleTime: 2 * 60_000,
     retry: 1,
   });
 }

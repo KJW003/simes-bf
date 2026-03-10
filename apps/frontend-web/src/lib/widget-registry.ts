@@ -493,7 +493,7 @@ export const widgetDefinitions: WidgetDefinition[] = [
   },
   {
     id: 'dashboard-load-curve',
-    title: 'Courbe de charge',
+    title: 'Courbe des points',
     description: 'Évolution de la puissance active par point — légende cliquable, zoom brush.',
     category: 'dashboard',
     supportedSizes: ['md', 'lg'],

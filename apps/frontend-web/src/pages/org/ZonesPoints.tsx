@@ -6,7 +6,7 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -548,6 +548,7 @@ export default function ZonesPoints() {
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Détail du point</DialogTitle>
+            <DialogDescription className="sr-only">Informations détaillées du point de mesure</DialogDescription>
           </DialogHeader>
           {selectedPointId && (() => {
             const p = points.find(pt => String(pt.id) === selectedPointId);
@@ -644,7 +645,10 @@ export default function ZonesPoints() {
       {/* Create / Edit zone dialog */}
       <Dialog open={zoneDialogOpen} onOpenChange={setZoneDialogOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle>{editingZone ? 'Modifier la zone' : 'Créer une zone'}</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>{editingZone ? 'Modifier la zone' : 'Créer une zone'}</DialogTitle>
+            <DialogDescription className="sr-only">Formulaire de gestion de zone</DialogDescription>
+          </DialogHeader>
           <div className="space-y-3 py-2">
             <Input placeholder="Nom de la zone" value={zoneName} onChange={e => setZoneName(e.target.value)} />
             <Input placeholder="Description (optionnel)" value={zoneDesc} onChange={e => setZoneDesc(e.target.value)} />
@@ -668,7 +672,10 @@ export default function ZonesPoints() {
       {/* Delete zone confirmation */}
       <Dialog open={!!deleteConfirmId} onOpenChange={() => setDeleteConfirmId(null)}>
         <DialogContent>
-          <DialogHeader><DialogTitle>Supprimer la zone ?</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Supprimer la zone ?</DialogTitle>
+            <DialogDescription className="sr-only">Confirmation de suppression</DialogDescription>
+          </DialogHeader>
           <p className="text-sm text-muted-foreground">Les points assignés seront désassignés mais pas supprimés.</p>
           <DialogFooter>
             <Button variant="outline" onClick={() => setDeleteConfirmId(null)}>Annuler</Button>

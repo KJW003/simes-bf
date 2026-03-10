@@ -145,13 +145,16 @@ export default function Forecasts() {
     from,
     to,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
-    limit: 10000,
+    limit: 5000,
   });
 
   // LightGBM ML forecast API
   const { data: mlForecast, isLoading: mlLoading, isError: mlError } = useQuery({
     queryKey: ['ml-forecast', selectedTerrainId, h.days],
-    queryFn: () => api.getMLForecast(selectedTerrainId!, h.days),
+    queryFn: async () => {
+      try { return await api.getMLForecast(selectedTerrainId!, h.days); }
+      catch (e: any) { if (e.status === 404) return null; throw e; }
+    },
     enabled: !!selectedTerrainId,
     staleTime: 5 * 60_000,
     retry: false,
