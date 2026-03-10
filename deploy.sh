@@ -128,19 +128,19 @@ done
 
 # Copy migration files into the api-core container (which has pg installed)
 info "Copying migration runner into api-core container..."
-docker cp "$SCHEMA_DIR/migrate.js" simes-api-core:/tmp/migrate.js
-docker cp "$SCHEMA_DIR/migrations" simes-api-core:/tmp/migrations
+docker cp "$SCHEMA_DIR/migrate.js" simes-api-core:/app/migrate.js
+docker cp "$SCHEMA_DIR/migrations" simes-api-core:/app/migrations
 
 info "Running core-db migrations..."
-docker exec -w /app simes-api-core node /tmp/migrate.js --db core 2>&1 || warn "Core migrations had warnings"
+docker exec -w /app simes-api-core node migrate.js --db core 2>&1 || warn "Core migrations had warnings"
 ok "Core migrations done."
 
 info "Running telemetry-db migrations..."
-docker exec -w /app simes-api-core node /tmp/migrate.js --db telemetry 2>&1 || warn "Telemetry migrations had warnings"
+docker exec -w /app simes-api-core node migrate.js --db telemetry 2>&1 || warn "Telemetry migrations had warnings"
 ok "Telemetry migrations done."
 
 # Cleanup
-docker exec simes-api-core rm -rf /tmp/migrate.js /tmp/migrations 2>/dev/null || true
+docker exec simes-api-core rm -rf /app/migrate.js /app/migrations 2>/dev/null || true
 
 # ── Wait for api-core to be healthy ──────────────────────────
 info "Waiting for api-core to be healthy..."
