@@ -13,12 +13,16 @@ import { useTerrainOverview, useReadings, stableFrom, stableNow } from '@/hooks/
 import api from '@/lib/api';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import {
-  AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  AreaChart, Area, BarChart, Bar, LineChart, Line,
+  XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Legend,
 } from 'recharts';
 
+const sanitize = (s: string) => s.replace(/[^a-zA-Z0-9àâäéèêëïîôùûüçÀÂÄÉÈÊËÏÎÔÙÛÜÇ _-]/g, '').replace(/\s+/g, '_').slice(0, 60);
+
 export default function Exports() {
-  const { selectedTerrainId } = useAppContext();
+  const { selectedTerrainId, selectedTerrain } = useAppContext();
+  const terrainLabel = selectedTerrain?.name ? sanitize(selectedTerrain.name) : `terrain-${selectedTerrainId}`;
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
   const [exportingId, setExportingId] = useState<string | null>(null);
@@ -32,7 +36,7 @@ export default function Exports() {
   // Fetch readings for CSV terrain summary
   const from = useMemo(() => stableFrom(days * 86400_000), [days]);
   const to = useMemo(() => stableNow(), []);
-  const { data: readingsData } = useReadings(selectedTerrainId, { from, to, limit: 10000 });
+  const { data: readingsData } = useReadings(selectedTerrainId, { from, to, limit: 5000 });
   const readings = (readingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
   // Summary stats
@@ -69,12 +73,12 @@ export default function Exports() {
       }
 
       const point = points.find(p => String(p.id) === pointId);
-      const pointName = point ? String(point.name).replace(/[^a-zA-Z0-9_-]/g, '_') : pointId;
+      const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = `simes-${pointName}-${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `${terrainLabel}_${pointName}_${days}j_${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(downloadUrl);
@@ -86,40 +90,64 @@ export default function Exports() {
     }
   };
 
-  // Terrain-level CSV export (all readings)
-  const exportTerrainCSV = useCallback(() => {
-    if (!readings.length) return;
-    const columns = ['time', 'point_id',
-      'active_power_total', 'active_power_a', 'active_power_b', 'active_power_c',
-      'reactive_power_total', 'apparent_power_total',
-      'voltage_a', 'voltage_b', 'voltage_c', 'voltage_ab', 'voltage_bc', 'voltage_ca',
-      'current_a', 'current_b', 'current_c', 'current_sum',
-      'power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c',
-      'energy_import', 'energy_export', 'energy_total',
-      'frequency',
-      'thdi_a', 'thdi_b', 'thdi_c', 'thdu_a', 'thdu_b', 'thdu_c',
-      'voltage_unbalance', 'current_unbalance',
-      'temp_a', 'temp_b', 'temp_c', 'temp_n'];
-    const header = columns.join(',') + '\n';
-    const rows = [...readings]
-      .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
-      .map(r => columns.map(c => r[c] ?? '').join(','))
-      .join('\n');
-    const blob = new Blob([header + rows], { type: 'text/csv' });
+  // Build point name map for readable exports
+  const pointNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const p of points) m.set(String(p.id), String(p.name));
+    return m;
+  }, [points]);
+
+  const CSV_METRIC_COLS = [
+    'active_power_total', 'active_power_a', 'active_power_b', 'active_power_c',
+    'reactive_power_total', 'apparent_power_total',
+    'voltage_a', 'voltage_b', 'voltage_c', 'voltage_ab', 'voltage_bc', 'voltage_ca',
+    'current_a', 'current_b', 'current_c', 'current_sum',
+    'power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c',
+    'energy_import', 'energy_export', 'energy_total',
+    'frequency',
+    'thdi_a', 'thdi_b', 'thdi_c', 'thdu_a', 'thdu_b', 'thdu_c',
+    'voltage_unbalance', 'current_unbalance',
+    'temp_a', 'temp_b', 'temp_c', 'temp_n',
+  ];
+
+  // Helper: download blob
+  const downloadBlob = (blob: Blob, filename: string) => {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `simes-terrain-${selectedTerrainId}-${days}j-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(url);
-  }, [readings, selectedTerrainId, days]);
+  };
+
+  // Terrain-level CSV export (all readings)
+  const exportTerrainCSV = useCallback(() => {
+    if (!readings.length) return;
+    const columns = ['time', 'point_name', ...CSV_METRIC_COLS];
+    const header = columns.join(',') + '\n';
+    const rows = [...readings]
+      .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
+      .map(r => {
+        const vals: (string | number | unknown)[] = [
+          r.time ?? '',
+          `"${pointNameMap.get(String(r.point_id)) ?? r.point_id}"`,
+          ...CSV_METRIC_COLS.map(c => r[c] ?? ''),
+        ];
+        return vals.join(',');
+      })
+      .join('\n');
+    downloadBlob(
+      new Blob([header + rows], { type: 'text/csv' }),
+      `${terrainLabel}_${days}j_${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+  }, [readings, terrainLabel, days, pointNameMap]);
 
   // JSON export (structured data, good for integrations)
   const exportTerrainJSON = useCallback(() => {
     if (!readings.length) return;
     const sorted = [...readings].sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime());
     const payload = {
-      terrain_id: selectedTerrainId,
+      terrain: selectedTerrain?.name ?? selectedTerrainId,
       export_date: new Date().toISOString(),
       period_days: days,
       summary: summary ? {
@@ -130,17 +158,17 @@ export default function Exports() {
         cost: summary.cost,
         co2_kg: summary.co2,
       } : null,
-      points: points.map(p => ({ id: p.id, name: p.name, category: p.measure_category, zone: p.zone_name })),
-      readings: sorted,
+      points: points.map(p => ({ name: p.name, category: p.measure_category, zone: p.zone_name })),
+      readings: sorted.map(r => {
+        const { point_id, ...rest } = r as Record<string, unknown>;
+        return { ...rest, point_name: pointNameMap.get(String(point_id)) ?? point_id };
+      }),
     };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `simes-terrain-${selectedTerrainId}-${days}j-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [readings, selectedTerrainId, days, summary, points]);
+    downloadBlob(
+      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+      `${terrainLabel}_${days}j_${new Date().toISOString().slice(0, 10)}.json`,
+    );
+  }, [readings, selectedTerrain, selectedTerrainId, terrainLabel, days, summary, points, pointNameMap]);
 
   // PDF report via browser print dialog
   const exportPDFReport = useCallback(() => {
@@ -178,7 +206,7 @@ export default function Exports() {
   @media print{body{margin:20px}.no-print{display:none}}
 </style></head><body>
 <h1>Rapport Énergétique SIMES</h1>
-<p>Terrain #${selectedTerrainId} — ${dateStr} — Période: ${days} jours</p>
+<p>${selectedTerrain?.name ?? 'Terrain'} — ${dateStr} — Période: ${days} jours</p>
 
 <div class="kpi-grid">
   <div class="kpi"><div class="value">${summary.readingCount.toLocaleString()}</div><div class="label">Mesures</div></div>
@@ -207,9 +235,117 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
       win.document.close();
       setTimeout(() => win.print(), 500);
     }
-  }, [readings, summary, selectedTerrainId, days, points, currSym]);
+  }, [readings, summary, selectedTerrain, selectedTerrainId, days, points, currSym]);
 
-  // Chart image export via SVG-to-canvas conversion  
+  // ── Image export: chart type + point chooser ──
+  const CHART_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
+
+  type ChartType = 'power' | 'voltage' | 'current' | 'energy' | 'pf' | 'daily-power' | 'daily-cost' | 'daily-co2';
+  const CHART_OPTIONS: { value: ChartType; label: string; perPoint: boolean }[] = [
+    { value: 'power', label: 'Puissance active (kW)', perPoint: true },
+    { value: 'voltage', label: 'Tension (V)', perPoint: true },
+    { value: 'current', label: 'Courant (A)', perPoint: true },
+    { value: 'energy', label: 'Énergie importée (kWh)', perPoint: true },
+    { value: 'pf', label: 'Facteur de puissance', perPoint: true },
+    { value: 'daily-power', label: 'Puissance moy. journalière', perPoint: false },
+    { value: 'daily-cost', label: 'Coût journalier', perPoint: false },
+    { value: 'daily-co2', label: 'CO₂ journalier', perPoint: false },
+  ];
+  const [imgChartType, setImgChartType] = useState<ChartType>('power');
+  const [imgPoints, setImgPoints] = useState<Set<string>>(new Set());
+  const currentChartOpt = CHART_OPTIONS.find(o => o.value === imgChartType)!;
+
+  // Toggle point for image
+  const toggleImgPoint = (id: string) => {
+    setImgPoints(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  };
+
+  // Build per-point time-series chart data
+  const imgChartData = useMemo(() => {
+    const ct = imgChartType;
+    const selPts = imgPoints.size > 0 ? imgPoints : new Set(points.map(p => String(p.id)));
+
+    // Aggregate daily charts — no point filter needed
+    if (ct === 'daily-power' || ct === 'daily-cost' || ct === 'daily-co2') {
+      const dailyMap = new Map<string, { sum: number; count: number; max: number; eiMin: number; eiMax: number; ts: number }>();
+      for (const r of readings) {
+        const t = new Date(String(r.time));
+        const day = t.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+        const pw = r.active_power_total != null ? Number(r.active_power_total) : NaN;
+        const ei = r.energy_import != null ? Number(r.energy_import) : NaN;
+        const e = dailyMap.get(day) ?? { sum: 0, count: 0, max: 0, eiMin: Infinity, eiMax: -Infinity, ts: t.getTime() };
+        if (!isNaN(pw)) { e.sum += pw; e.count++; e.max = Math.max(e.max, pw); }
+        if (!isNaN(ei)) { e.eiMin = Math.min(e.eiMin, ei); e.eiMax = Math.max(e.eiMax, ei); }
+        dailyMap.set(day, e);
+      }
+      const sorted = Array.from(dailyMap.entries()).sort((a, b) => a[1].ts - b[1].ts);
+      if (ct === 'daily-power') {
+        return sorted.map(([day, v]) => ({ day, avg: +(v.sum / (v.count || 1)).toFixed(2), max: +v.max.toFixed(2) }));
+      }
+      if (ct === 'daily-cost') {
+        let prev = 0;
+        return sorted.map(([day, v]) => {
+          const kwh = (isFinite(v.eiMax) && isFinite(v.eiMin)) ? Math.max(0, v.eiMax - v.eiMin) : 0;
+          const cost = +(kwh * prefs.tariffRate).toFixed(2);
+          prev += cost;
+          return { day, cost, cumul: +prev.toFixed(2) };
+        });
+      }
+      // daily-co2
+      let cumCo2 = 0;
+      return sorted.map(([day, v]) => {
+        const kwh = (isFinite(v.eiMax) && isFinite(v.eiMin)) ? Math.max(0, v.eiMax - v.eiMin) : 0;
+        const co2 = +(kwh * prefs.co2Factor).toFixed(2);
+        cumCo2 += co2;
+        return { day, co2, cumul: +cumCo2.toFixed(2) };
+      });
+    }
+
+    // Per-point time-series
+    const metricMap: Record<string, string[]> = {
+      power: ['active_power_total'],
+      voltage: ['voltage_a', 'voltage_b', 'voltage_c'],
+      current: ['current_a', 'current_b', 'current_c'],
+      energy: ['energy_import'],
+      pf: ['power_factor_total'],
+    };
+    const metrics = metricMap[ct] ?? ['active_power_total'];
+
+    // Group readings by time bucket per point
+    const timeMap = new Map<string, Record<string, number | null>>();
+    for (const r of readings) {
+      const pid = String(r.point_id);
+      if (!selPts.has(pid)) continue;
+      const pName = pointNameMap.get(pid) ?? pid;
+      const t = String(r.time);
+      if (!timeMap.has(t)) timeMap.set(t, { _ts: new Date(t).getTime() } as any);
+      const entry = timeMap.get(t)!;
+      for (const m of metrics) {
+        const key = metrics.length > 1 ? `${pName} (${m.split('_').pop()})` : pName;
+        const v = r[m] != null ? Number(r[m]) : null;
+        if (v != null) entry[key] = v;
+      }
+    }
+    return Array.from(timeMap.values())
+      .sort((a: any, b: any) => (a._ts ?? 0) - (b._ts ?? 0))
+      .map((e: any) => {
+        const label = new Date(e._ts).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+        const { _ts, ...rest } = e;
+        return { label, ...rest };
+      });
+  }, [imgChartType, imgPoints, readings, points, pointNameMap, prefs.tariffRate, prefs.co2Factor]);
+
+  // Determine series names for per-point charts
+  const imgSeriesNames = useMemo(() => {
+    if (!imgChartData.length) return [];
+    const keys = new Set<string>();
+    for (const d of imgChartData) {
+      for (const k of Object.keys(d)) if (k !== 'label' && k !== 'day') keys.add(k);
+    }
+    return Array.from(keys);
+  }, [imgChartData]);
+
+  // Chart image export via SVG-to-canvas conversion
   const chartRef = useRef<HTMLDivElement>(null);
   const exportChartImage = useCallback(() => {
     const container = chartRef.current;
@@ -232,38 +368,66 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
       const pngUrl = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = pngUrl;
-      a.download = `simes-chart-${selectedTerrainId}-${days}j.png`;
+      const ptLabel = imgPoints.size === 1
+        ? sanitize(pointNameMap.get(Array.from(imgPoints)[0]) ?? '')
+        : imgPoints.size > 1 ? `${imgPoints.size}_points` : 'tous';
+      a.download = `${terrainLabel}_${imgChartType}_${ptLabel}_${days}j.png`;
       a.click();
     };
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-  }, [selectedTerrainId, days]);
+  }, [terrainLabel, days, imgChartType, imgPoints, pointNameMap]);
 
-  // Daily power profile for chart
-  const dailyChartData = useMemo(() => {
-    const dailyMap = new Map<string, { sum: number; count: number; max: number; ts: number }>();
-    for (const r of readings) {
-      const t = new Date(String(r.time));
-      const day = t.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      const pw = r.active_power_total != null ? Number(r.active_power_total) : NaN;
-      if (isNaN(pw)) continue;
-      const e = dailyMap.get(day) ?? { sum: 0, count: 0, max: 0, ts: t.getTime() };
-      e.sum += pw; e.count++; e.max = Math.max(e.max, pw);
-      dailyMap.set(day, e);
-    }
-    return Array.from(dailyMap.entries())
-      .sort((a, b) => a[1].ts - b[1].ts)
-      .map(([day, v]) => ({
-        day,
-        avg: Math.round((v.sum / v.count) * 100) / 100,
-        max: Math.round(v.max * 100) / 100,
-      }));
-  }, [readings]);
+  // ── Per-point CSV export ──
+  const handleExportPointCSV = useCallback((pointId: string) => {
+    const ptReadings = readings.filter(r => String(r.point_id) === pointId);
+    if (!ptReadings.length) return;
+    const point = points.find(p => String(p.id) === pointId);
+    const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
+    const columns = ['time', ...CSV_METRIC_COLS];
+    const header = columns.join(',') + '\n';
+    const rows = [...ptReadings]
+      .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
+      .map(r => columns.map(c => r[c] ?? '').join(','))
+      .join('\n');
+    downloadBlob(
+      new Blob([header + rows], { type: 'text/csv' }),
+      `${terrainLabel}_${pointName}_${days}j_${new Date().toISOString().slice(0, 10)}.csv`,
+    );
+  }, [readings, points, terrainLabel, days]);
+
+  // ── Per-point JSON export ──
+  const handleExportPointJSON = useCallback((pointId: string) => {
+    const ptReadings = readings.filter(r => String(r.point_id) === pointId);
+    if (!ptReadings.length) return;
+    const point = points.find(p => String(p.id) === pointId);
+    const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
+    const sorted = [...ptReadings].sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime());
+    const payload = {
+      terrain: selectedTerrain?.name ?? selectedTerrainId,
+      point: point?.name ?? pointId,
+      category: point?.measure_category ?? null,
+      zone: point?.zone_name ?? null,
+      export_date: new Date().toISOString(),
+      period_days: days,
+      readings: sorted.map(r => {
+        const { point_id, ...rest } = r as Record<string, unknown>;
+        return rest;
+      }),
+    };
+    downloadBlob(
+      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
+      `${terrainLabel}_${pointName}_${days}j_${new Date().toISOString().slice(0, 10)}.json`,
+    );
+  }, [readings, points, selectedTerrain, selectedTerrainId, terrainLabel, days]);
 
   // Batch export selected points
+  const [batchFormat, setBatchFormat] = useState<'excel' | 'csv' | 'json'>('excel');
   const handleBatchExport = async () => {
     setBatchExporting(true);
     for (const pointId of selectedPoints) {
-      await handleExportExcel(pointId);
+      if (batchFormat === 'csv') handleExportPointCSV(pointId);
+      else if (batchFormat === 'json') handleExportPointJSON(pointId);
+      else await handleExportExcel(pointId);
     }
     setBatchExporting(false);
   };
@@ -312,15 +476,25 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
               <Printer className="w-4 h-4 mr-1" />
               Rapport PDF
             </Button>
-            <Button variant="outline" size="sm" onClick={exportChartImage} disabled={!dailyChartData.length}>
+            <Button variant="outline" size="sm" onClick={exportChartImage} disabled={!imgChartData.length}>
               <FileImage className="w-4 h-4 mr-1" />
               Image graphique
             </Button>
             {selectedPoints.size > 0 && (
-              <Button size="sm" onClick={handleBatchExport} disabled={batchExporting}>
-                {batchExporting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <FileSpreadsheet className="w-4 h-4 mr-1" />}
-                Excel ({selectedPoints.size} point{selectedPoints.size > 1 ? 's' : ''})
-              </Button>
+              <div className="flex items-center gap-1 border rounded-md pl-1">
+                <Select value={batchFormat} onValueChange={v => setBatchFormat(v as typeof batchFormat)}>
+                  <SelectTrigger className="w-24 h-8 border-0 text-xs"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="excel">Excel</SelectItem>
+                    <SelectItem value="csv">CSV</SelectItem>
+                    <SelectItem value="json">JSON</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button size="sm" onClick={handleBatchExport} disabled={batchExporting} className="h-8">
+                  {batchExporting ? <Loader2 className="w-4 h-4 animate-spin mr-1" /> : <Download className="w-4 h-4 mr-1" />}
+                  {selectedPoints.size} point{selectedPoints.size > 1 ? 's' : ''}
+                </Button>
+              </div>
             )}
           </div>
         }
@@ -361,37 +535,115 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
         </CardContent>
       </Card>
 
-      {/* Power chart (exportable as image) */}
-      {dailyChartData.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-base font-medium flex items-center gap-2">
-                <BarChart3 className="w-4 h-4 text-primary" />
-                Aperçu — Puissance moyenne journalière
-              </CardTitle>
-              <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={exportChartImage}>
-                <FileImage className="w-3 h-3" /> Exporter PNG
-              </Button>
+      {/* Configurable chart image export */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <CardTitle className="text-base font-medium flex items-center gap-2">
+              <FileImage className="w-4 h-4 text-primary" />
+              Export image — Graphique
+            </CardTitle>
+            <Button variant="outline" size="sm" className="h-7 text-xs gap-1" onClick={exportChartImage} disabled={!imgChartData.length}>
+              <Download className="w-3 h-3" /> Exporter PNG
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Controls row */}
+          <div className="flex items-end gap-4 flex-wrap">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Type de graphique</label>
+              <Select value={imgChartType} onValueChange={v => setImgChartType(v as ChartType)}>
+                <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {CHART_OPTIONS.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
             </div>
-          </CardHeader>
-          <CardContent>
+            {currentChartOpt.perPoint && points.length > 0 && (
+              <div className="space-y-1">
+                <label className="text-xs font-medium text-muted-foreground">Points ({imgPoints.size || 'tous'})</label>
+                <div className="flex flex-wrap gap-1">
+                  {points.map((p, i) => {
+                    const pid = String(p.id);
+                    const active = imgPoints.has(pid) || imgPoints.size === 0;
+                    return (
+                      <button
+                        key={pid}
+                        onClick={() => toggleImgPoint(pid)}
+                        className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                          active
+                            ? 'border-primary/60 bg-primary/10 text-foreground'
+                            : 'border-muted-foreground/20 text-muted-foreground'
+                        }`}
+                        style={active ? { borderColor: CHART_COLORS[i % CHART_COLORS.length] + '88' } : undefined}
+                      >
+                        {p.name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Chart preview */}
+          {imgChartData.length > 0 ? (
             <div ref={chartRef}>
-              <ResponsiveContainer width="100%" height={280}>
-                <AreaChart data={dailyChartData}>
-                  <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-                  <XAxis dataKey="day" tick={{ fontSize: 10 }} />
-                  <YAxis tick={{ fontSize: 10 }} unit=" kW" />
-                  <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number, name: string) => [v.toFixed(2), name === 'avg' ? 'Moyenne' : 'Maximum']} />
-                  <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v: string) => v === 'avg' ? 'Puissance moyenne' : 'Puissance max'} />
-                  <Area type="monotone" dataKey="avg" stroke="hsl(var(--primary))" fill="hsl(var(--primary) / 0.15)" strokeWidth={2} name="avg" />
-                  <Area type="monotone" dataKey="max" stroke="#ef4444" fill="#ef444420" strokeWidth={1} strokeDasharray="3 3" name="max" />
-                </AreaChart>
+              <ResponsiveContainer width="100%" height={300}>
+                {imgChartType === 'daily-power' ? (
+                  <AreaChart data={imgChartData}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="day" tick={{ fontSize: 10 }} />
+                    <YAxis tick={{ fontSize: 10 }} unit=" kW" />
+                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Area type="monotone" dataKey="avg" stroke="#3b82f6" fill="#3b82f620" strokeWidth={2} name="Puissance moyenne" />
+                    <Area type="monotone" dataKey="max" stroke="#ef4444" fill="#ef444420" strokeWidth={1} strokeDasharray="3 3" name="Puissance max" />
+                  </AreaChart>
+                ) : imgChartType === 'daily-cost' ? (
+                  <BarChart data={imgChartData}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit={` ${currSym}`} />
+                    <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} unit={` ${currSym}`} hide />
+                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar yAxisId="bar" dataKey="cost" fill="#f59e0b" radius={[3, 3, 0, 0]} name={`Coût (${currSym})`} />
+                    <Line yAxisId="line" type="monotone" dataKey="cumul" stroke="#d97706" strokeWidth={2} dot={false} name="Cumulé" />
+                  </BarChart>
+                ) : imgChartType === 'daily-co2' ? (
+                  <BarChart data={imgChartData}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit=" kg" />
+                    <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} hide />
+                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    <Bar yAxisId="bar" dataKey="co2" fill="#86efac" radius={[3, 3, 0, 0]} name="CO₂ journalier" />
+                    <Line yAxisId="line" type="monotone" dataKey="cumul" stroke="#16a34a" strokeWidth={2} dot={false} name="CO₂ cumulé" />
+                  </BarChart>
+                ) : (
+                  <LineChart data={imgChartData}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 10 }} unit={imgChartType === 'power' ? ' kW' : imgChartType === 'voltage' ? ' V' : imgChartType === 'current' ? ' A' : imgChartType === 'energy' ? ' kWh' : ''} />
+                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Legend wrapperStyle={{ fontSize: 11 }} />
+                    {imgSeriesNames.map((name, i) => (
+                      <Line key={name} type="monotone" dataKey={name} stroke={CHART_COLORS[i % CHART_COLORS.length]} dot={false} strokeWidth={1.5} connectNulls name={name} />
+                    ))}
+                  </LineChart>
+                )}
               </ResponsiveContainer>
             </div>
-          </CardContent>
-        </Card>
-      )}
+          ) : (
+            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+              Aucune donnée pour ce graphique
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Points List */}
       <Card>
@@ -441,19 +693,37 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                         </p>
                       </div>
                     </div>
-                    <Button
-                      onClick={(e) => { e.stopPropagation(); handleExportExcel(String(point.id)); }}
-                      disabled={exportingId === String(point.id)}
-                      size="sm"
-                      variant="outline"
-                      className="gap-1"
-                    >
-                      {exportingId === String(point.id) ? (
-                        <><Loader2 className="w-3 h-3 animate-spin" />Export…</>
-                      ) : (
-                        <><Download className="w-3 h-3" />Excel</>
-                      )}
-                    </Button>
+                    <div className="flex items-center gap-1" onClick={e => e.stopPropagation()}>
+                      <Button
+                        onClick={() => handleExportPointCSV(String(point.id))}
+                        size="sm" variant="ghost"
+                        className="h-7 px-2 text-xs gap-1"
+                        title="Exporter CSV"
+                      >
+                        <Download className="w-3 h-3" />CSV
+                      </Button>
+                      <Button
+                        onClick={() => handleExportPointJSON(String(point.id))}
+                        size="sm" variant="ghost"
+                        className="h-7 px-2 text-xs gap-1"
+                        title="Exporter JSON"
+                      >
+                        <FileJson className="w-3 h-3" />JSON
+                      </Button>
+                      <Button
+                        onClick={() => handleExportExcel(String(point.id))}
+                        disabled={exportingId === String(point.id)}
+                        size="sm" variant="outline"
+                        className="h-7 px-2 text-xs gap-1"
+                        title="Exporter Excel"
+                      >
+                        {exportingId === String(point.id) ? (
+                          <><Loader2 className="w-3 h-3 animate-spin" />…</>
+                        ) : (
+                          <><FileSpreadsheet className="w-3 h-3" />Excel</>
+                        )}
+                      </Button>
+                    </div>
                   </div>
                 );
               })}
