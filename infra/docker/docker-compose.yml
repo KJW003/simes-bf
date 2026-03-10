@@ -13,7 +13,6 @@ volumes:
   minio_data:
   pgadmin_data:
   ml_models_data:
-  letsencrypt_data:
   portainer_data:
 
 services:
@@ -147,28 +146,10 @@ services:
   #   cpus: 0.5
 
   # ===== EDGE / ROUTER =====
-  traefik:
-    image: traefik:v2.11
-    container_name: simes-traefik
-    command:
-      - --api.dashboard=true
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --entrypoints.web.address=:80
-      # HTTPS/TLS disabled for now (no valid certificate)
-      # To enable: configure a domain + valid SSL certificate
-    ports:
-      - "80:80"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - letsencrypt_data:/letsencrypt
-    networks:
-      - edge
-    restart: unless-stopped
-    mem_limit: 256m
-    cpus: 0.5
+  # Traefik removed — nginx (inside frontend-web) handles reverse proxying
+  # for /api → api-core:3000 and /ingest → ingestion-service:3001
 
-  # ===== UI (statique) =====
+  # ===== UI (statique + reverse proxy) =====
   frontend-web:
     build:
       context: ../../apps/frontend-web
@@ -178,18 +159,12 @@ services:
     labels:
       - com.simes.service=frontend
       - com.simes.tier=ui
-      - com.simes.description=React SPA - energy monitoring dashboard
-      - traefik.enable=true
-      - traefik.docker.network=simes-edge
-      - traefik.http.routers.ui.rule=PathPrefix(`/`)
-      - traefik.http.routers.ui.entrypoints=web
-      - traefik.http.routers.ui.priority=1
-      - traefik.http.routers.ui.service=ui
-      - traefik.http.services.ui.loadbalancer.server.port=80
-    expose:
-      - "80"
+      - com.simes.description=React SPA + nginx reverse proxy
+    ports:
+      - "80:80"
     networks:
       - edge
+      - internal
     restart: unless-stopped
     mem_limit: 256m
     cpus: 0.5
@@ -216,19 +191,10 @@ services:
       ml-service:
         condition: service_healthy
     labels:
-      - traefik.enable=true
-      - traefik.docker.network=simes-edge
-      - traefik.http.routers.apicore.rule=PathPrefix(`/api`)
-      - traefik.http.routers.apicore.entrypoints=web
-      - traefik.http.routers.apicore.priority=100
-      - traefik.http.middlewares.apicore-strip.stripprefix.prefixes=/api
-      - traefik.http.routers.apicore.middlewares=apicore-strip
-      - traefik.http.routers.apicore.service=apicore
-      - traefik.http.services.apicore.loadbalancer.server.port=3000
-      - traefik.http.services.apicore.loadbalancer.healthcheck.path=/health
-      - traefik.http.services.apicore.loadbalancer.healthcheck.interval=5s
+      - com.simes.service=api-core
+      - com.simes.tier=backend
+      - com.simes.description=Express API - core business logic
     networks:
-      - edge
       - internal
     restart: unless-stopped
     mem_limit: 512m
@@ -261,17 +227,7 @@ services:
       - com.simes.service=ingestion
       - com.simes.tier=backend
       - com.simes.description=IoT data ingestion (Milesight/Acrel)
-      - traefik.enable=true
-      - traefik.docker.network=simes-edge
-      - traefik.http.routers.ingest.rule=PathPrefix(`/ingest`)
-      - traefik.http.routers.ingest.entrypoints=web
-      - traefik.http.routers.ingest.priority=100
-      - traefik.http.middlewares.ingest-strip.stripprefix.prefixes=/ingest
-      - traefik.http.routers.ingest.middlewares=ingest-strip
-      - traefik.http.routers.ingest.service=ingest
-      - traefik.http.services.ingest.loadbalancer.server.port=3001
     networks:
-      - edge
       - internal
     restart: unless-stopped
     mem_limit: 384m
