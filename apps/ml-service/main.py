@@ -41,15 +41,43 @@ def get_conn():
     return psycopg2.connect(**TELEMETRY_DB, cursor_factory=RealDictCursor)
 
 
-def fetch_daily_features(terrain_id: str, min_days: int = 30) -> pd.DataFrame:
-    """Extract daily aggregated data with lag/rolling features."""
-    query = """
+def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
+    """Extract daily aggregated data with lag/rolling features.
+    Uses acrel_agg_daily (pre-computed) first; falls back to raw acrel_readings."""
+
+    # Try pre-aggregated table first (fast)
+    agg_query = """
+    SELECT
+        day,
+        point_id,
+        active_power_avg  AS power_avg,
+        active_power_max  AS power_max,
+        energy_import_delta AS energy_delta,
+        EXTRACT(DOW FROM day)::int AS day_of_week,
+        EXTRACT(MONTH FROM day)::int AS month,
+        EXTRACT(WEEK FROM day)::int AS week_of_year,
+        CASE WHEN EXTRACT(DOW FROM day) IN (0, 6) THEN 1 ELSE 0 END AS is_weekend,
+        LAG(energy_import_delta, 1)  OVER w AS lag_1d,
+        LAG(energy_import_delta, 7)  OVER w AS lag_7d,
+        LAG(energy_import_delta, 14) OVER w AS lag_14d,
+        AVG(energy_import_delta)   OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_avg_7d,
+        AVG(energy_import_delta)   OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS rolling_avg_30d,
+        STDDEV(energy_import_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_std_7d
+    FROM acrel_agg_daily
+    WHERE terrain_id = %s
+      AND day > NOW() - INTERVAL '365 days'
+    WINDOW w AS (PARTITION BY point_id ORDER BY day)
+    ORDER BY point_id, day;
+    """
+
+    # Fallback: compute from raw readings (slower)
+    raw_query = """
     WITH daily AS (
         SELECT
             time_bucket('1 day', time) AS day,
             point_id,
-            AVG(active_power_total) AS power_avg,
-            MAX(active_power_total) AS power_max,
+            AVG(active_power_total)  AS power_avg,
+            MAX(active_power_total)  AS power_max,
             MAX(energy_import) - MIN(energy_import) AS energy_delta
         FROM acrel_readings
         WHERE terrain_id = %s
@@ -59,27 +87,57 @@ def fetch_daily_features(terrain_id: str, min_days: int = 30) -> pd.DataFrame:
         ORDER BY point_id, day
     )
     SELECT
-        day,
-        point_id,
-        power_avg,
-        power_max,
-        energy_delta,
+        day, point_id, power_avg, power_max, energy_delta,
         EXTRACT(DOW FROM day)::int AS day_of_week,
         EXTRACT(MONTH FROM day)::int AS month,
         EXTRACT(WEEK FROM day)::int AS week_of_year,
         CASE WHEN EXTRACT(DOW FROM day) IN (0, 6) THEN 1 ELSE 0 END AS is_weekend,
-        LAG(energy_delta, 1) OVER w AS lag_1d,
-        LAG(energy_delta, 7) OVER w AS lag_7d,
+        LAG(energy_delta, 1)  OVER w AS lag_1d,
+        LAG(energy_delta, 7)  OVER w AS lag_7d,
         LAG(energy_delta, 14) OVER w AS lag_14d,
-        AVG(energy_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS rolling_avg_7d,
+        AVG(energy_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_avg_7d,
         AVG(energy_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS rolling_avg_30d,
-        STDDEV(energy_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) AS rolling_std_7d
+        STDDEV(energy_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_std_7d
     FROM daily
     WINDOW w AS (PARTITION BY point_id ORDER BY day)
     ORDER BY point_id, day;
     """
+
+    with get_conn() as conn:
+        df = pd.read_sql(agg_query, conn, params=(terrain_id,))
+        if df.empty:
+            logger.info(f"acrel_agg_daily empty for {terrain_id}, falling back to raw readings")
+            df = pd.read_sql(raw_query, conn, params=(terrain_id,))
+    return df
+
+
+def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
+    """Fetch basic daily energy data (no lag features) for simple forecasting."""
+    query = """
+    SELECT day, SUM(energy_import_delta) AS energy_delta,
+           SUM(active_power_avg) AS power_avg,
+           EXTRACT(DOW FROM day)::int AS day_of_week
+    FROM acrel_agg_daily
+    WHERE terrain_id = %s AND day > NOW() - INTERVAL '365 days'
+    GROUP BY day
+    ORDER BY day;
+    """
+    raw_fallback = """
+    SELECT
+        time_bucket('1 day', time)::date AS day,
+        SUM(MAX(energy_import) - MIN(energy_import)) AS energy_delta,
+        AVG(active_power_total) AS power_avg,
+        EXTRACT(DOW FROM time_bucket('1 day', time))::int AS day_of_week
+    FROM acrel_readings
+    WHERE terrain_id = %s AND active_power_total IS NOT NULL
+      AND time > NOW() - INTERVAL '365 days'
+    GROUP BY 1
+    ORDER BY 1;
+    """
     with get_conn() as conn:
         df = pd.read_sql(query, conn, params=(terrain_id,))
+        if df.empty:
+            df = pd.read_sql(raw_fallback, conn, params=(terrain_id,))
     return df
 
 
@@ -232,6 +290,7 @@ class PredictResponse(BaseModel):
     forecast: list[ForecastDay]
     model_mape: float | None = None
     model_rmse: float | None = None
+    model_type: str = "lightgbm"  # "lightgbm" | "simple" | "naive"
 
 
 def get_model(terrain_id: str):
@@ -244,6 +303,57 @@ def get_model(terrain_id: str):
     return None
 
 
+def simple_forecast(terrain_id: str, days: int) -> PredictResponse | None:
+    """Day-of-week-average forecast for terrains with 3-29 days of data."""
+    from datetime import datetime, timedelta
+
+    df = fetch_daily_simple(terrain_id)
+    if df.empty or len(df) < 3:
+        return None
+
+    # Day-of-week profiles
+    dow_avg = df.groupby("day_of_week")["energy_delta"].mean().to_dict()
+    global_avg = float(df["energy_delta"].mean())
+    global_std = float(df["energy_delta"].std()) if len(df) > 1 else global_avg * 0.3
+
+    # Linear trend
+    n = len(df)
+    slope = 0.0
+    if n >= 3:
+        x = np.arange(n, dtype=float)
+        y = df["energy_delta"].values.astype(float)
+        x_mean, y_mean = x.mean(), y.mean()
+        denom = ((x - x_mean) ** 2).sum()
+        if denom > 0:
+            slope = float(((x - x_mean) * (y - y_mean)).sum() / denom)
+
+    today = datetime.now()
+    forecast: list[ForecastDay] = []
+    for i in range(1, days + 1):
+        future = today + timedelta(days=i)
+        dow = future.weekday()  # 0=Mon Python
+        # PG DOW: 0=Sun. Convert: Python Mon=0..Sun=6 → PG Sun=0,Mon=1..Sat=6
+        pg_dow = (dow + 1) % 7
+        base = dow_avg.get(pg_dow, global_avg)
+        pred = max(0.0, base + slope * i)
+        band = global_std * 1.2 * np.sqrt(1 + i / max(n, 1))
+        forecast.append(ForecastDay(
+            day=future.strftime("%d/%m"),
+            predicted_kwh=round(pred, 2),
+            lower=round(max(0.0, pred - band), 2),
+            upper=round(pred + band, 2),
+        ))
+
+    logger.info(f"Simple forecast for terrain {terrain_id}: {len(df)} days of data, {days} days predicted")
+    return PredictResponse(
+        terrain_id=terrain_id,
+        forecast=forecast,
+        model_mape=None,
+        model_rmse=None,
+        model_type="simple",
+    )
+
+
 def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
     bundle = get_model(terrain_id)
     if bundle is None:
@@ -251,9 +361,13 @@ def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
         logger.info(f"No model for terrain {terrain_id} — auto-training…")
         result = train_model(terrain_id)
         if result.status != "success":
+            # Fall back to simple day-of-week forecast
+            simple = simple_forecast(terrain_id, days)
+            if simple is not None:
+                return simple
             raise HTTPException(
                 status_code=422,
-                detail=f"Auto-training failed: {result.message}",
+                detail=f"Not enough data for any forecast: {result.message}",
             )
         bundle = get_model(terrain_id)
         if bundle is None:
@@ -315,6 +429,7 @@ def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
         forecast=forecast,
         model_mape=bundle.get("mape"),
         model_rmse=bundle.get("rmse"),
+        model_type="lightgbm",
     )
 
 
