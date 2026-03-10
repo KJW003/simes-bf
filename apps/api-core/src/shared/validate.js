@@ -5,12 +5,13 @@ const { ZodError } = require('zod');
  * Returns 400 with structured error details on failure.
  */
 function validate(schema) {
-  if (!schema) {
-    throw new Error('validate() middleware requires a Zod schema argument');
+  if (!schema || !schema.safeParse) {
+    throw new Error(`validate() middleware requires a valid Zod schema. Received: ${typeof schema}`);
   }
   return (req, res, next) => {
     try {
-      const result = schema.safeParse(req.body);
+      const body = req.body || {};
+      const result = schema.safeParse(body);
       if (!result.success) {
         const errors = result.error.errors.map(e => ({
           field: e.path.join('.'),
@@ -22,7 +23,7 @@ function validate(schema) {
       next();
     } catch (err) {
       const log = require('../config/logger');
-      log.error({ err: err.message }, '[validate middleware error]');
+      log.error({ err: err.message, stack: err.stack }, '[validate middleware error]');
       return res.status(500).json({ ok: false, error: 'Internal validation error' });
     }
   };

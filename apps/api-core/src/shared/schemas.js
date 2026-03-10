@@ -80,8 +80,8 @@ const assignZoneSchema = z.object({
 
 // ── Settings ────────────────────────────────────────────────
 const settingsSchema = z.object({
-  settings: z.record(z.unknown()),
-});
+  settings: z.object({}).passthrough().optional(),
+}).passthrough();
 
 module.exports = {
   loginSchema,

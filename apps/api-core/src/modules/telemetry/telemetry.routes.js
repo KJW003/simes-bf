@@ -12,8 +12,8 @@ async function verifyTerrainAccess(req, res, next) {
     const { rows } = await corePool.query(
       `SELECT t.id FROM terrains t
        JOIN sites s ON s.id = t.site_id
-       JOIN org_members om ON om.org_id = s.org_id
-       WHERE t.id = $1 AND om.user_id = $2 LIMIT 1`,
+       JOIN users u ON u.organization_id = s.organization_id
+       WHERE t.id = $1 AND u.id = $2 LIMIT 1`,
       [terrainId, req.userId]
     );
     if (!rows.length) return res.status(403).json({ ok: false, error: 'Forbidden: no access to this terrain' });
