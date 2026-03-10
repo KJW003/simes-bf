@@ -234,10 +234,35 @@ export interface ReadingsData {
   readings: Array<Record<string, any>>;
 }
 
-export function useReadings(terrainId: string | null, params?: { from?: string; to?: string; point_id?: string; limit?: number }) {
+export function useReadings(terrainId: string | null, params?: { from?: string; to?: string; point_id?: string; limit?: number; cols?: string }) {
   return useQuery<ReadingsData, Error, ReadingsData>({
     queryKey: ['readings', terrainId, params],
     queryFn: () => api.getReadings(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    placeholderData: keepPreviousData,
+    retry: 1,
+  });
+}
+
+// ─── Pre-aggregated chart data (15m / daily buckets) ───────
+
+export interface ChartDataResult {
+  ok: boolean;
+  terrain_id: string;
+  bucket: string;
+  count: number;
+  data: Array<Record<string, any>>;
+}
+
+export function useChartData(
+  terrainId: string | null,
+  params: { from?: string; to?: string; bucket: '15m' | 'daily'; point_id?: string },
+) {
+  return useQuery<ChartDataResult, Error, ChartDataResult>({
+    queryKey: ['chart-data', terrainId, params],
+    queryFn: () => api.getChartData(terrainId!, params),
     enabled: !!terrainId,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,

@@ -105,10 +105,20 @@ router.get("/terrains/:terrainId/readings/latest", async (req, res) => {
   }
 });
 
+// ─── Allowed column whitelist for ?cols= projection ────────
+const ALLOWED_COLS = new Set(ACREL_METRIC_COLS);
+
+/** Parse ?cols= param → validated SQL column list, or full list if omitted */
+function parseCols(colsParam) {
+  if (!colsParam) return ACREL_COLS_SQL;
+  const requested = String(colsParam).split(',').map(c => c.trim().toLowerCase()).filter(c => ALLOWED_COLS.has(c));
+  return requested.length ? requested.join(', ') : ACREL_COLS_SQL;
+}
+
 // ─────────────────────────────────────────────────────────────
 // GET /terrains/:terrainId/readings
 // Raw time-series readings with optional filters
-// Query: ?from=ISO&to=ISO&point_id=uuid&limit=500
+// Query: ?from=ISO&to=ISO&point_id=uuid&limit=500&cols=active_power_total,energy_import
 // ─────────────────────────────────────────────────────────────
 router.get("/terrains/:terrainId/readings", async (req, res) => {
   try {
@@ -120,6 +130,7 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     const from = req.query.from || defaultFrom.toISOString();
     const to = req.query.to || now.toISOString();
     const pointId = req.query.point_id || null;
+    const colsSql = parseCols(req.query.cols);
 
     const params = [terrainId, from, to];
     const where = [`terrain_id = $1`, `time >= $2`, `time <= $3`];
@@ -132,7 +143,7 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     params.push(limit);
 
     const sql = `
-      SELECT point_id, time, ${ACREL_COLS_SQL}
+      SELECT point_id, time, ${colsSql}
       FROM acrel_readings
       WHERE ${where.join(" AND ")}
       ORDER BY time DESC
@@ -143,6 +154,61 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     res.json({ ok: true, terrain_id: terrainId, count: r.rows.length, readings: r.rows });
   } catch (e) {
     log.error({ err: e.message }, "[telemetry/readings]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /terrains/:terrainId/chart-data
+// Pre-aggregated chart data from acrel_agg_15m / acrel_agg_daily
+// Query: ?from=ISO&to=ISO&bucket=15m|daily&point_id=uuid (optional)
+// Returns lightweight rows optimized for chart rendering
+// ─────────────────────────────────────────────────────────────
+router.get("/terrains/:terrainId/chart-data", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const bucket = req.query.bucket === 'daily' ? 'daily' : '15m';
+
+    const now = new Date();
+    const defaultFrom = new Date(now.getTime() - (bucket === 'daily' ? 30 : 1) * 86400_000);
+    const from = req.query.from || defaultFrom.toISOString();
+    const to = req.query.to || now.toISOString();
+    const pointId = req.query.point_id || null;
+
+    if (bucket === 'daily') {
+      const params = [terrainId, from, to];
+      const where = [`terrain_id = $1`, `day >= ($2::timestamptz)::date`, `day <= ($3::timestamptz)::date`];
+      if (pointId) { params.push(pointId); where.push(`point_id = $${params.length}`); }
+
+      const sql = `
+        SELECT point_id, day, samples_count,
+               active_power_avg, active_power_max,
+               energy_import_delta, energy_export_delta
+        FROM acrel_agg_daily
+        WHERE ${where.join(' AND ')}
+        ORDER BY day ASC, point_id
+      `;
+      const r = await telemetryPool.query(sql, params);
+      res.json({ ok: true, terrain_id: terrainId, bucket: 'daily', count: r.rows.length, data: r.rows });
+    } else {
+      const params = [terrainId, from, to];
+      const where = [`terrain_id = $1`, `bucket_start >= $2`, `bucket_start <= $3`];
+      if (pointId) { params.push(pointId); where.push(`point_id = $${params.length}`); }
+
+      const sql = `
+        SELECT point_id, bucket_start, samples_count,
+               active_power_avg, active_power_max,
+               voltage_a_avg,
+               energy_import_delta, energy_export_delta
+        FROM acrel_agg_15m
+        WHERE ${where.join(' AND ')}
+        ORDER BY bucket_start ASC, point_id
+      `;
+      const r = await telemetryPool.query(sql, params);
+      res.json({ ok: true, terrain_id: terrainId, bucket: '15m', count: r.rows.length, data: r.rows });
+    }
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/chart-data]");
     res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });

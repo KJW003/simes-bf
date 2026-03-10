@@ -14,7 +14,7 @@ import {
   DollarSign, AlertTriangle, Bell,
   Settings2, CheckCircle2, Plus, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { useDashboard, useReadings, useTerrainOverview, useIncidentStats, stableFrom, stableNow } from '@/hooks/useApi';
+import { useDashboard, useReadings, useChartData, useTerrainOverview, useIncidentStats, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -138,7 +138,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
 
   const { data: overviewData } = useTerrainOverview(terrainId);
   const readLimit = periodMs <= 2 * 86400_000 ? 3000 : 5000;
-  const { data, isLoading } = useReadings(terrainId, { from, to, limit: readLimit });
+  const { data, isLoading } = useReadings(terrainId, { from, to, limit: readLimit, cols: 'active_power_total' });
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
@@ -257,7 +257,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
 /* ── PowerPeaksTable ── */
 export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data } = useReadings(terrainId, { from, to, limit: 5000 });
+  const { data } = useReadings(terrainId, { from, to, limit: 5000, cols: 'active_power_total' });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
@@ -334,25 +334,21 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
   const periodDays = COST_PERIODS.find(p => p.key === period)?.days ?? 30;
   const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
-  const { data } = useReadings(terrainId, { from, to, limit: 5000 });
-  const readings = (data?.readings ?? []) as Array<Record<string, any>>;
+  const { data: chartResult } = useChartData(terrainId, { from, to, bucket: 'daily' });
 
   const dailyCost = useMemo(() => {
-    if (!readings.length) return [];
-    const byDay = new Map<string, { min: number; max: number }>();
-    for (const r of readings) {
-      const day = new Date(String(r.time)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      const ei = r.energy_import != null ? Number(r.energy_import) : null;
-      if (ei == null) continue;
-      const entry = byDay.get(day);
-      if (!entry) byDay.set(day, { min: ei, max: ei });
-      else { entry.min = Math.min(entry.min, ei); entry.max = Math.max(entry.max, ei); }
+    const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
+    if (!rows.length) return [];
+    // Aggregate energy_import_delta across all points per day
+    const byDay = new Map<string, number>();
+    for (const r of rows) {
+      const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.energy_import_delta) || 0));
     }
-    return Array.from(byDay.entries()).map(([day, { min, max }]) => {
-      const kwh = Math.max(0, max - min);
-      return { day, kwh: Number(kwh.toFixed(2)), cost: Number((kwh * prefs.tariffRate).toFixed(2)) };
-    });
-  }, [readings, prefs.tariffRate]);
+    return Array.from(byDay.entries()).map(([day, kwh]) => ({
+      day, kwh: Number(kwh.toFixed(2)), cost: Number((kwh * prefs.tariffRate).toFixed(2)),
+    }));
+  }, [chartResult, prefs.tariffRate]);
 
   if (!dailyCost.length) return null;
 
@@ -413,30 +409,16 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
   const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
-  const { data } = useReadings(terrainId, { from, to, limit: 5000 });
-  const readings = (data?.readings ?? []) as Array<Record<string, any>>;
+  const { data: chartResult } = useChartData(terrainId, { from, to, bucket: 'daily' });
 
   const dailyCarbon = useMemo(() => {
-    if (!readings.length) return [];
-    // Group readings by point then by day for accurate delta-based kWh
-    const pointDays = new Map<string, Map<string, { min: number; max: number }>>();
-    for (const r of readings) {
-      const pid = String(r.point_id ?? 'all');
-      const day = new Date(String(r.time)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      const ei = r.energy_import != null ? Number(r.energy_import) : null;
-      if (ei == null) continue;
-      if (!pointDays.has(pid)) pointDays.set(pid, new Map());
-      const dayMap = pointDays.get(pid)!;
-      const entry = dayMap.get(day);
-      if (!entry) dayMap.set(day, { min: ei, max: ei });
-      else { entry.min = Math.min(entry.min, ei); entry.max = Math.max(entry.max, ei); }
-    }
-    // Aggregate all points per day
+    const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
+    if (!rows.length) return [];
+    // Aggregate energy_import_delta across all points per day
     const totalByDay = new Map<string, number>();
-    for (const dayMap of pointDays.values()) {
-      for (const [day, { min, max }] of dayMap) {
-        totalByDay.set(day, (totalByDay.get(day) ?? 0) + Math.max(0, max - min));
-      }
+    for (const r of rows) {
+      const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      totalByDay.set(day, (totalByDay.get(day) ?? 0) + (Number(r.energy_import_delta) || 0));
     }
     let cumulative = 0;
     return Array.from(totalByDay.entries()).map(([day, kwh]) => {
@@ -444,7 +426,7 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
       cumulative += co2;
       return { day, kwh: Number(kwh.toFixed(2)), co2: Number(co2.toFixed(2)), cumulative: Number(cumulative.toFixed(2)) };
     });
-  }, [readings, prefs.co2Factor]);
+  }, [chartResult, prefs.co2Factor]);
 
   const totalCO2 = dailyCarbon.length ? dailyCarbon[dailyCarbon.length - 1].cumulative : 0;
   const totalKwh = dailyCarbon.reduce((s, d) => s + d.kwh, 0);

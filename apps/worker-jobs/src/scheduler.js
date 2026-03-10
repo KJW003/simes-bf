@@ -6,8 +6,7 @@ if (!connection) {
   log.warn("Redis not available \u2013 repeatable jobs disabled");
   module.exports = { setupScheduler: async () => {} };
 } else {
-  const telemetryQueue = new Queue("telemetry", { connection });
-
+  const telemetryQueue = new Queue("telemetry", { connection });  const aiQueue = new Queue("ai", { connection });
   async function setupScheduler() {
     try {
       log.info('Initializing cleanup job scheduler');
@@ -122,6 +121,36 @@ if (!connection) {
       );
 
       log.info("✓ Pipeline heartbeat scheduled: runs every 10 minutes");
+
+      // ── ML forecast retraining: daily at 03:00 ──
+      for (const job of jobs) {
+        if (job.name === "ai.retrain_forecasts") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log.info({ key: job.key }, 'Removed old retrain job');
+        }
+      }
+
+      // Check aiQueue for old retrain jobs too
+      const aiJobs = await aiQueue.getRepeatableJobs();
+      for (const job of aiJobs) {
+        if (job.name === "ai.retrain_forecasts") {
+          await aiQueue.removeRepeatableByKey(job.key);
+          log.info({ key: job.key }, 'Removed old ai retrain job');
+        }
+      }
+
+      await aiQueue.add(
+        "ai.retrain_forecasts",
+        { payload: {} },
+        {
+          repeat: { pattern: "0 3 * * *" }, // Daily at 03:00
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 2,
+        }
+      );
+
+      log.info("✓ ML forecast retraining scheduled: daily at 03:00");
     } catch (e) {
       log.error(`✗ Failed to setup scheduler: ${e.message}`);
     }

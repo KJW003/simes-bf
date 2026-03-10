@@ -247,7 +247,17 @@ def get_model(terrain_id: str):
 def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
     bundle = get_model(terrain_id)
     if bundle is None:
-        raise HTTPException(status_code=404, detail="No trained model for this terrain. Call /train first.")
+        # Auto-train on first prediction request
+        logger.info(f"No model for terrain {terrain_id} — auto-training…")
+        result = train_model(terrain_id)
+        if result.status != "success":
+            raise HTTPException(
+                status_code=422,
+                detail=f"Auto-training failed: {result.message}",
+            )
+        bundle = get_model(terrain_id)
+        if bundle is None:
+            raise HTTPException(status_code=500, detail="Training succeeded but model not loadable")
 
     model = bundle["model"]
     model_lower = bundle["model_lower"]
@@ -345,3 +355,24 @@ def model_status(terrain_id: str):
         "rmse": bundle.get("rmse"),
         "samples": bundle.get("samples"),
     }
+
+
+@app.post("/train-all")
+def train_all():
+    """Train models for all terrains that have enough data."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT DISTINCT terrain_id FROM acrel_readings WHERE terrain_id IS NOT NULL")
+                terrain_ids = [row["terrain_id"] for row in cur.fetchall()]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+    results = []
+    for tid in terrain_ids:
+        try:
+            r = train_model(str(tid))
+            results.append({"terrain_id": str(tid), "status": r.status, "samples": r.samples, "message": r.message})
+        except Exception as e:
+            results.append({"terrain_id": str(tid), "status": "error", "message": str(e)})
+    return {"trained": len([r for r in results if r["status"] == "success"]), "total": len(terrain_ids), "results": results}

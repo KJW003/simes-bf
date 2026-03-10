@@ -182,6 +182,23 @@ new Worker(
         return { ok: true };
       }
 
+      if (job.name === "ai.retrain_forecasts") {
+        const mlUrl = process.env.ML_SERVICE_URL || "http://ml-service:8000";
+        const resp = await fetch(`${mlUrl}/train-all`, { method: "POST" });
+        const result = await resp.json();
+
+        if (runId) {
+          await insertJobResult(runId, job.name, result);
+          await setRunStatus(runId, "success", {
+            finished_at: new Date().toISOString(),
+            result,
+          });
+        }
+
+        log.info({ trained: result.trained, total: result.total }, "ML retrain-all complete");
+        return { ok: true };
+      }
+
       // default mock for other ai jobs
       await new Promise((r) => setTimeout(r, 1200));
 

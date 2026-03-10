@@ -146,14 +146,19 @@ export default function Forecasts() {
     to,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     limit: 5000,
+    cols: 'active_power_total',
   });
 
-  // LightGBM ML forecast API
+  // LightGBM ML forecast API (auto-trains if no model exists)
   const { data: mlForecast, isLoading: mlLoading, isError: mlError } = useQuery({
     queryKey: ['ml-forecast', selectedTerrainId, h.days],
     queryFn: async () => {
       try { return await api.getMLForecast(selectedTerrainId!, h.days); }
-      catch (e: any) { if (e.status === 404) return null; throw e; }
+      catch (e: any) {
+        // 422 = insufficient data for training, 404 = legacy (should not occur anymore)
+        if (e.status === 404 || e.status === 422) return null;
+        throw e;
+      }
     },
     enabled: !!selectedTerrainId,
     staleTime: 5 * 60_000,

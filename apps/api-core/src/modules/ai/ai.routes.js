@@ -47,23 +47,26 @@ router.post('/ai/train/:terrainId', verifyTerrainAccess, async (req, res) => {
   }
 });
 
-// GET /ai/forecast/:terrainId?days=7 — get forecast
+// GET /ai/forecast/:terrainId?days=7 — get forecast (auto-trains if needed)
 router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
     const { terrainId } = req.params;
     const days = Math.min(30, Math.max(1, parseInt(req.query.days, 10) || 7));
 
+    // ml-service now auto-trains when no model exists; 404 should no longer occur
     const resp = await fetch(`${ML_SERVICE_URL}/predict`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ terrain_id: terrainId, days }),
     });
 
-    if (resp.status === 404) {
-      return res.status(404).json({ error: 'No model trained for this terrain' });
+    const data = await resp.json();
+
+    if (resp.status === 422) {
+      // Insufficient data for training
+      return res.status(422).json(data);
     }
 
-    const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
     res.status(503).json({ error: 'ML service unavailable', detail: err.message });
