@@ -24,6 +24,9 @@ const aiRoutes = require("./modules/ai/ai.routes");
 
 const app = express();
 
+// ── Trust proxy (required for rate-limiting behind reverse proxy like Traefik)
+app.set('trust proxy', 1);
+
 // ── Security middleware ─────────────────────────────────────
 app.use(helmet());
 
