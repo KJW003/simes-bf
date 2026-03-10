@@ -128,21 +128,23 @@ services:
     cpus: 0.5
 
   # ===== CONTAINER MANAGEMENT =====
-  portainer:
-    image: portainer/portainer-ce:lts
-    container_name: simes-portainer
-    command: -H unix:///var/run/docker.sock
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - portainer_data:/data
-    ports:
-      - "9443:9443"
-    networks:
-      - edge
-      - internal
-    restart: unless-stopped
-    mem_limit: 256m
-    cpus: 0.5
+  # portainer: DISABLED — user already has Portainer running on port 9443
+  # (Uncomment below if needed for a second instance on a different port)
+  # portainer:
+  #   image: portainer/portainer-ce:lts
+  #   container_name: simes-portainer
+  #   command: -H unix:///var/run/docker.sock
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock:ro
+  #     - portainer_data:/data
+  #   ports:
+  #     - "9443:9443"
+  #   networks:
+  #     - edge
+  #     - internal
+  #   restart: unless-stopped
+  #   mem_limit: 256m
+  #   cpus: 0.5
 
   # ===== EDGE / ROUTER =====
   traefik:
