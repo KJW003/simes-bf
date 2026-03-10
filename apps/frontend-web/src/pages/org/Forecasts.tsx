@@ -194,7 +194,7 @@ export default function Forecasts() {
     queryFn: async () => {
       try { return await api.getMLForecast(selectedTerrainId!, h.days); }
       catch (e: any) {
-        if (e.status === 404 || e.status === 422) return null;
+        if (e.status === 404 || e.status === 422 || e.status === 503) return null;
         throw e;
       }
     },

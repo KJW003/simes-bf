@@ -58,7 +58,7 @@ export default function Exports() {
   const handleExportExcel = async (pointId: string) => {
     try {
       setExportingId(pointId);
-      const url = `/reports/point/${pointId}/excel?days=${days}`;
+      const url = `/reports/point/${pointId}/excel?days=${days}&limit=50000`;
 
       const response = await fetch(api.baseURL + url, {
         headers: {
@@ -67,8 +67,15 @@ export default function Exports() {
       });
 
       if (!response.ok) {
-        const error = await response.json();
-        alert(`Export failed: ${error.error || 'Unknown error'}`);
+        const error = await response.json().catch(() => ({}));
+        alert(`Export failed: ${(error as any).error || 'Unknown error'}`);
+        return;
+      }
+
+      const ct = response.headers.get('content-type') ?? '';
+      if (!ct.includes('spreadsheet')) {
+        const body = await response.json().catch(() => null);
+        alert((body as any)?.message ?? 'Aucune donnée à exporter pour ce point.');
         return;
       }
 
@@ -173,6 +180,7 @@ export default function Exports() {
   // PDF report via browser print dialog
   const exportPDFReport = useCallback(() => {
     if (!summary) return;
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
     const now = new Date();
     const dateStr = now.toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
 
@@ -206,7 +214,7 @@ export default function Exports() {
   @media print{body{margin:20px}.no-print{display:none}}
 </style></head><body>
 <h1>Rapport Énergétique SIMES</h1>
-<p>${selectedTerrain?.name ?? 'Terrain'} — ${dateStr} — Période: ${days} jours</p>
+<p>${esc(selectedTerrain?.name ?? 'Terrain')} — ${dateStr} — Période: ${days} jours</p>
 
 <div class="kpi-grid">
   <div class="kpi"><div class="value">${summary.readingCount.toLocaleString()}</div><div class="label">Mesures</div></div>
@@ -220,7 +228,7 @@ export default function Exports() {
 <h2>Points de mesure (${points.length})</h2>
 <table>
   <thead><tr><th>Nom</th><th>Catégorie</th><th>Zone</th></tr></thead>
-  <tbody>${points.map(p => `<tr><td>${String(p.name)}</td><td>${p.measure_category || '—'}</td><td>${p.zone_name || '—'}</td></tr>`).join('')}</tbody>
+  <tbody>${points.map(p => `<tr><td>${esc(String(p.name))}</td><td>${esc(p.measure_category || '—')}</td><td>${esc(p.zone_name || '—')}</td></tr>`).join('')}</tbody>
 </table>
 
 ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
@@ -596,7 +604,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} unit=" kW" />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Area type="monotone" dataKey="avg" stroke="#3b82f6" fill="#3b82f620" strokeWidth={2} name="Puissance moyenne" />
                     <Area type="monotone" dataKey="max" stroke="#ef4444" fill="#ef444420" strokeWidth={1} strokeDasharray="3 3" name="Puissance max" />
@@ -607,7 +615,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                     <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit={` ${currSym}`} />
                     <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} unit={` ${currSym}`} hide />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar yAxisId="bar" dataKey="cost" fill="#f59e0b" radius={[3, 3, 0, 0]} name={`Coût (${currSym})`} />
                     <Line yAxisId="line" type="monotone" dataKey="cumul" stroke="#d97706" strokeWidth={2} dot={false} name="Cumulé" />
@@ -618,7 +626,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                     <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit=" kg" />
                     <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} hide />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar yAxisId="bar" dataKey="co2" fill="#86efac" radius={[3, 3, 0, 0]} name="CO₂ journalier" />
                     <Line yAxisId="line" type="monotone" dataKey="cumul" stroke="#16a34a" strokeWidth={2} dot={false} name="CO₂ cumulé" />
@@ -628,7 +636,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
                     <YAxis tick={{ fontSize: 10 }} unit={imgChartType === 'power' ? ' kW' : imgChartType === 'voltage' ? ' V' : imgChartType === 'current' ? ' A' : imgChartType === 'energy' ? ' kWh' : ''} />
-                    <Tooltip contentStyle={{ fontSize: 12 }} />
+                    <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     {imgSeriesNames.map((name, i) => (
                       <Line key={name} type="monotone" dataKey={name} stroke={CHART_COLORS[i % CHART_COLORS.length]} dot={false} strokeWidth={1.5} connectNulls name={name} />
