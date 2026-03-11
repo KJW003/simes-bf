@@ -78,7 +78,7 @@ if [ "$DB_ONLY" = false ]; then
 
   # Prune corrupted BuildKit layer cache (prevents "parent snapshot does not exist" errors)
   if [ "$NO_BUILD" = false ]; then
-    docker builder prune -f 2>/dev/null || true
+    docker builder prune --all -f 2>/dev/null || true
   fi
 
   docker compose -f docker-compose.yml up -d --force-recreate $BUILD_FLAG
