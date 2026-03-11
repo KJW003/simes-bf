@@ -465,19 +465,36 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, 
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
   const { data: chartResult } = useChartData(terrainId, { from, to, bucket: 'daily' });
 
+  // Fetch today's data from 15-minute aggregation (daily agg doesn't have today yet)
+  const todayStart = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, []);
+  const { data: todayResult } = useChartData(
+    offsetDays === 0 ? terrainId : null,
+    { from: todayStart, bucket: '15m' },
+  );
+
   const dailyCost = useMemo(() => {
     const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
-    if (!rows.length) return [];
     // Aggregate energy_total_delta across all points per day
     const byDay = new Map<string, number>();
     for (const r of rows) {
       const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
       byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.energy_total_delta) || 0));
     }
+    // Add today from 15-minute buckets
+    if (offsetDays === 0 && todayResult?.data?.length) {
+      const todayLabel = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      let todayKwh = 0;
+      for (const r of todayResult.data) todayKwh += Number(r.energy_total_delta) || 0;
+      byDay.set(todayLabel, (byDay.get(todayLabel) ?? 0) + todayKwh);
+    }
+    if (!byDay.size) return [];
     return Array.from(byDay.entries()).map(([day, kwh]) => ({
       day, kwh: Number(kwh.toFixed(2)), cost: Number((kwh * prefs.tariffRate).toFixed(2)),
     }));
-  }, [chartResult, prefs.tariffRate]);
+  }, [chartResult, todayResult, prefs.tariffRate, offsetDays]);
 
   if (!dailyCost.length) return (
     <Card>
@@ -560,22 +577,39 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, dashbo
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
   const { data: chartResult } = useChartData(terrainId, { from, to, bucket: 'daily' });
 
+  // Fetch today's data from 15-minute aggregation (daily agg doesn't have today yet)
+  const todayStart = useMemo(() => {
+    const d = new Date(); d.setHours(0, 0, 0, 0);
+    return d.toISOString();
+  }, []);
+  const { data: todayResult } = useChartData(
+    offsetDays === 0 ? terrainId : null,
+    { from: todayStart, bucket: '15m' },
+  );
+
   const dailyCarbon = useMemo(() => {
     const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
-    if (!rows.length) return [];
     // Aggregate energy_total_delta across all points per day
     const totalByDay = new Map<string, number>();
     for (const r of rows) {
       const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
       totalByDay.set(day, (totalByDay.get(day) ?? 0) + (Number(r.energy_total_delta) || 0));
     }
+    // Add today from 15-minute buckets
+    if (offsetDays === 0 && todayResult?.data?.length) {
+      const todayLabel = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      let todayKwh = 0;
+      for (const r of todayResult.data) todayKwh += Number(r.energy_total_delta) || 0;
+      totalByDay.set(todayLabel, (totalByDay.get(todayLabel) ?? 0) + todayKwh);
+    }
+    if (!totalByDay.size) return [];
     let cumulative = 0;
     return Array.from(totalByDay.entries()).map(([day, kwh]) => {
       const co2 = kwh * prefs.co2Factor;
       cumulative += co2;
       return { day, kwh: Number(kwh.toFixed(2)), co2: Number(co2.toFixed(2)), cumulative: Number(cumulative.toFixed(2)) };
     });
-  }, [chartResult, prefs.co2Factor]);
+  }, [chartResult, todayResult, prefs.co2Factor, offsetDays]);
 
   const totalCO2 = dailyCarbon.length ? dailyCarbon[dailyCarbon.length - 1].cumulative : 0;
   const totalKwh = dailyCarbon.reduce((s, d) => s + d.kwh, 0);
