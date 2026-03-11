@@ -51,7 +51,7 @@ export const LiveKPIs = React.memo(function LiveKPIs({ terrainId }: { terrainId:
     ? String(Math.floor((Date.now() - new Date(data.last_update).getTime()) / 60000)) + ' min'
     : '-';
 
-  const totalEnergy = data.energy_today.total_kwh ?? data.energy_today.import_kwh;
+  const totalEnergy = data.energy_today.total_kwh || data.energy_today.import_kwh || 0;
   const co2Today = totalEnergy * prefs.co2Factor;
   const costToday = totalEnergy * prefs.tariffRate;
   const openAlerts = (incidentStats as any)?.open ?? 0;
@@ -468,11 +468,12 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, 
   const dailyCost = useMemo(() => {
     const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
     if (!rows.length) return [];
-    // Aggregate energy_total_delta across all points per day
+    // Aggregate energy delta across all points per day (prefer energy_total_delta, fallback to energy_import_delta)
     const byDay = new Map<string, number>();
     for (const r of rows) {
       const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.energy_total_delta) || 0));
+      const delta = Number(r.energy_total_delta) || Number(r.energy_import_delta) || 0;
+      byDay.set(day, (byDay.get(day) ?? 0) + delta);
     }
     return Array.from(byDay.entries()).map(([day, kwh]) => ({
       day, kwh: Number(kwh.toFixed(2)), cost: Number((kwh * prefs.tariffRate).toFixed(2)),
@@ -563,11 +564,12 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, dashbo
   const dailyCarbon = useMemo(() => {
     const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
     if (!rows.length) return [];
-    // Aggregate energy_total_delta across all points per day
+    // Aggregate energy delta across all points per day (prefer energy_total_delta, fallback to energy_import_delta)
     const totalByDay = new Map<string, number>();
     for (const r of rows) {
       const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      totalByDay.set(day, (totalByDay.get(day) ?? 0) + (Number(r.energy_total_delta) || 0));
+      const delta = Number(r.energy_total_delta) || Number(r.energy_import_delta) || 0;
+      totalByDay.set(day, (totalByDay.get(day) ?? 0) + delta);
     }
     let cumulative = 0;
     return Array.from(totalByDay.entries()).map(([day, kwh]) => {

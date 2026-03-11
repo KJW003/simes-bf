@@ -71,7 +71,7 @@ async function runAggregate(payload = {}) {
       AVG(voltage_a) AS voltage_a_avg,
       (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
       (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
-      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta
+      COALESCE(MAX(energy_total) - MIN(energy_total), MAX(energy_import) - MIN(energy_import)) AS energy_total_delta
     FROM acrel_readings
     ${whereSql}
     GROUP BY bucket_start, org_id, site_id, terrain_id, point_id
@@ -109,7 +109,7 @@ async function runAggregate(payload = {}) {
       MAX(active_power_total) AS active_power_max,
       (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
       (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
-      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta
+      COALESCE(MAX(energy_total) - MIN(energy_total), MAX(energy_import) - MIN(energy_import)) AS energy_total_delta
     FROM acrel_readings
     ${whereSql}
     GROUP BY day, org_id, site_id, terrain_id, point_id
