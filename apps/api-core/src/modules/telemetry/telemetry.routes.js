@@ -267,7 +267,7 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
     if (loadIds.length > 0) {
       const energyToday = await telemetryPool.query(
         `SELECT
-           SUM(COALESCE(delta_total, delta_import)) AS total_kwh,
+           SUM(delta_total) AS total_kwh,
            SUM(delta_import) AS import_kwh,
            SUM(delta_export) AS export_kwh
          FROM (
