@@ -90,7 +90,7 @@ function ExpandableParams({ latest }: { latest: Record<string, unknown> }) {
 }
 
 /** Reusable interactive chart wrapper — clickable legend + Brush zoom */
-function InteractiveLineChart({ data, lines, height = 300, unit = '' }: {
+const InteractiveLineChart = React.memo(function InteractiveLineChart({ data, lines, height = 300, unit = '' }: {
   data: Array<Record<string, any>>;
   lines: Array<{ dataKey: string; stroke: string; name: string; strokeWidth?: number; yAxisId?: string }>;
   height?: number;
@@ -129,7 +129,7 @@ function InteractiveLineChart({ data, lines, height = 300, unit = '' }: {
       </LineChart>
     </ResponsiveContainer>
   );
-}
+});
 
 export default function PointDetails() {
   const { pointId } = useParams<{ pointId: string }>();
@@ -145,6 +145,7 @@ export default function PointDetails() {
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(selectedTerrainId);
   const { data: readingsData, isLoading: loadR } = useReadings(selectedTerrainId, {
     from, to: now.toISOString(), point_id: pointId,
+    cols: 'active_power_total,active_power_a,active_power_b,active_power_c,reactive_power_total,reactive_power_a,reactive_power_b,reactive_power_c,apparent_power_total,apparent_power_a,apparent_power_b,apparent_power_c,voltage_a,voltage_b,voltage_c,voltage_ab,voltage_bc,voltage_ca,current_a,current_b,current_c,power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,energy_total',
   });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;

@@ -14,7 +14,7 @@ import {
   DollarSign, AlertTriangle, Bell,
   Settings2, CheckCircle2, Plus, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { useDashboard, useReadings, useChartData, useTerrainOverview, useIncidentStats, stableFrom, stableNow } from '@/hooks/useApi';
+import { useDashboard, useReadings, useChartData, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -328,8 +328,10 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
 
 /* ── PowerPeaksTable ── */
 export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
+  const [tab, setTab] = useState<'current' | 'history'>('current');
   const { data: overviewData } = useTerrainOverview(terrainId);
   const { data } = useReadings(terrainId, { from, to, cols: 'active_power_total' });
+  const { data: historyData } = usePowerPeaks(terrainId, 30);
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
@@ -352,28 +354,37 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, 
     return Array.from(peakMap.values()).sort((a, b) => b.max - a.max);
   }, [readings, points]);
 
-  if (!peaks.length) return null;
+  const historyPeaks = (historyData?.peaks ?? []) as Array<{ point_id: string; peak_date: string; max_power: number; peak_time: string; point_name: string }>;
+
+  if (!peaks.length && !historyPeaks.length) return null;
 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <CardTitle className="text-base font-medium flex items-center gap-2">
-          <TrendingUp className="w-4 h-4 text-primary" />
-          Pics de puissance — 24h
-        </CardTitle>
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <TrendingUp className="w-4 h-4 text-primary" />
+            Pics de puissance
+          </CardTitle>
+          <div className="flex gap-1">
+            <Button variant={tab === 'current' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setTab('current')}>Temps réel</Button>
+            <Button variant={tab === 'history' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setTab('history')}>Historique</Button>
+          </div>
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-56 overflow-y-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b text-left text-muted-foreground">
                 <th className="pb-2 font-medium">Point</th>
+                {tab === 'history' && <th className="pb-2 font-medium text-right">Date</th>}
                 <th className="pb-2 font-medium text-right">Puissance max</th>
                 <th className="pb-2 font-medium text-right">Horodatage</th>
               </tr>
             </thead>
             <tbody>
-              {peaks.map((p, i) => (
+              {tab === 'current' && peaks.map((p, i) => (
                 <tr key={i} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
                   <td className="py-2 font-medium">{p.name}</td>
                   <td className="py-2 text-right mono">{p.max.toFixed(2)} kW</td>
@@ -382,6 +393,19 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, 
                   </td>
                 </tr>
               ))}
+              {tab === 'history' && historyPeaks.map((p, i) => (
+                <tr key={i} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                  <td className="py-2 font-medium">{p.point_name}</td>
+                  <td className="py-2 text-right text-muted-foreground">{new Date(p.peak_date).toLocaleDateString('fr-FR')}</td>
+                  <td className="py-2 text-right mono">{Number(p.max_power).toFixed(2)} kW</td>
+                  <td className="py-2 text-right text-muted-foreground">
+                    {new Date(p.peak_time).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                  </td>
+                </tr>
+              ))}
+              {tab === 'history' && !historyPeaks.length && (
+                <tr><td colSpan={4} className="py-4 text-center text-xs text-muted-foreground">Aucun historique disponible</td></tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -662,21 +686,54 @@ export function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
   const [newPointId, setNewPointId] = useState('');
 
   const [staleMin, setStaleMin] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem('simes-map-config') || '{}'); return c.staleThresholdMin ?? 15; } catch { return 15; }
+    try { const c = JSON.parse(localStorage.getItem('simes-alarm-thresholds') || '{}'); return c.staleThresholdMin ?? 15; } catch { return 15; }
   });
   const [offlineMin, setOfflineMin] = useState(() => {
-    try { const c = JSON.parse(localStorage.getItem('simes-map-config') || '{}'); return c.offlineThresholdMin ?? 60; } catch { return 60; }
+    try { const c = JSON.parse(localStorage.getItem('simes-alarm-thresholds') || '{}'); return c.offlineThresholdMin ?? 60; } catch { return 60; }
   });
   const saveStatusThresholds = (s: number, o: number) => {
     try {
-      const c = JSON.parse(localStorage.getItem('simes-map-config') || '{}');
+      const c = JSON.parse(localStorage.getItem('simes-alarm-thresholds') || '{}');
       c.staleThresholdMin = s; c.offlineThresholdMin = o;
-      localStorage.setItem('simes-map-config', JSON.stringify(c));
+      localStorage.setItem('simes-alarm-thresholds', JSON.stringify(c));
     } catch { /* ignore */ }
   };
 
-  const parameters = ['active_power_total', 'reactive_power_total', 'voltage_a', 'voltage_b', 'voltage_c',
-    'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_total', 'thdi_a'];
+  const parameters = [
+    // Power
+    'active_power_total', 'active_power_a', 'active_power_b', 'active_power_c',
+    'reactive_power_total', 'reactive_power_a', 'reactive_power_b', 'reactive_power_c',
+    'apparent_power_total', 'apparent_power_a', 'apparent_power_b', 'apparent_power_c',
+    // Voltage
+    'voltage_a', 'voltage_b', 'voltage_c', 'voltage_ab', 'voltage_bc', 'voltage_ca',
+    // Current
+    'current_a', 'current_b', 'current_c', 'current_sum',
+    // Power factor
+    'power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c',
+    // Energy
+    'energy_total', 'energy_export',
+    // THD
+    'thdi_a', 'thdi_b', 'thdi_c', 'thdu_a', 'thdu_b', 'thdu_c',
+    // Network
+    'frequency', 'voltage_unbalance', 'current_unbalance',
+    // Temperature
+    'temp_a', 'temp_b', 'temp_c', 'temp_n',
+  ];
+
+  const PARAM_LABELS: Record<string, string> = {
+    active_power_total: 'P totale (kW)', active_power_a: 'P phase A', active_power_b: 'P phase B', active_power_c: 'P phase C',
+    reactive_power_total: 'Q totale (kvar)', reactive_power_a: 'Q phase A', reactive_power_b: 'Q phase B', reactive_power_c: 'Q phase C',
+    apparent_power_total: 'S totale (kVA)', apparent_power_a: 'S phase A', apparent_power_b: 'S phase B', apparent_power_c: 'S phase C',
+    voltage_a: 'Tension A (V)', voltage_b: 'Tension B (V)', voltage_c: 'Tension C (V)',
+    voltage_ab: 'Tension AB (V)', voltage_bc: 'Tension BC (V)', voltage_ca: 'Tension CA (V)',
+    current_a: 'Courant A (A)', current_b: 'Courant B (A)', current_c: 'Courant C (A)', current_sum: 'Courant total (A)',
+    power_factor_total: 'FP total', power_factor_a: 'FP phase A', power_factor_b: 'FP phase B', power_factor_c: 'FP phase C',
+    energy_total: 'Énergie totale (kWh)', energy_export: 'Énergie export (kWh)',
+    thdi_a: 'THDi A (%)', thdi_b: 'THDi B (%)', thdi_c: 'THDi C (%)',
+    thdu_a: 'THDu A (%)', thdu_b: 'THDu B (%)', thdu_c: 'THDu C (%)',
+    frequency: 'Fréquence (Hz)', voltage_unbalance: 'Déséq. tension (%)', current_unbalance: 'Déséq. courant (%)',
+    temp_a: 'Temp. A (°C)', temp_b: 'Temp. B (°C)', temp_c: 'Temp. C (°C)', temp_n: 'Temp. N (°C)',
+  };
 
   const doSaveRules = (updated: AlarmRule[]) => { setRules(updated); saveRules(updated); };
 
@@ -762,8 +819,8 @@ export function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
             <label className="text-[10px] font-medium text-muted-foreground">Paramètre</label>
             <Select value={newElement} onValueChange={setNewElement}>
               <SelectTrigger className="w-52 h-8 text-xs"><SelectValue placeholder="Choisir..." /></SelectTrigger>
-              <SelectContent>
-                {parameters.map(p => <SelectItem key={p} value={p}>{p.replace(/_/g, ' ')}</SelectItem>)}
+              <SelectContent className="max-h-60">
+                {parameters.map(p => <SelectItem key={p} value={p}>{PARAM_LABELS[p] ?? p.replace(/_/g, ' ')}</SelectItem>)}
               </SelectContent>
             </Select>
           </div>
@@ -815,9 +872,9 @@ export function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
                     {idx === 0 && <span className="w-6" />}
                     <Select value={cond.element || '_none'} onValueChange={v => updateCondition(rule.id, idx, { element: v === '_none' ? '' : v })}>
                       <SelectTrigger className="w-44 h-7 text-xs"><SelectValue placeholder="Paramètre" /></SelectTrigger>
-                      <SelectContent>
+                      <SelectContent className="max-h-60">
                         <SelectItem value="_none" disabled>Paramètre</SelectItem>
-                        {parameters.map(p => <SelectItem key={p} value={p}>{p.replace(/_/g, ' ')}</SelectItem>)}
+                        {parameters.map(p => <SelectItem key={p} value={p}>{PARAM_LABELS[p] ?? p.replace(/_/g, ' ')}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <Select value={cond.condition} onValueChange={v => updateCondition(rule.id, idx, { condition: v })}>
@@ -851,3 +908,87 @@ export function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
     </Card>
   );
 }
+
+/* ── AnomalyWidget ── */
+const SEVERITY_COLORS: Record<string, string> = {
+  critical: 'bg-red-600 text-white',
+  high: 'bg-orange-500 text-white',
+  medium: 'bg-yellow-500 text-black',
+  low: 'bg-blue-400 text-white',
+};
+
+const TYPE_LABELS: Record<string, string> = {
+  residual: 'Résidu vs prévision',
+  isolation_forest: 'Isolation Forest',
+};
+
+export const AnomalyWidget = React.memo(function AnomalyWidget({ terrainId }: { terrainId: string }) {
+  const { data, isLoading, isError } = useAnomalies(terrainId, 30);
+  const anomalies = data?.anomalies ?? [];
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Anomalies détectées</CardTitle></CardHeader>
+        <CardContent className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin text-muted-foreground" /></CardContent>
+      </Card>
+    );
+  }
+
+  if (isError) {
+    return (
+      <Card>
+        <CardHeader className="pb-2"><CardTitle className="text-sm flex items-center gap-2"><AlertTriangle className="w-4 h-4" /> Anomalies détectées</CardTitle></CardHeader>
+        <CardContent><p className="text-xs text-muted-foreground">Service indisponible</p></CardContent>
+      </Card>
+    );
+  }
+
+  const unresolved = anomalies.filter(a => !a.resolved);
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          Anomalies détectées
+          {unresolved.length > 0 && (
+            <Badge variant="destructive" className="ml-auto text-xs">{unresolved.length}</Badge>
+          )}
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        {anomalies.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">Aucune anomalie détectée sur les 30 derniers jours</p>
+        ) : (
+          <div className="space-y-2 max-h-64 overflow-y-auto">
+            {anomalies.slice(0, 20).map(a => (
+              <div key={a.id} className={`flex items-start gap-2 p-2 rounded-md border text-xs ${a.resolved ? 'opacity-50' : ''}`}>
+                <Badge className={`shrink-0 text-[10px] px-1.5 ${SEVERITY_COLORS[a.severity] ?? 'bg-gray-400 text-white'}`}>
+                  {a.severity}
+                </Badge>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-medium">{new Date(a.anomaly_date).toLocaleDateString('fr-FR')}</span>
+                    <span className="text-muted-foreground">·</span>
+                    <span className="text-muted-foreground">{TYPE_LABELS[a.anomaly_type] ?? a.anomaly_type}</span>
+                  </div>
+                  {a.description && <p className="text-muted-foreground mt-0.5 truncate">{a.description}</p>}
+                  {a.deviation_pct != null && (
+                    <p className="text-muted-foreground mt-0.5">
+                      Déviation: {a.deviation_pct > 0 ? '+' : ''}{a.deviation_pct.toFixed(1)}%
+                      {a.expected_kwh != null && a.actual_kwh != null && (
+                        <span> ({a.actual_kwh.toFixed(1)} vs {a.expected_kwh.toFixed(1)} kWh attendus)</span>
+                      )}
+                    </p>
+                  )}
+                </div>
+                {a.resolved && <CheckCircle2 className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+});

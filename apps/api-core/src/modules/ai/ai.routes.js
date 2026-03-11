@@ -86,4 +86,29 @@ router.get('/ai/model/:terrainId', verifyTerrainAccess, async (req, res) => {
   }
 });
 
+// POST /ai/anomalies/detect/:terrainId — trigger anomaly detection
+router.post('/ai/anomalies/detect/:terrainId', verifyTerrainAccess, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const resp = await fetch(`${ML_SERVICE_URL}/anomalies/detect/${terrainId}`, { method: 'POST' });
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 502).json(data);
+  } catch (err) {
+    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+  }
+});
+
+// GET /ai/anomalies/:terrainId?days=30 — get anomalies
+router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
+    const resp = await fetch(`${ML_SERVICE_URL}/anomalies/${terrainId}?days=${days}`);
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 502).json(data);
+  } catch (err) {
+    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+  }
+});
+
 module.exports = router;

@@ -43,6 +43,7 @@ export interface TerrainContextType {
   hasSolar: boolean;
   setHasSolar: (value: boolean) => void;
   refreshHierarchy: () => Promise<void>;
+  updateTerrainStats: (terrainId: string, stats: { pointsCount?: number; dataCompleteness24h?: number; status?: 'online' | 'degraded' | 'offline'; lastSeen?: string }) => void;
 }
 
 export const TerrainContext = createContext<TerrainContextType | undefined>(undefined);
@@ -161,6 +162,19 @@ export function TerrainProvider({
     try { localStorage.setItem(`simes_org_solar_${selectedOrgId}`, value ? '1' : '0'); } catch {}
   }, [selectedOrgId]);
 
+  const updateTerrainStats = useCallback((terrainId: string, stats: { pointsCount?: number; dataCompleteness24h?: number; status?: 'online' | 'degraded' | 'offline'; lastSeen?: string }) => {
+    setApiTerrains(prev => {
+      if (!prev) return prev;
+      return prev.map(t => t.id !== terrainId ? t : {
+        ...t,
+        ...(stats.pointsCount != null && { pointsCount: stats.pointsCount }),
+        ...(stats.dataCompleteness24h != null && { dataCompleteness24h: stats.dataCompleteness24h }),
+        ...(stats.status != null && { status: stats.status }),
+        ...(stats.lastSeen != null && { lastSeen: stats.lastSeen }),
+      });
+    });
+  }, []);
+
   const refreshHierarchy = useCallback(async () => {
     try {
       const orgs = await api.getOrgs();
@@ -199,6 +213,7 @@ export function TerrainProvider({
     availableOrgs, availableSites, availableTerrains,
     selectOrg, selectSite, selectTerrain, setAggregatedView,
     focusedOrgId, setFocusedOrgId, hasSolar, setHasSolar, refreshHierarchy,
+    updateTerrainStats,
     _handleLoginUser: handleLoginUser, _handleLogout: handleLogout,
   };
 

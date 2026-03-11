@@ -21,7 +21,7 @@ import { useAppContext } from '@/contexts/AppContext';
 import { useTerrainOverview, useReadings, stableFrom, stableNow } from '@/hooks/useApi';
 import { ConfigureWidgetModal } from '@/components/widgets/ConfigureWidgetModal';
 import { getWidgetDefinition, getWidgetDefinitions } from '@/lib/widget-registry';
-import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWidget, AlarmWidget, AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
+import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWidget, AlarmWidget, AlarmConfigPanel, AnomalyWidget } from '@/components/widgets/dashboard-sections';
 import { SiteMapWidget } from '@/components/widgets/SiteMapWidget';
 import { cn } from '@/lib/utils';
 import { METRIC_LABELS, METRIC_UNITS, ENERGY_SOURCE_LABELS } from '@/types/widget-engine';
@@ -51,7 +51,6 @@ import {
   AlertTriangle,
   BarChart3,
   ExternalLink,
-  FileDown,
 } from 'lucide-react';
 import type {
   WidgetLayoutItem,
@@ -76,12 +75,12 @@ function fmtDateTime(ts: number): string {
 
 /** Time period options */
 const TIME_PERIOD_OPTIONS = [
-  { value: '1h', label: '1 heure', ms: 60 * 60 * 1000 },
-  { value: '6h', label: '6 heures', ms: 6 * 60 * 60 * 1000 },
-  { value: '12h', label: '12 heures', ms: 12 * 60 * 60 * 1000 },
+  { value: 'live', label: 'En direct', ms: 0 },
   { value: '24h', label: '24 heures', ms: 24 * 60 * 60 * 1000 },
   { value: '48h', label: '48 heures', ms: 48 * 60 * 60 * 1000 },
   { value: '7d', label: '7 jours', ms: 7 * 24 * 60 * 60 * 1000 },
+  { value: '30d', label: '30 jours', ms: 30 * 24 * 60 * 60 * 1000 },
+  { value: 'custom', label: 'Date précise', ms: 0 },
 ];
 
 // -------------------------
@@ -231,6 +230,8 @@ function renderWidgetContent(
       return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} /> : null;
     case 'dashboard-power-peaks':
       return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} from={ctx.from ?? stableFrom(86400_000)} to={ctx.to ?? stableNow()} /> : null;
+    case 'dashboard-anomalies':
+      return ctx?.terrainId ? <AnomalyWidget terrainId={ctx.terrainId} /> : null;
 
     // ── Core metric widgets ──
     case 'energy-quality-summary':
@@ -647,6 +648,7 @@ function buildDefaultLayout(terrainId?: string): WidgetLayoutItem[] {
     { id: 'dashboard-daily-cost', size: 'md' },
     { id: 'dashboard-carbon', size: 'md' },
     { id: 'dashboard-power-peaks', size: 'lg' },
+    { id: 'dashboard-anomalies', size: 'md' },
     // Custom metric widgets
     { id: 'energy-quality-summary', size: 'md' },
     { id: 'live-load', size: 'lg' },
@@ -722,7 +724,7 @@ function loadLayout(storageKey: string, terrainId?: string): WidgetLayoutItem[] 
 
 export function WidgetBoard() {
   const navigate = useNavigate();
-  const { currentUser, selectedTerrainId } = useAppContext();
+  const { currentUser, selectedTerrainId, updateTerrainStats } = useAppContext();
   const storageKey = useMemo(() => buildStorageKey(currentUser?.id), [currentUser?.id]);
 
   // Fetch real overview data
@@ -730,9 +732,43 @@ export function WidgetBoard() {
   const overviewPoints = useMemo(() => (overviewData?.points ?? []) as Array<Record<string, unknown>>, [overviewData]);
   const overviewZones = useMemo(() => (overviewData?.zones ?? []) as Array<Record<string, unknown>>, [overviewData]);
 
+  // Enrich terrain stats from overview data
+  useEffect(() => {
+    if (!selectedTerrainId || !overviewData) return;
+    const pts = overviewData.points ?? [];
+    const pointsCount = pts.length;
+    // Compute data completeness: % of points that have recent readings (< 60 min)
+    const now = Date.now();
+    let recentCount = 0;
+    let latestSeen: string | undefined;
+    for (const p of pts as Array<Record<string, any>>) {
+      if (p.lastSeen) {
+        const age = now - new Date(p.lastSeen as string).getTime();
+        if (age < 60 * 60_000) recentCount++;
+        if (!latestSeen || new Date(p.lastSeen as string) > new Date(latestSeen)) {
+          latestSeen = p.lastSeen as string;
+        }
+      }
+    }
+    const completeness = pointsCount > 0 ? Math.round((recentCount / pointsCount) * 100) : 0;
+    const status: 'online' | 'degraded' | 'offline' =
+      completeness >= 80 ? 'online' : completeness > 0 ? 'degraded' : 'offline';
+    updateTerrainStats(selectedTerrainId, {
+      pointsCount,
+      dataCompleteness24h: completeness,
+      status,
+      lastSeen: latestSeen,
+    });
+  }, [selectedTerrainId, overviewData, updateTerrainStats]);
+
   // Time period selector for readings
-  const [timePeriod, setTimePeriod] = useState('24h');
-  const periodMs = TIME_PERIOD_OPTIONS.find(o => o.value === timePeriod)?.ms ?? 24 * 60 * 60 * 1000;
+  const [timePeriod, setTimePeriod] = useState('live');
+  const [customDate, setCustomDate] = useState('');
+  const periodMs = timePeriod === 'live'
+    ? (Date.now() - new Date(new Date().toDateString()).getTime()) || 24 * 60 * 60 * 1000
+    : timePeriod === 'custom'
+      ? (customDate ? Date.now() - new Date(customDate).getTime() : 24 * 60 * 60 * 1000)
+      : TIME_PERIOD_OPTIONS.find(o => o.value === timePeriod)?.ms ?? 24 * 60 * 60 * 1000;
 
   // Fetch historical readings for chart widgets
   const readingsFrom = useMemo(() => stableFrom(periodMs), [periodMs]);
@@ -911,33 +947,6 @@ export function WidgetBoard() {
     }
   };
 
-  // Export current layout as a JSON report snapshot
-  const exportAsReport = () => {
-    const report = {
-      title: `Rapport tableau de bord — ${new Date().toLocaleDateString('fr-FR')}`,
-      created: new Date().toISOString(),
-      terrainId: selectedTerrainId,
-      period: timePeriod,
-      widgets: orderedLayout.map(item => {
-        const def = defMap.get(item.id);
-        const data = resolveData(item);
-        return {
-          widget: def?.title ?? item.id,
-          description: def?.description ?? '',
-          size: item.size,
-          kpis: data.kpis,
-          meta: data.meta,
-        };
-      }),
-    };
-    const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `simes-report-${new Date().toISOString().slice(0, 10)}.json`;
-    a.click();
-    URL.revokeObjectURL(a.href);
-  };
-
   // ConfigureWidgetModal item
   const configuringItem = configuringInstanceId ? layout.find(i => i.instanceId === configuringInstanceId) ?? null : null;
   const configuringDef = configuringItem ? defMap.get(configuringItem.id) ?? null : null;
@@ -951,7 +960,7 @@ export function WidgetBoard() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={timePeriod} onValueChange={setTimePeriod}>
-            <SelectTrigger className="w-28 sm:w-32 h-8 text-xs">
+            <SelectTrigger className="w-28 sm:w-36 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -960,6 +969,15 @@ export function WidgetBoard() {
               ))}
             </SelectContent>
           </Select>
+          {timePeriod === 'custom' && (
+            <input
+              type="date"
+              className="h-8 rounded border px-2 text-xs bg-background"
+              value={customDate}
+              onChange={e => setCustomDate(e.target.value)}
+              max={new Date().toISOString().slice(0, 10)}
+            />
+          )}
           <Button variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
             <Plus className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ajouter widget</span>
@@ -967,10 +985,6 @@ export function WidgetBoard() {
           <Button variant="outline" size="sm" onClick={saveLayout}>
             <span className="hidden sm:inline">Sauvegarder</span>
             <span className="sm:hidden">💾</span>
-          </Button>
-          <Button variant="outline" size="sm" onClick={exportAsReport}>
-            <FileDown className="w-4 h-4 sm:mr-2" />
-            <span className="hidden sm:inline">Rapport</span>
           </Button>
           <Button variant="ghost" size="sm" onClick={resetLayout} className="hidden sm:flex">
             Réinitialiser

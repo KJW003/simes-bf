@@ -199,6 +199,38 @@ new Worker(
         return { ok: true };
       }
 
+      if (job.name === "ai.detect_anomalies") {
+        const mlUrl = process.env.ML_SERVICE_URL || "http://ml-service:8000";
+
+        // Get all terrains
+        const terrains = await db.query("SELECT id FROM terrains");
+        const results = [];
+
+        for (const t of terrains.rows) {
+          try {
+            const resp = await fetch(`${mlUrl}/anomalies/detect/${t.id}`, { method: "POST" });
+            const r = await resp.json();
+            results.push({ terrain_id: t.id, ...r });
+          } catch (err) {
+            log.warn({ terrain_id: t.id, err: err.message }, "anomaly detection failed for terrain");
+            results.push({ terrain_id: t.id, error: err.message });
+          }
+        }
+
+        const summary = { terrains: results.length, results };
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          await setRunStatus(runId, "success", {
+            finished_at: new Date().toISOString(),
+            result: summary,
+          });
+        }
+
+        log.info({ terrains: results.length }, "AI anomaly detection complete");
+        return { ok: true };
+      }
+
       // default mock for other ai jobs
       await new Promise((r) => setTimeout(r, 1200));
 

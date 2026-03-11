@@ -81,7 +81,7 @@ export function MainLayout() {
               )} />
               <span>Concentrateur: {selectedTerrain.name}</span>
               <span className="text-muted-foreground/60">
-                ({selectedTerrain.dataCompleteness24h.toFixed(0)}% complétude)
+                ({selectedTerrain.dataCompleteness24h.toFixed(0)}% disponibilité)
               </span>
             </div>
             <span className="text-border hidden sm:inline">|</span>

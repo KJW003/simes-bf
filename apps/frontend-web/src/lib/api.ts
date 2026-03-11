@@ -338,6 +338,11 @@ export const api = {
       `/terrains/${terrainId}/overview`,
     ),
 
+  getPowerPeaks: (terrainId: string, days = 30) =>
+    request<{ ok: boolean; terrain_id: string; peaks: Array<{ point_id: string; peak_date: string; max_power: number; peak_time: string; point_name: string }> }>(
+      `/terrains/${terrainId}/power-peaks?days=${days}`,
+    ),
+
   getIncoming: (params?: { status?: string; gateway_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
@@ -495,6 +500,12 @@ export const api = {
     request<{ terrain_id: number; status: string; samples: number; mape: number | null; rmse: number | null; message: string }>(`/ai/train/${terrainId}`, { method: 'POST' }),
   getMLModelStatus: (terrainId: string | number) =>
     request<{ terrain_id: number; status: string; mape: number | null; rmse: number | null; samples: number | null }>(`/ai/model/${terrainId}`),
+
+  // ── AI Anomaly Detection ──
+  getAnomalies: (terrainId: string | number, days = 30) =>
+    request<{ anomalies: Array<{ id: number; terrain_id: number; point_id: string | null; anomaly_date: string; anomaly_type: string; severity: string; score: number; expected_kwh: number | null; actual_kwh: number | null; deviation_pct: number | null; description: string | null; resolved: boolean }> }>(`/ai/anomalies/${terrainId}?days=${days}`),
+  detectAnomalies: (terrainId: string | number) =>
+    request<{ residual: { found: number }; isolation_forest: { found: number } }>(`/ai/anomalies/detect/${terrainId}`, { method: 'POST' }),
 };
 
 export default api;

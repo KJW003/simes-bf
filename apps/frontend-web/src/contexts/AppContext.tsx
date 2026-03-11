@@ -40,6 +40,7 @@ interface AppContextType {
   focusedOrgId: string | null;
   setFocusedOrgId: (orgId: string | null) => void;
   refreshHierarchy: () => Promise<void>;
+  updateTerrainStats: (terrainId: string, stats: { pointsCount?: number; dataCompleteness24h?: number; status?: 'online' | 'degraded' | 'offline'; lastSeen?: string }) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -85,6 +86,7 @@ function AppBridge({ children }: { children: ReactNode }) {
     hasSolar: terrain.hasSolar,
     setHasSolar: terrain.setHasSolar,
     refreshHierarchy: terrain.refreshHierarchy,
+    updateTerrainStats: terrain.updateTerrainStats,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -788,6 +788,42 @@ async function runPipelineHeartbeat(payload = {}) {
   }
 }
 
+// ─── Power peaks daily computation ──────────────────────────
+async function computePowerPeaks() {
+  if (!telemetryDb) throw new Error("telemetryDb not available");
+  const yesterday = new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+  const today = new Date().toISOString().slice(0, 10);
+
+  // Get all terrains
+  const { rows: terrains } = await db.query("SELECT id FROM terrains");
+  let total = 0;
+
+  for (const t of terrains) {
+    const { rows } = await telemetryDb.query(
+      `SELECT point_id, MAX(active_power_total) AS max_power,
+              (array_agg(time ORDER BY active_power_total DESC))[1] AS peak_time
+       FROM acrel_readings
+       WHERE terrain_id = $1 AND time >= $2 AND time < $3
+         AND active_power_total IS NOT NULL
+       GROUP BY point_id`,
+      [t.id, yesterday, today]
+    );
+
+    for (const r of rows) {
+      await telemetryDb.query(
+        `INSERT INTO power_peaks (terrain_id, point_id, peak_date, max_power, peak_time)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (point_id, peak_date) DO UPDATE SET max_power = $4, peak_time = $5`,
+        [t.id, r.point_id, yesterday, r.max_power, r.peak_time]
+      );
+      total++;
+    }
+  }
+
+  log.info(`✓ Power peaks computed: ${total} peaks for ${terrains.length} terrains (${yesterday})`);
+  return { ok: true, date: yesterday, peaksUpserted: total };
+}
+
 new Worker(
   "telemetry",
   async (job) => {
@@ -945,6 +981,15 @@ new Worker(
         }
 
         return { ok: true, summary };
+      }
+
+      if (job.name === "telemetry.compute_power_peaks") {
+        const result = await computePowerPeaks();
+        if (runId) {
+          await insertJobResult(runId, job.name, result);
+          await setRunStatus(runId, "success", { finished_at: new Date().toISOString(), result });
+        }
+        return { ok: true, result };
       }
 
       // fallback for unknown job types

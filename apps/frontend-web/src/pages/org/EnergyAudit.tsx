@@ -27,7 +27,7 @@ export default function EnergyAudit() {
   const from24h = useMemo(() => new Date(now.getTime() - 24 * 3600_000).toISOString(), [now]);
 
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(selectedTerrainId);
-  const { data: readingsData, isLoading: loadR } = useReadings(selectedTerrainId, { from: from24h, to: now.toISOString() });
+  const { data: readingsData, isLoading: loadR } = useReadings(selectedTerrainId, { from: from24h, to: now.toISOString(), cols: 'active_power_total,power_factor_total,thdi_a,thdi_b,thdi_c,voltage_unbalance,energy_total' });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
   const readings = (readingsData?.readings ?? []) as Array<Record<string, unknown>>;

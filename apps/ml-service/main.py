@@ -561,3 +561,127 @@ def get_predictions(terrain_id: str):
         return {"terrain_id": terrain_id, "predictions": df.to_dict(orient="records")}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"DB error: {e}")
+
+
+# ─── Anomaly Detection ──────────────────────────────────────
+
+@app.post("/anomalies/detect/{terrain_id}")
+def detect_anomalies(terrain_id: str):
+    """Run anomaly detection for a terrain using two methods:
+    1. Residual analysis: compare actual vs predicted energy with adaptive thresholds
+    2. Isolation Forest: multivariate anomaly detection on daily features
+    """
+    results = []
+
+    try:
+        with get_conn() as conn:
+            # 1) Residual-based detection (requires predictions + actuals)
+            residual_df = pd.read_sql("""
+                SELECT p.predicted_day, p.predicted_kwh, p.lower_bound, p.upper_bound,
+                       COALESCE(p.actual_kwh, (
+                           SELECT SUM(energy_total_delta) FROM acrel_agg_daily
+                           WHERE terrain_id = %s AND day = p.predicted_day
+                       )) AS actual_kwh
+                FROM ml_predictions p
+                WHERE p.terrain_id = %s AND p.model_type = 'lightgbm'
+                ORDER BY p.predicted_day DESC
+                LIMIT 90
+            """, conn, params=(terrain_id, terrain_id))
+
+            if len(residual_df) > 0 and residual_df["actual_kwh"].notna().sum() > 5:
+                residual_df = residual_df.dropna(subset=["actual_kwh"])
+                residual_df["residual"] = residual_df["actual_kwh"] - residual_df["predicted_kwh"]
+                residual_df["abs_residual"] = residual_df["residual"].abs()
+
+                # Adaptive thresholds: mean ± 2*std of residuals
+                mu = residual_df["residual"].mean()
+                sigma = residual_df["residual"].std()
+                if sigma > 0:
+                    upper_thresh = mu + 2 * sigma
+                    lower_thresh = mu - 2 * sigma
+
+                    for _, row in residual_df.iterrows():
+                        r = row["residual"]
+                        if r > upper_thresh or r < lower_thresh:
+                            z_score = abs((r - mu) / sigma)
+                            severity = "critical" if z_score > 3 else "high" if z_score > 2.5 else "medium"
+                            deviation = round(abs(r) / max(row["predicted_kwh"], 0.01) * 100, 1)
+                            results.append({
+                                "anomaly_type": "residual",
+                                "anomaly_date": str(row["predicted_day"]),
+                                "severity": severity,
+                                "score": round(z_score, 2),
+                                "expected_kwh": round(float(row["predicted_kwh"]), 2),
+                                "actual_kwh": round(float(row["actual_kwh"]), 2),
+                                "deviation_pct": deviation,
+                                "description": f"Résidu {'+' if r > 0 else ''}{r:.1f} kWh ({deviation}% écart) — z={z_score:.1f}σ",
+                            })
+
+            # 2) Isolation Forest on daily features
+            features_df = fetch_daily_features(terrain_id)
+            if len(features_df) >= 14:
+                from sklearn.ensemble import IsolationForest
+
+                feat_cols = [c for c in features_df.columns if c not in ("day", "energy_delta")]
+                X = features_df[feat_cols].fillna(0).values
+
+                iso = IsolationForest(contamination=0.1, random_state=42, n_estimators=100)
+                features_df["iso_score"] = iso.fit_predict(X)
+                features_df["iso_anomaly_score"] = iso.decision_function(X)
+
+                anomalies = features_df[features_df["iso_score"] == -1]
+                for _, row in anomalies.iterrows():
+                    a_score = abs(float(row["iso_anomaly_score"]))
+                    severity = "high" if a_score > 0.15 else "medium" if a_score > 0.1 else "low"
+                    results.append({
+                        "anomaly_type": "isolation_forest",
+                        "anomaly_date": str(row["day"]),
+                        "severity": severity,
+                        "score": round(a_score, 3),
+                        "expected_kwh": None,
+                        "actual_kwh": round(float(row["energy_delta"]), 2) if pd.notna(row["energy_delta"]) else None,
+                        "deviation_pct": None,
+                        "description": f"Anomalie multivariée détectée (score={a_score:.3f})",
+                    })
+
+            # Store results in DB
+            if results:
+                with conn.cursor() as cur:
+                    for a in results:
+                        cur.execute("""
+                            INSERT INTO energy_anomalies
+                                (terrain_id, anomaly_date, anomaly_type, severity, score,
+                                 expected_kwh, actual_kwh, deviation_pct, description)
+                            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ON CONFLICT DO NOTHING
+                        """, (terrain_id, a["anomaly_date"], a["anomaly_type"],
+                              a["severity"], a["score"], a["expected_kwh"],
+                              a["actual_kwh"], a["deviation_pct"], a["description"]))
+                    conn.commit()
+
+        return {
+            "terrain_id": terrain_id,
+            "anomalies_found": len(results),
+            "anomalies": sorted(results, key=lambda x: x["anomaly_date"], reverse=True),
+        }
+    except Exception as e:
+        logger.error(f"Anomaly detection error: {e}")
+        raise HTTPException(status_code=500, detail=f"Anomaly detection failed: {e}")
+
+
+@app.get("/anomalies/{terrain_id}")
+def get_anomalies(terrain_id: str, days: int = 30):
+    """Get stored anomalies for a terrain."""
+    try:
+        with get_conn() as conn:
+            df = pd.read_sql("""
+                SELECT id, anomaly_date, anomaly_type, severity, score,
+                       expected_kwh, actual_kwh, deviation_pct, description,
+                       resolved, created_at
+                FROM energy_anomalies
+                WHERE terrain_id = %s AND anomaly_date >= CURRENT_DATE - INTERVAL '%s days'
+                ORDER BY anomaly_date DESC
+            """, conn, params=(terrain_id, days))
+        return {"terrain_id": terrain_id, "anomalies": df.to_dict(orient="records")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")

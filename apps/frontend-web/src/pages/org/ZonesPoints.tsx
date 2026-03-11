@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -57,11 +57,19 @@ export default function ZonesPoints() {
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState('');
-  const [viewMode, setViewMode] = useState<'grid' | 'table' | 'tree'>('tree');
+  const [viewMode, setViewMode] = useState<'grid' | 'table' | 'tree'>(() => {
+    try { const v = localStorage.getItem('simes-zones-viewmode'); if (v === 'grid' || v === 'table' || v === 'tree') return v; } catch {}
+    return 'tree';
+  });
+
+  // Persist viewMode
+  useEffect(() => {
+    try { localStorage.setItem('simes-zones-viewmode', viewMode); } catch {}
+  }, [viewMode]);
 
   // Sparkline data — stableFrom keeps the query key stable within 15-min windows
   const sparklineFrom = stableFrom(24 * 3600_000);
-  const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom });
+  const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom, cols: 'active_power_total' });
   const sparklineMap = useMemo(() => {
     const map = new Map<string, number[]>();
     const readings = (allReadingsData as any)?.readings ?? [];

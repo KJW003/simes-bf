@@ -611,6 +611,18 @@ export const widgetDefinitions: WidgetDefinition[] = [
     renderer: () => null,
     standalone: true,
   },
+  {
+    id: 'dashboard-anomalies',
+    title: 'Anomalies IA',
+    description: 'Anomalies énergie détectées par IA — résidu et Isolation Forest.',
+    category: 'dashboard',
+    supportedSizes: ['md', 'lg'],
+    icon: ShieldAlert,
+    configSchema: DASHBOARD_CONFIG_SCHEMA,
+    resolver: passthroughResolver,
+    renderer: () => null,
+    standalone: true,
+  },
   // ── Core metric widgets ──
   {
     id: 'energy-quality-summary',

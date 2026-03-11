@@ -40,7 +40,11 @@ interface WeatherData {
   icon: string;
 }
 
-const STORAGE_KEY = 'simes-map-config';
+const STORAGE_KEY_PREFIX = 'simes-map-config';
+
+function storageKey(terrainId?: string) {
+  return terrainId ? `${STORAGE_KEY_PREFIX}-${terrainId}` : STORAGE_KEY_PREFIX;
+}
 
 const DEFAULT_CONFIG: SiteMapConfig = {
   lat: 12.3714,
@@ -54,9 +58,15 @@ const DEFAULT_CONFIG: SiteMapConfig = {
   offlineThresholdMin: 60,
 };
 
-function loadConfig(): SiteMapConfig {
+function loadConfig(terrainId?: string): SiteMapConfig {
   try {
-    const s = localStorage.getItem(STORAGE_KEY);
+    // Try per-terrain key first, then fallback to legacy global key
+    const key = storageKey(terrainId);
+    let s = localStorage.getItem(key);
+    if (!s && terrainId) {
+      // Migrate from legacy global key
+      s = localStorage.getItem(STORAGE_KEY_PREFIX);
+    }
     if (!s) return DEFAULT_CONFIG;
     const cfg = { ...DEFAULT_CONFIG, ...JSON.parse(s) };
     // Remove auto-generated placeholder square zones (old data)
@@ -64,13 +74,13 @@ function loadConfig(): SiteMapConfig {
       cfg.zones = cfg.zones.filter((z: any) => {
         if (!z?.coords || z.coords.length !== 4) return true;
         const [a, b, c, d] = z.coords;
-        // Detect the default square pattern: symmetric offsets of 0.0005
         const isSquare = Math.abs(a[0] - b[0]) < 0.0001 && Math.abs(c[0] - d[0]) < 0.0001
           && Math.abs(a[1] - d[1]) < 0.0001 && Math.abs(b[1] - c[1]) < 0.0001;
         return !isSquare;
       });
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
     }
+    // Persist to per-terrain key
+    if (terrainId) localStorage.setItem(key, JSON.stringify(cfg));
     return cfg;
   } catch {
     return DEFAULT_CONFIG;
@@ -345,11 +355,16 @@ function sizeHeightClass(size?: 'sm' | 'md' | 'lg') {
 
 /* ─── Main Widget ─────────────────────────────────────── */
 export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size }: { terrainId: string; size?: 'sm' | 'md' | 'lg' }) {
-  const [config, setConfig] = useState<SiteMapConfig>(loadConfig);
+  const [config, setConfig] = useState<SiteMapConfig>(() => loadConfig(terrainId));
   const [configOpen, setConfigOpen] = useState(false);
   const { data: overviewData } = useTerrainOverview(terrainId);
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const zones = (overviewData?.zones ?? []) as Array<Record<string, any>>;
+
+  // Reload config when terrain changes
+  useEffect(() => {
+    setConfig(loadConfig(terrainId));
+  }, [terrainId]);
 
   // Edit modes: 'none' | 'place-point' | 'draw-zone'
   const [editMode, setEditMode] = useState<'none' | 'place-point' | 'draw-zone'>('none');
@@ -359,12 +374,13 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
 
   const saveConfig = useCallback((updated: SiteMapConfig) => {
     setConfig(updated);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    const key = storageKey(terrainId);
+    localStorage.setItem(key, JSON.stringify(updated));
     // Sync to server (debounced via patchSettings)
     import('@/lib/api').then(({ default: api }) => {
       api.patchSettings({ mapConfig: updated }).catch(() => {/* silent */});
     });
-  }, []);
+  }, [terrainId]);
 
 
   // Compute point positions — only show points with explicit coordinates
@@ -595,6 +611,16 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
                   <Popup>
                     <div className="text-sm font-medium">{z.name}</div>
                     <div className="text-xs text-gray-600">{zoneStats[i]?.count ?? 0} appareils</div>
+                    <div className="flex gap-2 mt-2">
+                      <button
+                        className="text-xs text-red-600 hover:underline"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const updated = { ...config, zones: config.zones.filter((_, j) => j !== i) };
+                          saveConfig(updated);
+                        }}
+                      >Supprimer</button>
+                    </div>
                   </Popup>
                 </Polygon>
               );

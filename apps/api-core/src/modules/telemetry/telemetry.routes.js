@@ -476,4 +476,65 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
   }
 });
 
+// ─── Power Peaks ────────────────────────────────────────────
+// GET /terrains/:terrainId/power-peaks?days=30
+// Returns daily max active_power_total per point (from power_peaks table)
+router.get("/terrains/:terrainId/power-peaks", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const days = Math.min(parseInt(req.query.days) || 30, 365);
+    const since = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
+
+    const { rows } = await telemetryPool.query(
+      `SELECT pp.point_id, pp.peak_date, pp.max_power, pp.peak_time, mp.name AS point_name
+       FROM power_peaks pp
+       JOIN measurement_points mp ON mp.id = pp.point_id
+       WHERE pp.terrain_id = $1 AND pp.peak_date >= $2
+       ORDER BY pp.peak_date DESC, pp.max_power DESC`,
+      [terrainId, since]
+    );
+
+    res.json({ ok: true, terrain_id: terrainId, peaks: rows });
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/power-peaks]");
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
+// POST /terrains/:terrainId/power-peaks/compute
+// Compute and persist yesterday's power peaks (called by worker or cron)
+router.post("/terrains/:terrainId/power-peaks/compute", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const targetDate = req.body.date || new Date(Date.now() - 86400_000).toISOString().slice(0, 10);
+    const nextDay = new Date(new Date(targetDate).getTime() + 86400_000).toISOString().slice(0, 10);
+
+    const { rows } = await telemetryPool.query(
+      `SELECT point_id, MAX(active_power_total) AS max_power,
+              (array_agg(time ORDER BY active_power_total DESC))[1] AS peak_time
+       FROM acrel_readings
+       WHERE terrain_id = $1 AND time >= $2 AND time < $3
+         AND active_power_total IS NOT NULL
+       GROUP BY point_id`,
+      [terrainId, targetDate, nextDay]
+    );
+
+    let upserted = 0;
+    for (const r of rows) {
+      await telemetryPool.query(
+        `INSERT INTO power_peaks (terrain_id, point_id, peak_date, max_power, peak_time)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (point_id, peak_date) DO UPDATE SET max_power = $4, peak_time = $5`,
+        [terrainId, r.point_id, targetDate, r.max_power, r.peak_time]
+      );
+      upserted++;
+    }
+
+    res.json({ ok: true, date: targetDate, upserted });
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/power-peaks/compute]");
+    res.status(500).json({ ok: false, error: "Internal server error" });
+  }
+});
+
 module.exports = router;

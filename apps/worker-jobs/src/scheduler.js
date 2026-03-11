@@ -122,6 +122,26 @@ if (!connection) {
 
       log.info("✓ Pipeline heartbeat scheduled: runs every 10 minutes");
 
+      // ── Power peaks computation: daily at 02:00 ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.compute_power_peaks") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.compute_power_peaks",
+        { payload: {} },
+        {
+          repeat: { pattern: "0 2 * * *" }, // Daily at 02:00
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 2,
+        }
+      );
+
+      log.info("✓ Power peaks computation scheduled: daily at 02:00");
+
       // ── ML forecast retraining: daily at 03:00 ──
       for (const job of jobs) {
         if (job.name === "ai.retrain_forecasts") {
@@ -151,6 +171,27 @@ if (!connection) {
       );
 
       log.info("✓ ML forecast retraining scheduled: daily at 03:00");
+
+      // ── AI anomaly detection: daily at 04:00 ──
+      const aiJobsCheck = await aiQueue.getRepeatableJobs();
+      for (const job of aiJobsCheck) {
+        if (job.name === "ai.detect_anomalies") {
+          await aiQueue.removeRepeatableByKey(job.key);
+        }
+      }
+
+      await aiQueue.add(
+        "ai.detect_anomalies",
+        { payload: {} },
+        {
+          repeat: { pattern: "0 4 * * *" }, // Daily at 04:00
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 2,
+        }
+      );
+
+      log.info("✓ AI anomaly detection scheduled: daily at 04:00");
     } catch (e) {
       log.error(`✗ Failed to setup scheduler: ${e.message}`);
     }

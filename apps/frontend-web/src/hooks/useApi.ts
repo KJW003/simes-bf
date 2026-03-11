@@ -225,6 +225,28 @@ export function useTerrainOverview(terrainId: string | null) {
   });
 }
 
+// ─── Power Peaks History ───────────────────────────────────
+
+export function usePowerPeaks(terrainId: string | null, days = 30) {
+  return useQuery({
+    queryKey: ['power-peaks', terrainId, days],
+    queryFn: () => api.getPowerPeaks(terrainId!, days),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+export function useAnomalies(terrainId: string | null, days = 30) {
+  return useQuery({
+    queryKey: ['anomalies', terrainId, days],
+    queryFn: () => api.getAnomalies(terrainId!, days),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
 // ─── Historical readings ───────────────────────────────────
 
 export interface ReadingsData {

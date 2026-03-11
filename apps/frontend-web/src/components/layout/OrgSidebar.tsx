@@ -172,7 +172,7 @@ export function OrgSidebar({ onClose }: { onClose?: () => void } = {}) {
             </span>
           </div>
           <div className="text-[10px] text-sidebar-foreground/50 mt-1">
-            Complétude: {selectedTerrain.dataCompleteness24h.toFixed(1)}%
+            {selectedTerrain.pointsCount} points — {selectedTerrain.dataCompleteness24h.toFixed(0)}% disponibilité
           </div>
         </div>
       )}
