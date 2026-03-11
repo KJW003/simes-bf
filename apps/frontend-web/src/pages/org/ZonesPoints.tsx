@@ -61,7 +61,7 @@ export default function ZonesPoints() {
 
   // Sparkline data — stableFrom keeps the query key stable within 15-min windows
   const sparklineFrom = stableFrom(24 * 3600_000);
-  const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom, limit: 5000 });
+  const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom });
   const sparklineMap = useMemo(() => {
     const map = new Map<string, number[]>();
     const readings = (allReadingsData as any)?.readings ?? [];
@@ -441,7 +441,7 @@ export default function ZonesPoints() {
                           <td className="px-4 py-2 text-muted-foreground text-xs">{zoneName ? String(zoneName) : '—'}</td>
                           <td className="px-4 py-2 text-right mono">{r ? fmt(r.active_power_total) : '—'}</td>
                           <td className="px-4 py-2 text-right mono">{r ? fmt(r.power_factor_total, 3) : '—'}</td>
-                          <td className="px-4 py-2 text-right mono">{r ? fmt(r.energy_import, 1) : '—'}</td>
+                          <td className="px-4 py-2 text-right mono">{r ? fmt(r.energy_total, 1) : '—'}</td>
                           <td className="px-4 py-2 text-right text-xs text-muted-foreground">{status.minutesAgo != null ? `il y a ${status.minutesAgo} min` : '—'}</td>
                           <td className="px-4 py-2">
                             <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setSelectedPointId(String(p.id))}>
@@ -605,8 +605,6 @@ export default function ZonesPoints() {
                       ['I(b)', r.current_b, 'A'],
                       ['I(c)', r.current_c, 'A'],
                       ['I somme', r.current_sum, 'A'],
-                      ['Énergie import', r.energy_import, 'kWh'],
-                      ['Énergie export', r.energy_export, 'kWh'],
                       ['Énergie totale', r.energy_total, 'kWh'],
                       ['Fréquence', r.frequency, 'Hz'],
                       ['THDi A', r.thdi_a, '%'],

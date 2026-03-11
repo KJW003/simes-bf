@@ -46,7 +46,7 @@ export default function Points({ embedded }: { embedded?: boolean }) {
   const sparklineFrom = stableFrom(24 * 3600_000);
   const { data: allReadingsData } = useReadings(
     selectedTerrainId,
-    { from: sparklineFrom, limit: 5000 },
+    { from: sparklineFrom },
   );
 
   // Compute sparkline data per point
@@ -374,7 +374,7 @@ export default function Points({ embedded }: { embedded?: boolean }) {
                         <td className="px-4 py-2 text-muted-foreground text-xs">{zoneName ?? '—'}</td>
                         <td className="px-4 py-2 text-right mono">{r ? fmt(r.active_power_total) : '—'}</td>
                         <td className="px-4 py-2 text-right mono">{r ? fmt(r.power_factor_total, 3) : '—'}</td>
-                        <td className="px-4 py-2 text-right mono">{r ? fmt(r.energy_import, 1) : '—'}</td>
+                        <td className="px-4 py-2 text-right mono">{r ? fmt(r.energy_total, 1) : '—'}</td>
                         <td className="px-4 py-2 text-right text-xs text-muted-foreground">{minutesAgo != null ? `il y a ${minutesAgo} min` : '—'}</td>
                         <td className="px-4 py-2">
                           <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setSelectedPointId(String(p.id))}>
@@ -533,14 +533,13 @@ function PointDetailModal({
     { label: 'THD courant A', value: fmt(r.thdi_a), unit: '%' },
     { label: 'THD courant B', value: fmt(r.thdi_b), unit: '%' },
     { label: 'THD courant C', value: fmt(r.thdi_c), unit: '%' },
-    { label: 'Énergie import', value: fmt(r.energy_import), unit: 'kWh' },
-    { label: 'Énergie export', value: fmt(r.energy_export), unit: 'kWh' },
+    { label: 'Énergie totale', value: fmt(r.energy_total), unit: 'kWh' },
   ] : [];
 
-  const histCols = ['time', 'active_power_total', 'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_import'] as const;
+  const histCols = ['time', 'active_power_total', 'voltage_a', 'voltage_b', 'voltage_c', 'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_total'] as const;
   const histLabels: Record<string, string> = {
     time: 'Heure', active_power_total: 'P (kW)', voltage_a: 'Va', voltage_b: 'Vb', voltage_c: 'Vc',
-    current_a: 'Ia', current_b: 'Ib', current_c: 'Ic', power_factor_total: 'PF', energy_import: 'E imp (kWh)',
+    current_a: 'Ia', current_b: 'Ib', current_c: 'Ic', power_factor_total: 'PF', energy_total: 'E tot (kWh)',
   };
 
   return (

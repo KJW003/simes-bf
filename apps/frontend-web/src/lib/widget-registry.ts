@@ -307,20 +307,56 @@ function alertsResolver(
 
 function forecastResolver(
   config: WidgetConfig,
-  _ctx: WidgetResolverContext
+  ctx: WidgetResolverContext
 ): ResolvedWidgetData {
-  const numPts = { '1D': 24, '7D': 28, '1M': 30, '3M': 36, '6M': 48, '1Y': 52 }[config.timeRange.value] ?? 14;
+  const readings = (ctx.readings ?? []) as Array<Record<string, unknown>>;
+  if (!readings.length) {
+    return { kpis: { totalP50: 0, totalP90: 0 }, series: { p50: [], p90: [] }, availableMetrics: ['Energy'], meta: { unitByMetric: { Energy: 'kWh' } } };
+  }
+
+  // Build daily history from real readings
+  const dailyMap = new Map<string, { sum: number; count: number; date: Date }>();
+  for (const r of readings) {
+    const t = new Date(String(r.time));
+    const dayKey = t.toISOString().slice(0, 10);
+    const pw = r.active_power_total != null ? Number(r.active_power_total) : null;
+    if (pw == null) continue;
+    if (!dailyMap.has(dayKey)) dailyMap.set(dayKey, { sum: 0, count: 0, date: t });
+    const e = dailyMap.get(dayKey)!;
+    e.sum += pw; e.count++;
+  }
+  const days = Array.from(dailyMap.values()).map(v => v.sum / v.count);
+  if (!days.length) {
+    return { kpis: { totalP50: 0, totalP90: 0 }, series: { p50: [], p90: [] }, availableMetrics: ['Energy'], meta: { unitByMetric: { Energy: 'kWh' } } };
+  }
+
+  const n = days.length;
+  const avgPw = days.reduce((s, v) => s + v, 0) / n;
+  let slope = 0;
+  if (n >= 2) {
+    const xMean = (n - 1) / 2;
+    let num = 0, den = 0;
+    for (let i = 0; i < n; i++) { num += (i - xMean) * (days[i] - avgPw); den += (i - xMean) ** 2; }
+    slope = den !== 0 ? num / den : 0;
+  }
+  const stdDev = n >= 2 ? Math.sqrt(days.reduce((s, v) => s + (v - avgPw) ** 2, 0) / n) : avgPw * 0.3;
+
+  const numFc = { '1D': 1, '7D': 7, '1M': 30, '3M': 90, '6M': 180, '1Y': 365 }[config.timeRange.value] ?? 7;
   const forecastPts: Array<{ ts: number; value: number }> = [];
   const p90Pts: Array<{ ts: number; value: number }> = [];
-  for (let i = 0; i < numPts; i++) {
+  let totalP50 = 0, totalP90 = 0;
+  for (let i = 1; i <= numFc; i++) {
     const ts = Date.now() + i * 86400000;
-    const p50v = Number((900 + Math.sin((i / numPts) * Math.PI * 2) * 120 + (Math.random() - 0.5) * 40).toFixed(0));
-    const p90v = Number((980 + Math.sin((i / numPts) * Math.PI * 2) * 140 + (Math.random() - 0.5) * 60).toFixed(0));
+    const predicted = Math.max(0, avgPw + slope * (n >= 2 ? (n - 1 + i - (n - 1) / 2) : 0));
+    const conf = stdDev * 1.5 * Math.sqrt(1 + i / n);
+    const p50v = Math.round(predicted * 24 * 100) / 100; // kWh/day
+    const p90v = Math.round((predicted + conf) * 24 * 100) / 100;
     forecastPts.push({ ts, value: p50v });
     p90Pts.push({ ts, value: p90v });
+    totalP50 += p50v; totalP90 += p90v;
   }
   return {
-    kpis: { totalP50: 62500, totalP90: 71875 },
+    kpis: { totalP50: Math.round(totalP50), totalP90: Math.round(totalP90) },
     series: { p50: forecastPts, p90: p90Pts },
     availableMetrics: ['Energy'],
     meta: { unitByMetric: { Energy: 'kWh' } },

@@ -36,7 +36,7 @@ export default function Exports() {
   // Fetch readings for CSV terrain summary
   const from = useMemo(() => stableFrom(days * 86400_000), [days]);
   const to = useMemo(() => stableNow(), []);
-  const { data: readingsData } = useReadings(selectedTerrainId, { from, to, limit: 5000 });
+  const { data: readingsData } = useReadings(selectedTerrainId, { from, to });
   const readings = (readingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
   // Summary stats
@@ -245,15 +245,22 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     }
   }, [readings, summary, selectedTerrain, selectedTerrainId, days, points, currSym]);
 
-  // ── Image export: chart type + point chooser ──
+  // ── Image export: chart type + point chooser + own time period ──
   const CHART_COLORS = ['#3b82f6', '#ef4444', '#22c55e', '#f59e0b', '#8b5cf6', '#06b6d4', '#ec4899', '#14b8a6'];
+
+  const IMG_PERIODS = [
+    { key: '1', label: '24h' },
+    { key: '7', label: '7j' },
+    { key: '30', label: '30j' },
+    { key: '90', label: '90j' },
+  ] as const;
 
   type ChartType = 'power' | 'voltage' | 'current' | 'energy' | 'pf' | 'daily-power' | 'daily-cost' | 'daily-co2';
   const CHART_OPTIONS: { value: ChartType; label: string; perPoint: boolean }[] = [
     { value: 'power', label: 'Puissance active (kW)', perPoint: true },
     { value: 'voltage', label: 'Tension (V)', perPoint: true },
     { value: 'current', label: 'Courant (A)', perPoint: true },
-    { value: 'energy', label: 'Énergie importée (kWh)', perPoint: true },
+    { value: 'energy', label: 'Énergie totale (kWh)', perPoint: true },
     { value: 'pf', label: 'Facteur de puissance', perPoint: true },
     { value: 'daily-power', label: 'Puissance moy. journalière', perPoint: false },
     { value: 'daily-cost', label: 'Coût journalier', perPoint: false },
@@ -261,7 +268,14 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
   ];
   const [imgChartType, setImgChartType] = useState<ChartType>('power');
   const [imgPoints, setImgPoints] = useState<Set<string>>(new Set());
+  const [imgDays, setImgDays] = useState(7);
   const currentChartOpt = CHART_OPTIONS.find(o => o.value === imgChartType)!;
+
+  // Separate readings fetch for image export with its own time range
+  const imgFrom = useMemo(() => stableFrom(imgDays * 86400_000), [imgDays]);
+  const imgTo = useMemo(() => stableNow(), []);
+  const { data: imgReadingsData, isLoading: imgLoading } = useReadings(selectedTerrainId, { from: imgFrom, to: imgTo });
+  const imgReadings = (imgReadingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
   // Toggle point for image
   const toggleImgPoint = (id: string) => {
@@ -276,7 +290,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     // Aggregate daily charts — no point filter needed
     if (ct === 'daily-power' || ct === 'daily-cost' || ct === 'daily-co2') {
       const dailyMap = new Map<string, { sum: number; count: number; max: number; eiMin: number; eiMax: number; ts: number }>();
-      for (const r of readings) {
+      for (const r of imgReadings) {
         const t = new Date(String(r.time));
         const day = t.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
         const pw = r.active_power_total != null ? Number(r.active_power_total) : NaN;
@@ -321,7 +335,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
 
     // Group readings by time bucket per point
     const timeMap = new Map<string, Record<string, number | null>>();
-    for (const r of readings) {
+    for (const r of imgReadings) {
       const pid = String(r.point_id);
       if (!selPts.has(pid)) continue;
       const pName = pointNameMap.get(pid) ?? pid;
@@ -341,7 +355,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
         const { _ts, ...rest } = e;
         return { label, ...rest };
       });
-  }, [imgChartType, imgPoints, readings, points, pointNameMap, prefs.tariffRate, prefs.co2Factor]);
+  }, [imgChartType, imgPoints, imgReadings, points, pointNameMap, prefs.tariffRate, prefs.co2Factor]);
 
   // Determine series names for per-point charts
   const imgSeriesNames = useMemo(() => {
@@ -379,11 +393,11 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
       const ptLabel = imgPoints.size === 1
         ? sanitize(pointNameMap.get(Array.from(imgPoints)[0]) ?? '')
         : imgPoints.size > 1 ? `${imgPoints.size}_points` : 'tous';
-      a.download = `${terrainLabel}_${imgChartType}_${ptLabel}_${days}j.png`;
+      a.download = `${terrainLabel}_${imgChartType}_${ptLabel}_${imgDays}j.png`;
       a.click();
     };
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-  }, [terrainLabel, days, imgChartType, imgPoints, pointNameMap]);
+  }, [terrainLabel, imgDays, imgChartType, imgPoints, pointNameMap]);
 
   // ── Per-point CSV export ──
   const handleExportPointCSV = useCallback((pointId: string) => {
@@ -560,6 +574,16 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
           {/* Controls row */}
           <div className="flex items-end gap-4 flex-wrap">
             <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Période</label>
+              <div className="flex gap-1">
+                {IMG_PERIODS.map(p => (
+                  <Button key={p.key} variant={imgDays === Number(p.key) ? 'default' : 'outline'} size="sm" className="h-7 text-xs px-2" onClick={() => setImgDays(Number(p.key))}>
+                    {p.label}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Type de graphique</label>
               <Select value={imgChartType} onValueChange={v => setImgChartType(v as ChartType)}>
                 <SelectTrigger className="w-56"><SelectValue /></SelectTrigger>
@@ -596,7 +620,12 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
           </div>
 
           {/* Chart preview */}
-          {imgChartData.length > 0 ? (
+          {imgLoading ? (
+            <div className="flex flex-col items-center justify-center py-12 text-sm text-muted-foreground gap-2">
+              <Loader2 className="w-5 h-5 animate-spin" />
+              Chargement des données…
+            </div>
+          ) : imgChartData.length > 0 ? (
             <div ref={chartRef}>
               <ResponsiveContainer width="100%" height={300}>
                 {imgChartType === 'daily-power' ? (

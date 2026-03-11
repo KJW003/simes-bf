@@ -67,7 +67,7 @@ export default function ZonePage() {
       const r = (p as any).readings as Record<string, unknown> | undefined;
       if (!r) continue;
       if (r.active_power_total != null) totalPower += Number(r.active_power_total);
-      if (r.energy_import != null) totalEnergy += Number(r.energy_import);
+      if (r.energy_total != null) totalEnergy += Number(r.energy_total);
       if (r.power_factor_total != null) { pfSum += Number(r.power_factor_total); pfCount++; }
       if (r.time) onlineCount++;
     }
@@ -168,7 +168,7 @@ export default function ZonePage() {
                           <div><span className="text-muted-foreground">P</span><br/>{fmt(power, 1)} W</div>
                           <div><span className="text-muted-foreground">PF</span><br/>{fmt(pf, 2)}</div>
                           <div><span className="text-muted-foreground">Va</span><br/>{fmt(va, 0)} V</div>
-                          <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_import, 0)} Wh</div>
+                          <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_total, 0)} Wh</div>
                         </div>
                       </div>
                     </Link>
@@ -221,7 +221,7 @@ export default function ZonePage() {
                           <div><span className="text-muted-foreground">P</span><br/>{fmt(power, 1)} W</div>
                           <div><span className="text-muted-foreground">PF</span><br/>{fmt(pf, 2)}</div>
                           <div><span className="text-muted-foreground">Va</span><br/>{fmt(va, 0)} V</div>
-                          <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_import, 0)} Wh</div>
+                          <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_total, 0)} Wh</div>
                         </div>
                       </div>
                     </Link>
@@ -264,7 +264,7 @@ export default function ZonePage() {
                         <div><span className="text-muted-foreground">P</span><br/>{fmt(power)} kW</div>
                         <div><span className="text-muted-foreground">PF</span><br/>{fmt(pf)}</div>
                         <div><span className="text-muted-foreground">Va</span><br/>{fmt(va)} V</div>
-                        <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_import)} kWh</div>
+                        <div><span className="text-muted-foreground">E</span><br/>{fmt(r?.energy_total)} kWh</div>
                       </div>
                     </div>
                   </Link>

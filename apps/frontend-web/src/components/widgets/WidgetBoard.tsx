@@ -737,7 +737,7 @@ export function WidgetBoard() {
   // Fetch historical readings for chart widgets
   const readingsFrom = useMemo(() => stableFrom(periodMs), [periodMs]);
   const readingsTo = useMemo(() => stableNow(), [readingsFrom]);
-  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, limit: 5000 });
+  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom });
 
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));
   const [libraryOpen, setLibraryOpen] = useState(false);

@@ -184,7 +184,6 @@ export default function Forecasts() {
     from,
     to,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
-    limit: 5000,
     cols: 'active_power_total',
   });
 
@@ -213,7 +212,23 @@ export default function Forecasts() {
   const useML = !!mlForecast && !mlError;
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
-  const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
+  const rawReadings = (data?.readings ?? []) as Array<Record<string, unknown>>;
+
+  // When "all points", aggregate readings by summing active_power_total across points per time bucket
+  const readings = useMemo(() => {
+    if (selectedPoint !== '_all' || !rawReadings.length) return rawReadings;
+    const buckets = new Map<string, { sum: number; time: string }>();
+    for (const r of rawReadings) {
+      const t = String(r.time);
+      // 5-min buckets for aggregation
+      const bucketKey = new Date(t).toISOString().slice(0, 15);
+      const pw = r.active_power_total != null ? Number(r.active_power_total) : null;
+      if (pw == null) continue;
+      const e = buckets.get(bucketKey);
+      if (e) { e.sum += pw; } else { buckets.set(bucketKey, { sum: pw, time: t }); }
+    }
+    return Array.from(buckets.values()).map(b => ({ time: b.time, active_power_total: b.sum }));
+  }, [rawReadings, selectedPoint]);
 
   const clientForecast = useMemo(() => computeForecast(readings, h.days), [readings, h.days]);
 

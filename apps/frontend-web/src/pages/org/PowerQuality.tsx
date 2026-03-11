@@ -44,7 +44,7 @@ export default function PowerQuality() {
 
   const { data: overviewData, isLoading: loadingOv } = useTerrainOverview(selectedTerrainId);
   const { data: readingsData, isLoading: loadingR } = useReadings(selectedTerrainId, {
-    from: fromDate, to: now.toISOString(), limit: 5000,
+    from: fromDate, to: now.toISOString(),
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     cols: 'power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,voltage_unbalance,current_unbalance',
   });

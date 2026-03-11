@@ -1,4 +1,4 @@
-import { useMemo, useEffect, useRef, useCallback } from 'react';
+import { useMemo, useEffect, useRef, useCallback, useState } from 'react';
 import { useTerrainOverview } from './useApi';
 import api from '@/lib/api';
 
@@ -28,6 +28,7 @@ export interface AlarmEntry {
   resolvedAt: string | null;
   source: 'rule' | 'device';
   ruleId?: number;
+  dbId?: string; // incident UUID from DB
 }
 
 /* ── Constants ── */
@@ -88,12 +89,10 @@ export async function loadAlarmSettingsFromServer(): Promise<void> {
       }
       const serverMapConfig = res.settings.mapConfig;
       if (serverMapConfig && typeof serverMapConfig === 'object') {
-        // Merge server config with local config to preserve local-only fields (e.g. mapLocked)
         try {
           const local = localStorage.getItem('simes-map-config');
           const localCfg = local ? JSON.parse(local) : {};
           const merged = { ...localCfg, ...serverMapConfig };
-          // Preserve mapLocked from local if server doesn't have it
           if (localCfg.mapLocked !== undefined && (serverMapConfig as any).mapLocked === undefined) {
             merged.mapLocked = localCfg.mapLocked;
           }
@@ -102,16 +101,31 @@ export async function loadAlarmSettingsFromServer(): Promise<void> {
           localStorage.setItem('simes-map-config', JSON.stringify(serverMapConfig));
         }
       }
-      const serverWidgetLayout = res.settings.widgetLayout;
-      if (serverWidgetLayout && typeof serverWidgetLayout === 'object') {
-        // Store under the versioned key — will be loaded by WidgetBoard
-        const userId = (res.settings as any)._userId; // not available here, so use generic approach
-        // Widget layout sync is handled differently — see WidgetBoard
-      }
     }
   } catch {
     // Server unavailable — use local cache
   }
+}
+
+/* ── DB sync helpers ── */
+
+/** Create an incident in the DB for a new alarm (fire-and-forget) */
+function syncAlarmToDB(entry: AlarmEntry, terrainId: string): Promise<string | null> {
+  return api.createIncident({
+    title: entry.type,
+    description: `Alerte ${entry.source === 'device' ? 'matérielle' : 'règle'} — ${entry.pointName}`,
+    severity: entry.severity,
+    source: 'alarm-engine',
+    terrain_id: terrainId,
+    point_id: entry.pointId || undefined,
+    metadata: { alarmKey: entry.key, alarmSource: entry.source, ruleId: entry.ruleId },
+  }).then(res => res.ok ? res.incident.id : null)
+    .catch(() => null);
+}
+
+/** Resolve an incident in the DB */
+function resolveAlarmInDB(dbId: string): void {
+  api.updateIncident(dbId, { status: 'resolved' }).catch(() => {/* silent */});
 }
 
 /* ── Evaluation ── */
@@ -138,9 +152,40 @@ export function useAlarmEngine(terrainId: string | null) {
   const { data: overviewData } = useTerrainOverview(terrainId);
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const prevSerialRef = useRef('');
+  const dbLoadedRef = useRef(false);
+  const [dbHistory, setDbHistory] = useState<AlarmEntry[]>([]);
 
-  const { history } = useMemo(() => {
-    if (!points.length) return { history: loadHistory() };
+  // Load alarm history from DB on terrain change
+  useEffect(() => {
+    if (!terrainId) return;
+    dbLoadedRef.current = false;
+    api.getIncidents({ source: 'alarm-engine', terrain_id: terrainId, limit: 500 })
+      .then(res => {
+        if (!res.ok) return;
+        const entries: AlarmEntry[] = res.incidents.map((inc: any) => ({
+          id: inc.metadata?.alarmKey ? `db_${inc.id}` : inc.id,
+          key: inc.metadata?.alarmKey ?? `db_${inc.id}`,
+          pointId: inc.point_id ?? '',
+          pointName: inc.metadata?.pointName ?? inc.terrain_name ?? '',
+          type: inc.title,
+          severity: inc.severity as 'warning' | 'critical',
+          triggeredAt: inc.created_at,
+          resolvedAt: inc.resolved_at,
+          source: (inc.metadata?.alarmSource ?? 'device') as 'rule' | 'device',
+          ruleId: inc.metadata?.ruleId,
+          dbId: inc.id,
+        }));
+        setDbHistory(entries);
+        dbLoadedRef.current = true;
+      })
+      .catch(() => { dbLoadedRef.current = true; });
+  }, [terrainId]);
+
+  const { history, newAlarms, resolvedAlarms: justResolved } = useMemo(() => {
+    if (!points.length) {
+      const merged = mergeHistories(loadHistory(), dbHistory);
+      return { history: merged, newAlarms: [] as AlarmEntry[], resolvedAlarms: [] as AlarmEntry[] };
+    }
 
     const rules = loadRules().filter(r => r.active);
     const now = new Date().toISOString();
@@ -154,7 +199,7 @@ export function useAlarmEngine(terrainId: string | null) {
       const pid = String(p.id);
       const pname = String(p.name);
 
-      // 1. Device hardware alarm_state bitflags (always valid)
+      // 1. Device hardware alarm_state bitflags
       const alarmState = r.alarm_state != null ? Number(r.alarm_state) : 0;
       if (alarmState > 0) {
         const flags = [
@@ -201,19 +246,23 @@ export function useAlarmEngine(terrainId: string | null) {
       }
     }
 
-    // 3. Reconcile with stored history
-    const prev = loadHistory();
+    // 3. Reconcile with stored history (local + DB)
+    const prev = mergeHistories(loadHistory(), dbHistory);
     const updated = [...prev];
     const activeKeys = new Set(triggering.keys());
+    const newAlarms: AlarmEntry[] = [];
+    const justResolvedAlarms: AlarmEntry[] = [];
 
     // Create entries for NEW triggering alarms
     for (const [key, alarm] of triggering) {
       const alreadyActive = updated.find(h => h.key === key && h.resolvedAt === null);
       if (!alreadyActive) {
-        updated.push({
+        const entry: AlarmEntry = {
           id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
           key, triggeredAt: now, resolvedAt: null, ...alarm,
-        });
+        };
+        updated.push(entry);
+        newAlarms.push(entry);
       }
     }
 
@@ -221,20 +270,38 @@ export function useAlarmEngine(terrainId: string | null) {
     for (const entry of updated) {
       if (entry.resolvedAt === null && !activeKeys.has(entry.key)) {
         entry.resolvedAt = now;
+        justResolvedAlarms.push(entry);
       }
     }
 
-    return { history: updated };
-  }, [points]);
+    return { history: updated, newAlarms, resolvedAlarms: justResolvedAlarms };
+  }, [points, dbHistory]);
 
-  // Persist history (skip if unchanged)
+  // Persist history to localStorage + sync new/resolved alarms to DB
   useEffect(() => {
     const serial = JSON.stringify(history);
     if (serial !== prevSerialRef.current) {
       prevSerialRef.current = serial;
       saveHistory(history);
+
+      // Sync new alarms to DB
+      if (terrainId) {
+        for (const alarm of newAlarms) {
+          syncAlarmToDB(alarm, terrainId).then(dbId => {
+            if (dbId) {
+              alarm.dbId = dbId;
+              saveHistory(history); // Update with dbId
+            }
+          });
+        }
+
+        // Resolve alarms in DB
+        for (const alarm of justResolved) {
+          if (alarm.dbId) resolveAlarmInDB(alarm.dbId);
+        }
+      }
     }
-  }, [history]);
+  }, [history, newAlarms, justResolved, terrainId]);
 
   const activeAlarms = useMemo(() => history.filter(h => h.resolvedAt === null), [history]);
   const resolvedAlarms = useMemo(() => history.filter(h => h.resolvedAt !== null), [history]);
@@ -260,4 +327,27 @@ export function useAlarmEngine(terrainId: string | null) {
     stats: { active: activeAlarms.length, resolved: resolvedAlarms.length, total: history.length },
     clearHistory, points,
   };
+}
+
+/** Merge localStorage history with DB-loaded history, deduplicating by key */
+function mergeHistories(local: AlarmEntry[], db: AlarmEntry[]): AlarmEntry[] {
+  const byKey = new Map<string, AlarmEntry>();
+  // DB entries first (they have dbId)
+  for (const e of db) byKey.set(e.key, e);
+  // Local entries override if they are more recent or have no DB match
+  for (const e of local) {
+    const existing = byKey.get(e.key);
+    if (!existing) {
+      byKey.set(e.key, e);
+    } else if (e.dbId && !existing.dbId) {
+      // Local has dbId, DB entry doesn't — keep local
+      byKey.set(e.key, e);
+    } else if (!existing.resolvedAt && e.resolvedAt) {
+      // Local is resolved, DB isn't — keep local (more up to date)
+      byKey.set(e.key, { ...existing, resolvedAt: e.resolvedAt });
+    }
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    new Date(b.triggeredAt).getTime() - new Date(a.triggeredAt).getTime()
+  );
 }

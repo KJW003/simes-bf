@@ -40,7 +40,7 @@ const PARAM_GROUPS = [
   { label: 'Facteur de puissance', keys: ['power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c'] },
   { label: 'THD courant', keys: ['thdi_a', 'thdi_b', 'thdi_c'] },
   { label: 'THD tension', keys: ['thdu_a', 'thdu_b', 'thdu_c'] },
-  { label: 'Énergie', keys: ['energy_import', 'energy_export'] },
+  { label: 'Énergie', keys: ['energy_total'] },
   { label: 'Autres', keys: ['alarm_state', 'voltage_unbalance'] },
 ];
 
@@ -144,7 +144,7 @@ export default function PointDetails() {
 
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(selectedTerrainId);
   const { data: readingsData, isLoading: loadR } = useReadings(selectedTerrainId, {
-    from, to: now.toISOString(), point_id: pointId, limit: 5000,
+    from, to: now.toISOString(), point_id: pointId,
   });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
@@ -178,7 +178,7 @@ export default function PointDetails() {
       // THD tension
       thdu_a: num(r.thdu_a), thdu_b: num(r.thdu_b), thdu_c: num(r.thdu_c),
       // Énergie
-      energy_import: num(r.energy_import), energy_export: num(r.energy_export),
+      energy_total: num(r.energy_total),
 
     })).reverse(),
     [readings],
@@ -448,7 +448,7 @@ export default function PointDetails() {
                       <th>PF</th>
                       <th>THDi A</th><th>THDi B</th><th>THDi C</th>
                       <th>THDu A</th><th>THDu B</th><th>THDu C</th>
-                      <th>E imp.</th><th>E exp.</th>
+                      <th>E tot.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -474,8 +474,7 @@ export default function PointDetails() {
                         <td className="mono">{fmt(r.thdu_a)}</td>
                         <td className="mono">{fmt(r.thdu_b)}</td>
                         <td className="mono">{fmt(r.thdu_c)}</td>
-                        <td className="mono">{fmt(r.energy_import)}</td>
-                        <td className="mono">{fmt(r.energy_export)}</td>
+                        <td className="mono">{fmt(r.energy_total)}</td>
                       </tr>
                     ))}
                   </tbody>

@@ -128,34 +128,71 @@ const LOAD_PERIODS = [
   { key: '30d', label: '30 jours', ms: 30 * 86400_000 },
 ] as const;
 
+const METRIC_OPTIONS = [
+  { value: 'active_power_total', label: 'Puissance active (kW)', unit: ' kW' },
+  { value: 'voltage_a', label: 'Tension phase A (V)', unit: ' V' },
+  { value: 'voltage_b', label: 'Tension phase B (V)', unit: ' V' },
+  { value: 'voltage_c', label: 'Tension phase C (V)', unit: ' V' },
+  { value: 'current_a', label: 'Courant phase A (A)', unit: ' A' },
+  { value: 'current_b', label: 'Courant phase B (A)', unit: ' A' },
+  { value: 'current_c', label: 'Courant phase C (A)', unit: ' A' },
+  { value: 'power_factor_total', label: 'Facteur de puissance', unit: '' },
+  { value: 'energy_total', label: 'Énergie totale (kWh)', unit: ' kWh' },
+] as const;
+
 /* ── UnifiedLoadCurve (Courbe des points) ── */
 export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId }: { terrainId: string; from?: string; to?: string }) {
   const [period, setPeriod] = useState<string>('24h');
   const [offsetDays, setOffsetDays] = useState(0);
+  const [metric, setMetric] = useState<string>('active_power_total');
+  const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
   const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
   const from = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
 
+  const metricOpt = METRIC_OPTIONS.find(m => m.value === metric) ?? METRIC_OPTIONS[0];
+
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const readLimit = periodMs <= 2 * 86400_000 ? 3000 : 5000;
-  const { data, isLoading } = useReadings(terrainId, { from, to, limit: readLimit, cols: 'active_power_total' });
+  const { data, isLoading } = useReadings(terrainId, { from, to, cols: metric });
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
 
-  const { chartData, pointNames } = useMemo(() => {
-    if (!readings.length || !points.length) return { chartData: [], pointNames: [] as string[] };
+  // Build deterministic point → color mapping (sorted by name) 
+  const pointColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    const sorted = [...points].sort((a, b) => String(a.name).localeCompare(String(b.name)));
+    sorted.forEach((p, i) => map.set(String(p.id), CHART_COLORS[i % CHART_COLORS.length]));
+    return map;
+  }, [points]);
+
+  const togglePoint = useCallback((id: string) => {
+    setSelectedPoints(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
+  }, []);
+
+  const { chartData, pointNames, pointIdByName } = useMemo(() => {
+    if (!readings.length || !points.length) return { chartData: [], pointNames: [] as string[], pointIdByName: new Map<string, string>() };
 
     const pointMap = new Map(points.map(p => [String(p.id), String(p.name)]));
-    const pNames = [...new Set(readings.map(r => String(r.point_id)))].map(id => pointMap.get(id) ?? id);
+    const activePts = selectedPoints.size > 0 ? selectedPoints : new Set(points.map(p => String(p.id)));
+    const pNames: string[] = [];
+    const idByName = new Map<string, string>();
+
+    for (const id of activePts) {
+      const name = pointMap.get(id) ?? id;
+      pNames.push(name);
+      idByName.set(name, id);
+    }
 
     const buckets = new Map<number, Record<string, number | null>>();
     for (const r of readings) {
+      const pid = String(r.point_id);
+      if (!activePts.has(pid)) continue;
       const t = Math.floor(new Date(String(r.time)).getTime() / 300_000) * 300_000;
       if (!buckets.has(t)) buckets.set(t, {});
-      const name = pointMap.get(String(r.point_id)) ?? String(r.point_id);
-      const val = r.active_power_total != null ? Number(r.active_power_total) : null;
+      const name = pointMap.get(pid) ?? pid;
+      const val = r[metric] != null ? Number(r[metric]) : null;
       if (val != null) buckets.get(t)![name] = val;
     }
 
@@ -167,8 +204,8 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
         ...vals,
       }));
 
-    return { chartData: sorted, pointNames: pNames };
-  }, [readings, points]);
+    return { chartData: sorted, pointNames: pNames, pointIdByName: idByName };
+  }, [readings, points, metric, selectedPoints]);
 
   const handleLegendClick = useCallback((entry: any) => {
     const name = entry.value ?? entry.dataKey;
@@ -180,7 +217,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
   }, []);
 
   if (isLoading) return <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>;
-  if (!chartData.length) return null;
+  if (!points.length) return null;
 
   return (
     <Card>
@@ -189,7 +226,6 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
           <CardTitle className="text-base font-medium flex items-center gap-2">
             <Activity className="w-4 h-4 text-primary" />
             Courbe des points
-            <span className="text-xs font-normal text-muted-foreground ml-1">(cliquez légende pour isoler)</span>
           </CardTitle>
           <div className="flex items-center gap-1">
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => d + (periodMs / 86400_000))} title="Période précédente">
@@ -206,24 +242,53 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
             {offsetDays > 0 && <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setOffsetDays(0)}>Auj.</Button>}
           </div>
         </div>
+        {/* Metric selector + point chips */}
+        <div className="flex flex-wrap items-center gap-2 mt-2">
+          <select value={metric} onChange={e => setMetric(e.target.value)} className="h-7 rounded border border-input bg-background px-2 text-xs">
+            {METRIC_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+          <div className="flex flex-wrap gap-1">
+            {points.map(p => {
+              const pid = String(p.id);
+              const active = selectedPoints.has(pid) || selectedPoints.size === 0;
+              const color = pointColorMap.get(pid) ?? CHART_COLORS[0];
+              return (
+                <button
+                  key={pid}
+                  onClick={() => togglePoint(pid)}
+                  className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                    active
+                      ? 'bg-primary/10 text-foreground'
+                      : 'border-muted-foreground/20 text-muted-foreground'
+                  }`}
+                  style={active ? { borderColor: color + '88', boxShadow: `0 0 0 1px ${color}44` } : undefined}
+                >
+                  <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: color }} />
+                  {p.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <div className="flex items-center gap-2 mt-1">
           <Badge variant="outline" className="text-[10px]">{readings.length} mesures</Badge>
           {offsetDays > 0 && <span className="text-[10px] text-muted-foreground">({new Date(Date.now() - (offsetDays + periodMs / 86400_000) * 86400_000).toLocaleDateString('fr-FR')} → {new Date(Date.now() - offsetDays * 86400_000).toLocaleDateString('fr-FR')})</span>}
         </div>
       </CardHeader>
       <CardContent>
+        {chartData.length > 0 ? (
         <ResponsiveContainer width="100%" height={350}>
           <LineChart data={chartData}>
             <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
             <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 10 }} unit=" kW" />
+            <YAxis tick={{ fontSize: 10 }} unit={metricOpt.unit} />
             <Tooltip
               contentStyle={{ fontSize: 12 }}
               labelFormatter={(_l, payload) => {
                 if (!payload?.length) return '';
                 return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
               }}
-              formatter={(v: number, name: string) => [v != null ? v.toFixed(2) + ' kW' : '—', name]}
+              formatter={(v: number, name: string) => [v != null ? v.toFixed(2) + metricOpt.unit : '—', name]}
             />
             <Legend
               wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
@@ -235,20 +300,27 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
               )}
             />
             <Brush dataKey="label" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
-            {pointNames.map((name, i) => (
-              <Line
-                key={name}
-                type="monotone"
-                dataKey={name}
-                stroke={CHART_COLORS[i % CHART_COLORS.length]}
-                dot={false}
-                strokeWidth={hiddenSeries.has(name) ? 0 : 1.5}
-                connectNulls
-                hide={hiddenSeries.has(name)}
-              />
-            ))}
+            {pointNames.map(name => {
+              const pid = pointIdByName.get(name) ?? '';
+              const color = pointColorMap.get(pid) ?? CHART_COLORS[0];
+              return (
+                <Line
+                  key={name}
+                  type="monotone"
+                  dataKey={name}
+                  stroke={color}
+                  dot={false}
+                  strokeWidth={hiddenSeries.has(name) ? 0 : 1.5}
+                  connectNulls
+                  hide={hiddenSeries.has(name)}
+                />
+              );
+            })}
           </LineChart>
         </ResponsiveContainer>
+        ) : (
+          <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée pour cette période</div>
+        )}
       </CardContent>
     </Card>
   );
@@ -257,7 +329,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
 /* ── PowerPeaksTable ── */
 export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data } = useReadings(terrainId, { from, to, limit: 5000, cols: 'active_power_total' });
+  const { data } = useReadings(terrainId, { from, to, cols: 'active_power_total' });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
@@ -343,7 +415,7 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
     const byDay = new Map<string, number>();
     for (const r of rows) {
       const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.energy_total_delta) || Number(r.energy_import_delta) || 0));
+      byDay.set(day, (byDay.get(day) ?? 0) + (Number(r.energy_total_delta) || 0));
     }
     return Array.from(byDay.entries()).map(([day, kwh]) => ({
       day, kwh: Number(kwh.toFixed(2)), cost: Number((kwh * prefs.tariffRate).toFixed(2)),
@@ -418,7 +490,7 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
     const totalByDay = new Map<string, number>();
     for (const r of rows) {
       const day = new Date(String(r.day)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      totalByDay.set(day, (totalByDay.get(day) ?? 0) + (Number(r.energy_total_delta) || Number(r.energy_import_delta) || 0));
+      totalByDay.set(day, (totalByDay.get(day) ?? 0) + (Number(r.energy_total_delta) || 0));
     }
     let cumulative = 0;
     return Array.from(totalByDay.entries()).map(([day, kwh]) => {
@@ -604,7 +676,7 @@ export function AlarmConfigPanel({ terrainId }: { terrainId: string }) {
   };
 
   const parameters = ['active_power_total', 'reactive_power_total', 'voltage_a', 'voltage_b', 'voltage_c',
-    'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_import', 'thdi_a'];
+    'current_a', 'current_b', 'current_c', 'power_factor_total', 'energy_total', 'thdi_a'];
 
   const doSaveRules = (updated: AlarmRule[]) => { setRules(updated); saveRules(updated); };
 

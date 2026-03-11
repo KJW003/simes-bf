@@ -416,20 +416,21 @@ export const api = {
     request<{ ok: boolean; deleted: string }>(`/users/${userId}`, { method: 'DELETE' }),
 
   // ── Incidents ──
-  getIncidents: (params?: { status?: string; severity?: string; terrain_id?: string; limit?: number; offset?: number }) => {
+  getIncidents: (params?: { status?: string; severity?: string; terrain_id?: string; source?: string; limit?: number; offset?: number }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.severity) qs.set('severity', params.severity);
     if (params?.terrain_id) qs.set('terrain_id', params.terrain_id);
+    if (params?.source) qs.set('source', params.source);
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.offset) qs.set('offset', String(params.offset));
     const q = qs.toString();
     return request<{ ok: boolean; incidents: any[]; total: number }>(`/incidents${q ? `?${q}` : ''}`);
   },
   getIncidentStats: () => request<{ ok: boolean; breakdown: any[]; open_count: number; critical_count: number; total: number }>('/incidents/stats'),
-  createIncident: (data: { title: string; description?: string; severity?: string; source?: string; terrain_id?: string; point_id?: string }) =>
+  createIncident: (data: { title: string; description?: string; severity?: string; source?: string; terrain_id?: string; point_id?: string; metadata?: Record<string, unknown> }) =>
     request<{ ok: boolean; incident: any }>('/incidents', { method: 'POST', body: JSON.stringify(data) }),
-  updateIncident: (id: string, data: { status?: string; severity?: string; assigned_to?: string; description?: string }) =>
+  updateIncident: (id: string, data: { status?: string; severity?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) =>
     request<{ ok: boolean; incident: any }>(`/incidents/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // ── Audit Logs ──

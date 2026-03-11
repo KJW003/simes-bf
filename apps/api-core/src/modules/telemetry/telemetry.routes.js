@@ -123,7 +123,7 @@ function parseCols(colsParam) {
 router.get("/terrains/:terrainId/readings", async (req, res) => {
   try {
     const { terrainId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 500, 5000);
+    const limit = Math.min(parseInt(req.query.limit) || 5000, 50000);
 
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 24 * 60 * 60 * 1000);

@@ -6,7 +6,7 @@ const log = require("../../config/logger");
 // GET /incidents — list incidents with optional filters
 router.get('/incidents', async (req, res) => {
   try {
-    const { status, severity, terrain_id, limit = 100, offset = 0 } = req.query;
+    const { status, severity, terrain_id, source, limit = 100, offset = 0 } = req.query;
     const conditions = [];
     const params = [];
     let idx = 1;
@@ -14,6 +14,7 @@ router.get('/incidents', async (req, res) => {
     if (status) { conditions.push(`i.status = $${idx++}`); params.push(status); }
     if (severity) { conditions.push(`i.severity = $${idx++}`); params.push(severity); }
     if (terrain_id) { conditions.push(`i.terrain_id = $${idx++}`); params.push(terrain_id); }
+    if (source) { conditions.push(`i.source = $${idx++}`); params.push(source); }
 
     const where = conditions.length ? 'WHERE ' + conditions.join(' AND ') : '';
     const limitVal = Math.min(Math.max(Number(limit) || 100, 1), 500);

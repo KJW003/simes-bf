@@ -133,7 +133,6 @@ export default function History() {
     from,
     to: now.toISOString(),
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
-    limit: 5000,
     cols: readingsCols,
   });
 
@@ -146,7 +145,6 @@ export default function History() {
       from: compFrom,
       to: compTo,
       point_id: selectedPoint === '_all' ? undefined : selectedPoint,
-      limit: 5000,
       cols: metric,
     } : undefined,
   );
