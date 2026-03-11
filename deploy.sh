@@ -8,6 +8,8 @@
 #   ./deploy.sh              # full deploy (build + up + init DB)
 #   ./deploy.sh --no-build   # skip Docker build (use cached images)
 #   ./deploy.sh --db-only    # only run DB init (containers must be up)
+#   ./deploy.sh --repair-agg # after deploy, re-aggregate all historical data
+#   ./deploy.sh --check-pipeline  # print pipeline/queue health after deploy
 #
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
@@ -28,10 +30,14 @@ error() { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
 # ── Parse flags ──────────────────────────────────────────────
 NO_BUILD=false
 DB_ONLY=false
+REPAIR_AGG=false
+CHECK_PIPELINE=false
 for arg in "$@"; do
   case "$arg" in
-    --no-build) NO_BUILD=true ;;
-    --db-only)  DB_ONLY=true ;;
+    --no-build)       NO_BUILD=true ;;
+    --db-only)        DB_ONLY=true ;;
+    --repair-agg)     REPAIR_AGG=true ;;
+    --check-pipeline) CHECK_PIPELINE=true ;;
   esac
 done
 
@@ -182,6 +188,46 @@ if [ $RETRIES -gt 0 ]; then
   ok "API is responding."; API_OK=true
 else
   warn "API health check failed (may still be starting)."
+fi
+
+# ── Post-deploy: repair aggregations (--repair-agg) ─────────
+if [ "$REPAIR_AGG" = true ]; then
+  info "Triggering aggregation repair via API..."
+  REPAIR_FROM=$(date -d '60 days ago' '+%Y-%m-%dT00:00:00Z' 2>/dev/null || date -v-60d '+%Y-%m-%dT00:00:00Z' 2>/dev/null || echo "2025-01-01T00:00:00Z")
+  REPAIR_TO=$(date '+%Y-%m-%dT23:59:59Z')
+  REPAIR_RESP=$(curl -sf -X POST http://localhost/api/admin/pipeline/repair-aggregations \
+    -H "Content-Type: application/json" \
+    -d "{\"from\":\"$REPAIR_FROM\",\"to\":\"$REPAIR_TO\"}" 2>&1) || true
+  if [ -n "$REPAIR_RESP" ]; then
+    ok "Aggregation repair response: $REPAIR_RESP"
+  else
+    warn "Could not trigger aggregation repair (API may not be ready)"
+  fi
+fi
+
+# ── Post-deploy: retry failed jobs in all queues ─────────────
+if [ "$API_OK" = true ]; then
+  info "Checking for failed jobs in queues..."
+  for QUEUE in telemetry ai reports; do
+    RETRY_RESP=$(curl -sf -X POST http://localhost/api/admin/pipeline/retry-failed-jobs \
+      -H "Content-Type: application/json" \
+      -d "{\"queue\":\"$QUEUE\",\"limit\":500}" 2>&1) || true
+    RETRIED=$(echo "$RETRY_RESP" | grep -o '"retried":[0-9]*' | grep -o '[0-9]*' || echo "0")
+    if [ "$RETRIED" != "0" ] && [ -n "$RETRIED" ]; then
+      ok "Retried $RETRIED failed jobs in $QUEUE queue"
+    fi
+  done
+fi
+
+# ── Post-deploy: pipeline health check (--check-pipeline) ───
+if [ "$CHECK_PIPELINE" = true ] || [ "$API_OK" = true ]; then
+  info "Pipeline health check..."
+  HEALTH_RESP=$(curl -sf http://localhost/api/health/pipeline 2>&1) || true
+  if [ -n "$HEALTH_RESP" ]; then
+    echo "$HEALTH_RESP" | python3 -m json.tool 2>/dev/null || echo "$HEALTH_RESP"
+  else
+    warn "Could not fetch pipeline health."
+  fi
 fi
 
 # ── Summary ──────────────────────────────────────────────────

@@ -3,7 +3,7 @@
 // Tabs: Référentiel | Concentrateurs | Appareils | Messages | Utilisateurs
 // ============================================================
 
-import { useState, useEffect, Component, type ReactNode } from "react";
+import { useState, useEffect, useCallback, Component, type ReactNode } from "react";
 import { toast } from "sonner";
 import {
   Tabs, TabsContent, TabsList, TabsTrigger,
@@ -25,6 +25,8 @@ import {
   Plus, Pencil, Trash2, ChevronRight, RefreshCw, Send, Radio,
   Building2, MapPin, Layers, Router, Cpu, MessageSquare, Users,
   AlertCircle, Check, ArrowRight, Info, Link2,
+  Activity, Play, Clock, CheckCircle, XCircle, Loader2,
+  ScrollText, Wrench, Database, Wifi, Server,
 } from "lucide-react";
 
 import {
@@ -39,7 +41,9 @@ import {
   useDeleteIncoming, useDeleteAllIncoming, useReconcileIncoming,
   useCreateUser, useUpdateUser, useDeleteUser,
   useCreateZone, useUpdateZone, useDeleteZone,
+  useRuns, usePipelineHealth, useLogs, useLogStats,
 } from "@/hooks/useApi";
+import api from "@/lib/api";
 
 // ─── Error Boundary ────────────────────────────────────────
 class TabErrorBoundary extends Component<{ children: ReactNode; name: string }, { error: Error | null }> {
@@ -2018,6 +2022,429 @@ function ZonesTab() {
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB 8 – Pipeline Health & Queue Management
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function PipelineTab() {
+  const { data: health, isLoading, refetch } = usePipelineHealth();
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [flushing, setFlushing] = useState<string | null>(null);
+  const [repairing, setRepairing] = useState(false);
+  const [repairFrom, setRepairFrom] = useState(() => {
+    const d = new Date(); d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  });
+  const [repairTo, setRepairTo] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const components = health?.components ?? [];
+  const queues = components.filter((c: any) => c.name.startsWith('Queue:'));
+  const infra = components.filter((c: any) => !c.name.startsWith('Queue:'));
+
+  const statusColor = (s: string) => {
+    if (s === 'up') return 'bg-green-500';
+    if (s === 'degraded' || s === 'warning') return 'bg-yellow-500';
+    return 'bg-red-500';
+  };
+
+  const statusBadge = (s: string) => {
+    if (s === 'up') return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{s}</Badge>;
+    if (s === 'degraded' || s === 'warning') return <Badge variant="outline" className="border-yellow-500 text-yellow-700">{s}</Badge>;
+    return <Badge variant="destructive">{s}</Badge>;
+  };
+
+  const handleRetry = useCallback(async (queue: string) => {
+    setRetrying(queue);
+    try {
+      const res = await api.retryFailedJobs(queue);
+      toast.success(`${res.retried} jobs retried on ${queue}`);
+      refetch();
+    } catch { toast.error('Retry failed'); }
+    setRetrying(null);
+  }, [refetch]);
+
+  const handleFlush = useCallback(async (queue: string) => {
+    setFlushing(queue);
+    try {
+      const res = await api.flushFailedJobs(queue);
+      toast.success(`${res.removed} failed jobs removed from ${queue}`);
+      refetch();
+    } catch { toast.error('Flush failed'); }
+    setFlushing(null);
+  }, [refetch]);
+
+  const handleRepair = useCallback(async () => {
+    setRepairing(true);
+    try {
+      const res = await api.repairAggregations({ from: new Date(repairFrom).toISOString(), to: new Date(repairTo).toISOString() });
+      toast.success(res.message || 'Aggregation repair queued');
+      refetch();
+    } catch { toast.error('Repair failed'); }
+    setRepairing(false);
+  }, [repairFrom, repairTo, refetch]);
+
+  if (isLoading) return <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin" /></div>;
+
+  return (
+    <div className="space-y-4">
+      {/* Infrastructure Status */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><Server className="w-4 h-4" /> Infrastructure</CardTitle>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{health?.checked_at ? new Date(health.checked_at).toLocaleString('fr-FR') : ''}</span>
+              <Button size="sm" variant="outline" className="h-7" onClick={() => refetch()}><RefreshCw className="w-3.5 h-3.5 mr-1" /> Actualiser</Button>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {infra.map((c: any, i: number) => (
+              <div key={i} className="flex items-center gap-3 rounded-md border p-3">
+                <div className={`w-2.5 h-2.5 rounded-full ${statusColor(c.status)}`} />
+                <div className="flex-1 min-w-0">
+                  <div className="text-sm font-medium">{c.name}</div>
+                  <div className="text-[10px] text-muted-foreground truncate">
+                    {typeof c.detail === 'object' ? (
+                      c.detail.readings_last_hour !== undefined
+                        ? `${c.detail.readings_last_hour} readings/h`
+                        : JSON.stringify(c.detail)
+                    ) : String(c.detail ?? '')}
+                    {c.latency_ms != null && ` · ${c.latency_ms}ms`}
+                  </div>
+                </div>
+                {statusBadge(c.status)}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Queue Management */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><Activity className="w-4 h-4" /> Files d'attente (BullMQ)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b text-left text-muted-foreground text-xs">
+                  <th className="py-2 px-3">Queue</th>
+                  <th className="py-2 px-3">Statut</th>
+                  <th className="py-2 px-3 text-right">En attente</th>
+                  <th className="py-2 px-3 text-right">Actifs</th>
+                  <th className="py-2 px-3 text-right">Échoués</th>
+                  <th className="py-2 px-3 text-right">Complétés</th>
+                  <th className="py-2 px-3">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {queues.map((q: any, i: number) => {
+                  const d = q.detail ?? {};
+                  const queueName = q.name.replace('Queue: ', '');
+                  return (
+                    <tr key={i} className="border-b">
+                      <td className="py-2 px-3 font-medium">{queueName}</td>
+                      <td className="py-2 px-3">{statusBadge(q.status)}</td>
+                      <td className="py-2 px-3 text-right">{d.waiting ?? 0}</td>
+                      <td className="py-2 px-3 text-right">{d.active ?? 0}</td>
+                      <td className="py-2 px-3 text-right font-semibold text-red-600">{d.failed ?? 0}</td>
+                      <td className="py-2 px-3 text-right text-muted-foreground">{d.completed ?? 0}</td>
+                      <td className="py-2 px-3">
+                        <div className="flex gap-1">
+                          <Button size="sm" variant="outline" className="h-7 text-xs" disabled={!d.failed || retrying === queueName}
+                            onClick={() => handleRetry(queueName)}>
+                            {retrying === queueName ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Play className="w-3 h-3 mr-1" />}
+                            Retry
+                          </Button>
+                          <Button size="sm" variant="destructive" className="h-7 text-xs" disabled={!d.failed || flushing === queueName}
+                            onClick={() => handleFlush(queueName)}>
+                            {flushing === queueName ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <Trash2 className="w-3 h-3 mr-1" />}
+                            Flush
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Repair Aggregations */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><Wrench className="w-4 h-4" /> Réparation des agrégations</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">Re-calcule acrel_agg_15m et acrel_agg_daily depuis les readings bruts pour la période sélectionnée.</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Label className="text-xs">Du</Label>
+              <Input type="date" className="h-8 w-40" value={repairFrom} onChange={e => setRepairFrom(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Au</Label>
+              <Input type="date" className="h-8 w-40" value={repairTo} onChange={e => setRepairTo(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
+            </div>
+            <Button size="sm" onClick={handleRepair} disabled={repairing}>
+              {repairing ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Database className="w-3.5 h-3.5 mr-1" />}
+              Lancer la réparation
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB 9 – Jobs & Runs
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+const JOB_TYPES = [
+  { value: 'aggregate', label: 'Agrégation télémétrie', desc: 'Re-calcule 15m + daily' },
+  { value: 'forecast', label: 'Prévisions ML', desc: 'LightGBM forecast' },
+  { value: 'report', label: 'Rapport', desc: 'Génère un rapport PDF' },
+  { value: 'facture', label: 'Facture', desc: 'Génère une facture' },
+  { value: 'audit-pv', label: 'Audit PV', desc: 'Analyse solaire' },
+  { value: 'roi', label: 'ROI', desc: 'Analyse rentabilité' },
+] as const;
+
+function RunsTab() {
+  const { data: runs = [], isLoading, refetch } = useRuns();
+  const [submitting, setSubmitting] = useState<string | null>(null);
+  const [selectedJob, setSelectedJob] = useState<string>('aggregate');
+  const [expandedRun, setExpandedRun] = useState<string | null>(null);
+
+  const handleSubmit = useCallback(async () => {
+    setSubmitting(selectedJob);
+    try {
+      await api.submitJob(selectedJob);
+      toast.success(`Job "${selectedJob}" soumis`);
+      setTimeout(() => refetch(), 1500);
+    } catch { toast.error('Échec de soumission'); }
+    setSubmitting(null);
+  }, [selectedJob, refetch]);
+
+  const statusBadge = (s: string) => {
+    switch (s) {
+      case 'success': return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"><CheckCircle className="w-3 h-3 mr-1" />Succès</Badge>;
+      case 'failed': return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Échoué</Badge>;
+      case 'running': return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300"><Loader2 className="w-3 h-3 mr-1 animate-spin" />En cours</Badge>;
+      case 'queued': return <Badge variant="outline"><Clock className="w-3 h-3 mr-1" />En file</Badge>;
+      default: return <Badge variant="secondary">{s}</Badge>;
+    }
+  };
+
+  const fmtDate = (d: string | null) => d ? new Date(d).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '—';
+
+  const duration = (start: string | null, end: string | null) => {
+    if (!start || !end) return '—';
+    const ms = new Date(end).getTime() - new Date(start).getTime();
+    if (ms < 1000) return `${ms}ms`;
+    return `${(ms / 1000).toFixed(1)}s`;
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Submit Job */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><Play className="w-4 h-4" /> Lancer un job</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap items-end gap-3">
+            <div className="flex-1 min-w-[200px]">
+              <Label className="text-xs">Type de job</Label>
+              <Select value={selectedJob} onValueChange={setSelectedJob}>
+                <SelectTrigger className="h-8"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {JOB_TYPES.map(j => (
+                    <SelectItem key={j.value} value={j.value}>
+                      <span className="font-medium">{j.label}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">— {j.desc}</span>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button size="sm" onClick={handleSubmit} disabled={!!submitting}>
+              {submitting ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Send className="w-3.5 h-3.5 mr-1" />}
+              Soumettre
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Runs Table */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><Clock className="w-4 h-4" /> Historique des jobs (50 derniers)</CardTitle>
+            <Button size="sm" variant="outline" className="h-7" onClick={() => refetch()}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Actualiser
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b text-left text-muted-foreground text-xs">
+                    <th className="py-2 px-3">Type</th>
+                    <th className="py-2 px-3">Statut</th>
+                    <th className="py-2 px-3">Créé</th>
+                    <th className="py-2 px-3">Durée</th>
+                    <th className="py-2 px-3">Détails</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(runs as any[]).map((run: any) => (
+                    <tr key={run.id} className="border-b hover:bg-muted/50 cursor-pointer" onClick={() => setExpandedRun(expandedRun === run.id ? null : run.id)}>
+                      <td className="py-2 px-3 font-medium font-mono text-xs">{run.type}</td>
+                      <td className="py-2 px-3">{statusBadge(run.status)}</td>
+                      <td className="py-2 px-3 text-xs text-muted-foreground">{fmtDate(run.created_at)}</td>
+                      <td className="py-2 px-3 text-xs">{duration(run.started_at, run.finished_at)}</td>
+                      <td className="py-2 px-3">
+                        {expandedRun === run.id ? (
+                          <div className="space-y-1 text-[10px] max-w-md">
+                            {run.payload && Object.keys(run.payload).length > 0 && (
+                              <div><span className="font-semibold">Payload:</span> <code className="bg-muted px-1 rounded break-all">{JSON.stringify(run.payload)}</code></div>
+                            )}
+                            {run.result && (
+                              <div><span className="font-semibold text-green-700">Result:</span> <code className="bg-muted px-1 rounded break-all">{JSON.stringify(run.result)}</code></div>
+                            )}
+                            {run.error && (
+                              <div><span className="font-semibold text-red-600">Error:</span> <code className="bg-red-50 dark:bg-red-900/20 px-1 rounded break-all">{run.error}</code></div>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">{run.error ? '⚠️ ' + run.error.slice(0, 60) : run.result ? '✓' : '—'}</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// TAB 10 – Audit Logs
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+function LogsTab() {
+  const [level, setLevel] = useState<string>('');
+  const [source, setSource] = useState('');
+  const [search, setSearch] = useState('');
+  const { data: logData, isLoading, refetch } = useLogs({ level: level || undefined, source: source || undefined, search: search || undefined, limit: 200 });
+  const { data: statsData } = useLogStats();
+
+  const logs = (logData as any)?.logs ?? [];
+  const total = (logData as any)?.total ?? 0;
+  const stats = (statsData as any)?.stats ?? [];
+
+  const levelColor = (l: string) => {
+    switch (l) {
+      case 'error': return 'destructive' as const;
+      case 'warn': return 'outline' as const;
+      case 'info': return 'secondary' as const;
+      default: return 'secondary' as const;
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Stats */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {(['error', 'warn', 'info', 'debug'] as const).map(lvl => {
+          const count = stats.find((s: any) => s.level === lvl)?.count ?? 0;
+          return (
+            <Card key={lvl} className="cursor-pointer hover:ring-1 ring-primary/30" onClick={() => setLevel(level === lvl ? '' : lvl)}>
+              <CardContent className="p-3 flex items-center justify-between">
+                <span className="text-sm capitalize font-medium">{lvl}</span>
+                <Badge variant={levelColor(lvl)}>{count}</Badge>
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+
+      {/* Filters */}
+      <Card>
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><ScrollText className="w-4 h-4" /> Logs ({total})</CardTitle>
+            <Button size="sm" variant="outline" className="h-7" onClick={() => refetch()}>
+              <RefreshCw className="w-3.5 h-3.5 mr-1" /> Actualiser
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-wrap gap-2 mb-3">
+            <Select value={level} onValueChange={v => setLevel(v === 'all' ? '' : v)}>
+              <SelectTrigger className="h-8 w-28"><SelectValue placeholder="Niveau" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous</SelectItem>
+                <SelectItem value="error">Error</SelectItem>
+                <SelectItem value="warn">Warn</SelectItem>
+                <SelectItem value="info">Info</SelectItem>
+                <SelectItem value="debug">Debug</SelectItem>
+              </SelectContent>
+            </Select>
+            <Input className="h-8 w-40" placeholder="Source..." value={source} onChange={e => setSource(e.target.value)} />
+            <Input className="h-8 flex-1 min-w-[150px]" placeholder="Rechercher..." value={search} onChange={e => setSearch(e.target.value)} />
+          </div>
+
+          {isLoading ? (
+            <div className="flex justify-center py-8"><Loader2 className="w-5 h-5 animate-spin" /></div>
+          ) : logs.length === 0 ? (
+            <div className="text-center py-8 text-sm text-muted-foreground">Aucun log trouvé</div>
+          ) : (
+            <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
+              <table className="w-full text-sm">
+                <thead className="sticky top-0 bg-background">
+                  <tr className="border-b text-left text-muted-foreground text-xs">
+                    <th className="py-2 px-2">Date</th>
+                    <th className="py-2 px-2">Niveau</th>
+                    <th className="py-2 px-2">Source</th>
+                    <th className="py-2 px-2">Message</th>
+                    <th className="py-2 px-2">Utilisateur</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {logs.map((log: any) => (
+                    <tr key={log.id} className="border-b text-xs hover:bg-muted/50">
+                      <td className="py-1.5 px-2 whitespace-nowrap text-muted-foreground">{new Date(log.created_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' })}</td>
+                      <td className="py-1.5 px-2"><Badge variant={levelColor(log.level)} className="text-[9px] px-1.5">{log.level}</Badge></td>
+                      <td className="py-1.5 px-2 font-mono text-[10px]">{log.source ?? '—'}</td>
+                      <td className="py-1.5 px-2 max-w-md truncate" title={log.message}>{log.message}</td>
+                      <td className="py-1.5 px-2 text-muted-foreground">{log.user_name ?? '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Main Administration Page
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -2034,6 +2461,9 @@ export default function Administration() {
           <TabsTrigger value="zones" className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> Zones</TabsTrigger>
           <TabsTrigger value="incoming" className="flex items-center gap-1"><MessageSquare className="w-3.5 h-3.5" /> Messages</TabsTrigger>
           <TabsTrigger value="users" className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> Utilisateurs</TabsTrigger>
+          <TabsTrigger value="pipeline" className="flex items-center gap-1"><Activity className="w-3.5 h-3.5" /> Pipeline</TabsTrigger>
+          <TabsTrigger value="runs" className="flex items-center gap-1"><Play className="w-3.5 h-3.5" /> Jobs</TabsTrigger>
+          <TabsTrigger value="logs" className="flex items-center gap-1"><ScrollText className="w-3.5 h-3.5" /> Logs</TabsTrigger>
         </TabsList>
 
         <TabsContent value="referential"><TabErrorBoundary name="Référentiel"><ReferentialTab /></TabErrorBoundary></TabsContent>
@@ -2043,6 +2473,9 @@ export default function Administration() {
         <TabsContent value="zones"><TabErrorBoundary name="Zones"><ZonesTab /></TabErrorBoundary></TabsContent>
         <TabsContent value="incoming"><TabErrorBoundary name="Messages"><IncomingTab /></TabErrorBoundary></TabsContent>
         <TabsContent value="users"><TabErrorBoundary name="Utilisateurs"><UsersTab /></TabErrorBoundary></TabsContent>
+        <TabsContent value="pipeline"><TabErrorBoundary name="Pipeline"><PipelineTab /></TabErrorBoundary></TabsContent>
+        <TabsContent value="runs"><TabErrorBoundary name="Jobs"><RunsTab /></TabErrorBoundary></TabsContent>
+        <TabsContent value="logs"><TabErrorBoundary name="Logs"><LogsTab /></TabErrorBoundary></TabsContent>
       </Tabs>
     </div>
   );
