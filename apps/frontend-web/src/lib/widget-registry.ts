@@ -241,7 +241,7 @@ function costResolver(
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
   const points = resolvePoints(config, ctx);
-  const energyKwh = aggregateColumnKpi(points, 'energy_import') + aggregateColumnKpi(points, 'energy_export');
+  const energyKwh = aggregateColumnKpi(points, 'energy_total');
   const dailyCost = Math.round(energyKwh * 0.095);
   const monthlyBudget = dailyCost * 30;
   const dayOfMonth = new Date().getDate();

@@ -65,7 +65,7 @@ async function computeFacture(payload = {}) {
   const rows = await telemetryDb.query(
     `SELECT bucket_start, point_id, samples_count,
             active_power_max,
-            COALESCE(energy_import_delta, 0) AS energy_import_delta
+            COALESCE(energy_total_delta, energy_import_delta, 0) AS energy_delta
      FROM acrel_agg_15m
      WHERE terrain_id = $1 AND bucket_start >= $2 AND bucket_start < $3
      ORDER BY bucket_start ASC`,
@@ -84,7 +84,7 @@ async function computeFacture(payload = {}) {
     const bucketIso = new Date(bucketStart).toISOString();
     const minOfDay = minOfDayFromTs(bucketIso);
 
-    const kwh = Number(r.energy_import_delta || 0);
+    const kwh = Number(r.energy_delta || 0);
     totalKwh += kwh;
 
     if (minOfDay >= tariff.hp_start_min && minOfDay < tariff.hp_end_min) hpKwh += kwh;

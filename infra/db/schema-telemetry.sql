@@ -140,6 +140,7 @@ CREATE TABLE IF NOT EXISTS acrel_agg_15m (
 
   energy_import_delta DOUBLE PRECISION,
   energy_export_delta DOUBLE PRECISION,
+  energy_total_delta DOUBLE PRECISION,
 
   PRIMARY KEY (point_id, bucket_start)
 );
@@ -164,6 +165,7 @@ CREATE TABLE IF NOT EXISTS acrel_agg_daily (
 
   energy_import_delta DOUBLE PRECISION,
   energy_export_delta DOUBLE PRECISION,
+  energy_total_delta DOUBLE PRECISION,
 
   PRIMARY KEY (point_id, day)
 );

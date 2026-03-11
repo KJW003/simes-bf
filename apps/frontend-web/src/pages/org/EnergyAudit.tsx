@@ -176,7 +176,7 @@ export default function EnergyAudit() {
   }, [points]);
 
   // Energy cost estimation
-  const energyVals = readings.map(r => r.energy_import != null ? Number(r.energy_import) : NaN).filter(v => !isNaN(v));
+  const energyVals = readings.map(r => r.energy_total != null ? Number(r.energy_total) : (r.energy_import != null ? Number(r.energy_import) : NaN)).filter(v => !isNaN(v));
   const energyDelta = energyVals.length >= 2 ? Math.max(...energyVals) - Math.min(...energyVals) : 0;
   const costEstimate = energyDelta * prefs.tariffRate;
   const co2Estimate = energyDelta * prefs.co2Factor;

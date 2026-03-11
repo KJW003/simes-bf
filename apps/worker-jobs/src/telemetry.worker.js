@@ -60,7 +60,7 @@ async function runAggregate(payload = {}) {
       samples_count,
       active_power_avg, active_power_max,
       voltage_a_avg,
-      energy_import_delta, energy_export_delta
+      energy_import_delta, energy_export_delta, energy_total_delta
     )
     SELECT
       time_bucket('15 minutes', time) AS bucket_start,
@@ -70,7 +70,8 @@ async function runAggregate(payload = {}) {
       MAX(active_power_total) AS active_power_max,
       AVG(voltage_a) AS voltage_a_avg,
       (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
-      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta
+      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
+      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta
     FROM acrel_readings
     ${whereSql}
     GROUP BY bucket_start, org_id, site_id, terrain_id, point_id
@@ -84,7 +85,8 @@ async function runAggregate(payload = {}) {
       active_power_max = EXCLUDED.active_power_max,
       voltage_a_avg = EXCLUDED.voltage_a_avg,
       energy_import_delta = EXCLUDED.energy_import_delta,
-      energy_export_delta = EXCLUDED.energy_export_delta
+      energy_export_delta = EXCLUDED.energy_export_delta,
+      energy_total_delta = EXCLUDED.energy_total_delta
   `;
 
   const r15 = await telemetryDb.query(sql15m, params);
@@ -97,7 +99,7 @@ async function runAggregate(payload = {}) {
       day, org_id, site_id, terrain_id, point_id,
       samples_count,
       active_power_avg, active_power_max,
-      energy_import_delta, energy_export_delta
+      energy_import_delta, energy_export_delta, energy_total_delta
     )
     SELECT
       (time_bucket('1 day', time))::date AS day,
@@ -106,7 +108,8 @@ async function runAggregate(payload = {}) {
       AVG(active_power_total) AS active_power_avg,
       MAX(active_power_total) AS active_power_max,
       (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
-      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta
+      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
+      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta
     FROM acrel_readings
     ${whereSql}
     GROUP BY day, org_id, site_id, terrain_id, point_id
@@ -119,7 +122,8 @@ async function runAggregate(payload = {}) {
       active_power_avg = EXCLUDED.active_power_avg,
       active_power_max = EXCLUDED.active_power_max,
       energy_import_delta = EXCLUDED.energy_import_delta,
-      energy_export_delta = EXCLUDED.energy_export_delta
+      energy_export_delta = EXCLUDED.energy_export_delta,
+      energy_total_delta = EXCLUDED.energy_total_delta
   `;
 
   const rDay = await telemetryDb.query(sqlDaily, params);

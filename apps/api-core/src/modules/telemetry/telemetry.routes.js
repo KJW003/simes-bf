@@ -150,8 +150,15 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
       LIMIT $${params.length}
     `;
 
-    const r = await telemetryPool.query(sql, params);
-    res.json({ ok: true, terrain_id: terrainId, count: r.rows.length, readings: r.rows });
+    const client = await telemetryPool.connect();
+    try {
+      await client.query("SET statement_timeout = '15s'");
+      const r = await client.query(sql, params);
+      res.json({ ok: true, terrain_id: terrainId, count: r.rows.length, readings: r.rows });
+    } finally {
+      await client.query("RESET statement_timeout");
+      client.release();
+    }
   } catch (e) {
     log.error({ err: e.message }, "[telemetry/readings]");
     res.status(500).json({ ok: false, error: 'Internal server error' });
@@ -183,7 +190,7 @@ router.get("/terrains/:terrainId/chart-data", async (req, res) => {
       const sql = `
         SELECT point_id, day, samples_count,
                active_power_avg, active_power_max,
-               energy_import_delta, energy_export_delta
+               energy_import_delta, energy_export_delta, energy_total_delta
         FROM acrel_agg_daily
         WHERE ${where.join(' AND ')}
         ORDER BY day ASC, point_id
@@ -199,7 +206,7 @@ router.get("/terrains/:terrainId/chart-data", async (req, res) => {
         SELECT point_id, bucket_start, samples_count,
                active_power_avg, active_power_max,
                voltage_a_avg,
-               energy_import_delta, energy_export_delta
+               energy_import_delta, energy_export_delta, energy_total_delta
         FROM acrel_agg_15m
         WHERE ${where.join(' AND ')}
         ORDER BY bucket_start ASC, point_id
@@ -255,14 +262,17 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
 
     let importKwh = 0;
     let exportKwh = 0;
+    let totalKwh = 0;
 
     if (loadIds.length > 0) {
       const energyToday = await telemetryPool.query(
         `SELECT
+           SUM(delta_total) AS total_kwh,
            SUM(delta_import) AS import_kwh,
            SUM(delta_export) AS export_kwh
          FROM (
            SELECT point_id,
+                  GREATEST(MAX(energy_total) - MIN(energy_total), 0) AS delta_total,
                   GREATEST(MAX(energy_import) - MIN(energy_import), 0) AS delta_import,
                   GREATEST(MAX(energy_export) - MIN(energy_export), 0) AS delta_export
            FROM acrel_readings
@@ -275,6 +285,7 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
 
       importKwh = Number(energyToday.rows[0]?.import_kwh || 0);
       exportKwh = Number(energyToday.rows[0]?.export_kwh || 0);
+      totalKwh = Number(energyToday.rows[0]?.total_kwh || 0);
     }
 
     res.json({
@@ -283,6 +294,7 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       points_count: ptCount.rows[0]?.total || 0,
       power_now_kw: Number(totalPowerNow.toFixed(3)),
       energy_today: {
+        total_kwh: Number(totalKwh.toFixed(3)),
         import_kwh: Number(importKwh.toFixed(3)),
         export_kwh: Number(exportKwh.toFixed(3)),
         net_kwh: Number((importKwh - exportKwh).toFixed(3)),

@@ -121,11 +121,20 @@ export default function History() {
     return points.filter(p => String((p as any).zone_id) === zoneFilter);
   }, [points, zoneFilter]);
 
+  // In chart mode, only fetch the selected metric + energy_total (for daily bars) to reduce payload
+  // In table mode, fetch all columns (user explicitly wants full Acrel table)
+  const readingsCols = useMemo(() => {
+    if (viewMode === 'table') return undefined; // all columns
+    const needed = new Set([metric, 'energy_total']);
+    return Array.from(needed).join(',');
+  }, [viewMode, metric]);
+
   const { data, isLoading, isError } = useReadings(selectedTerrainId, {
     from,
     to: now.toISOString(),
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     limit: 5000,
+    cols: readingsCols,
   });
 
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
@@ -138,6 +147,7 @@ export default function History() {
       to: compTo,
       point_id: selectedPoint === '_all' ? undefined : selectedPoint,
       limit: 5000,
+      cols: metric,
     } : undefined,
   );
   const compareReadings = (compareData?.readings ?? []) as Array<Record<string, unknown>>;
@@ -185,7 +195,7 @@ export default function History() {
     const byDay = new Map<string, { min: number; max: number }>();
     for (const r of readings) {
       const day = new Date(String(r.time)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-      const ei = r.energy_import != null ? Number(r.energy_import) : null;
+      const ei = r.energy_total != null ? Number(r.energy_total) : null;
       if (ei == null) continue;
       const entry = byDay.get(day);
       if (!entry) byDay.set(day, { min: ei, max: ei });
@@ -238,7 +248,7 @@ export default function History() {
   }, [readings, metric]);
 
   const energyDelta = useMemo(() => {
-    const eis = readings.map(r => r.energy_import != null ? Number(r.energy_import) : NaN).filter(v => !isNaN(v));
+    const eis = readings.map(r => r.energy_total != null ? Number(r.energy_total) : NaN).filter(v => !isNaN(v));
     if (eis.length < 2) return 0;
     return Math.max(...eis) - Math.min(...eis);
   }, [readings]);

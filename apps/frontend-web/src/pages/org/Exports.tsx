@@ -42,7 +42,7 @@ export default function Exports() {
   // Summary stats
   const summary = useMemo(() => {
     if (!readings.length) return null;
-    const eis = readings.map(r => r.energy_import != null ? Number(r.energy_import) : NaN).filter(v => !isNaN(v));
+    const eis = readings.map(r => r.energy_total != null ? Number(r.energy_total) : (r.energy_import != null ? Number(r.energy_import) : NaN)).filter(v => !isNaN(v));
     const powers = readings.map(r => r.active_power_total != null ? Number(r.active_power_total) : NaN).filter(v => !isNaN(v));
     const energy = eis.length >= 2 ? Math.max(...eis) - Math.min(...eis) : 0;
     return {
@@ -280,7 +280,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
         const t = new Date(String(r.time));
         const day = t.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
         const pw = r.active_power_total != null ? Number(r.active_power_total) : NaN;
-        const ei = r.energy_import != null ? Number(r.energy_import) : NaN;
+        const ei = r.energy_total != null ? Number(r.energy_total) : (r.energy_import != null ? Number(r.energy_import) : NaN);
         const e = dailyMap.get(day) ?? { sum: 0, count: 0, max: 0, eiMin: Infinity, eiMax: -Infinity, ts: t.getTime() };
         if (!isNaN(pw)) { e.sum += pw; e.count++; e.max = Math.max(e.max, pw); }
         if (!isNaN(ei)) { e.eiMin = Math.min(e.eiMin, ei); e.eiMax = Math.max(e.eiMax, ei); }
@@ -314,7 +314,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
       power: ['active_power_total'],
       voltage: ['voltage_a', 'voltage_b', 'voltage_c'],
       current: ['current_a', 'current_b', 'current_c'],
-      energy: ['energy_import'],
+      energy: ['energy_total'],
       pf: ['power_factor_total'],
     };
     const metrics = metricMap[ct] ?? ['active_power_total'];

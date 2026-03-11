@@ -52,17 +52,17 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
         point_id,
         active_power_avg  AS power_avg,
         active_power_max  AS power_max,
-        energy_import_delta AS energy_delta,
+        energy_total_delta AS energy_delta,
         EXTRACT(DOW FROM day)::int AS day_of_week,
         EXTRACT(MONTH FROM day)::int AS month,
         EXTRACT(WEEK FROM day)::int AS week_of_year,
         CASE WHEN EXTRACT(DOW FROM day) IN (0, 6) THEN 1 ELSE 0 END AS is_weekend,
-        LAG(energy_import_delta, 1)  OVER w AS lag_1d,
-        LAG(energy_import_delta, 7)  OVER w AS lag_7d,
-        LAG(energy_import_delta, 14) OVER w AS lag_14d,
-        AVG(energy_import_delta)   OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_avg_7d,
-        AVG(energy_import_delta)   OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS rolling_avg_30d,
-        STDDEV(energy_import_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_std_7d
+        LAG(energy_total_delta, 1)  OVER w AS lag_1d,
+        LAG(energy_total_delta, 7)  OVER w AS lag_7d,
+        LAG(energy_total_delta, 14) OVER w AS lag_14d,
+        AVG(energy_total_delta)   OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_avg_7d,
+        AVG(energy_total_delta)   OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) AS rolling_avg_30d,
+        STDDEV(energy_total_delta) OVER (PARTITION BY point_id ORDER BY day ROWS BETWEEN 6  PRECEDING AND CURRENT ROW) AS rolling_std_7d
     FROM acrel_agg_daily
     WHERE terrain_id = %s
       AND day > NOW() - INTERVAL '365 days'
@@ -78,7 +78,7 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
             point_id,
             AVG(active_power_total)  AS power_avg,
             MAX(active_power_total)  AS power_max,
-            MAX(energy_import) - MIN(energy_import) AS energy_delta
+            MAX(energy_total) - MIN(energy_total) AS energy_delta
         FROM acrel_readings
         WHERE terrain_id = %s
           AND active_power_total IS NOT NULL
@@ -114,7 +114,7 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
 def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
     """Fetch basic daily energy data (no lag features) for simple forecasting."""
     query = """
-    SELECT day, SUM(energy_import_delta) AS energy_delta,
+    SELECT day, SUM(energy_total_delta) AS energy_delta,
            SUM(active_power_avg) AS power_avg,
            EXTRACT(DOW FROM day)::int AS day_of_week
     FROM acrel_agg_daily
@@ -125,7 +125,7 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
     raw_fallback = """
     SELECT
         time_bucket('1 day', time)::date AS day,
-        SUM(MAX(energy_import) - MIN(energy_import)) AS energy_delta,
+        SUM(MAX(energy_total) - MIN(energy_total)) AS energy_delta,
         AVG(active_power_total) AS power_avg,
         EXTRACT(DOW FROM time_bucket('1 day', time))::int AS day_of_week
     FROM acrel_readings
@@ -149,6 +149,34 @@ FEATURE_COLS = [
 ]
 
 TARGET_COL = "energy_delta"
+
+
+# ─── Prediction storage ──────────────────────────────────────
+def store_predictions(terrain_id: str, forecast: list, model_type: str):
+    """Store forecast predictions in ml_predictions table for later comparison."""
+    try:
+        with get_conn() as conn:
+            with conn.cursor() as cur:
+                for fd in forecast:
+                    # Parse dd/mm day format back to a full date
+                    from datetime import datetime
+                    day_parts = fd.day.split("/")
+                    year = datetime.now().year
+                    predicted_day = f"{year}-{day_parts[1]}-{day_parts[0]}"
+                    cur.execute("""
+                        INSERT INTO ml_predictions
+                          (terrain_id, model_type, predicted_day, predicted_kwh, lower_bound, upper_bound)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (terrain_id, model_type, predicted_day)
+                        DO UPDATE SET predicted_kwh = EXCLUDED.predicted_kwh,
+                                      lower_bound  = EXCLUDED.lower_bound,
+                                      upper_bound  = EXCLUDED.upper_bound,
+                                      created_at   = NOW()
+                    """, (terrain_id, model_type, predicted_day, fd.predicted_kwh, fd.lower, fd.upper))
+            conn.commit()
+        logger.info(f"Stored {len(forecast)} predictions for terrain {terrain_id}")
+    except Exception as e:
+        logger.error(f"Failed to store predictions for {terrain_id}: {e}")
 
 
 # ─── Train ────────────────────────────────────────────────────
@@ -345,13 +373,15 @@ def simple_forecast(terrain_id: str, days: int) -> PredictResponse | None:
         ))
 
     logger.info(f"Simple forecast for terrain {terrain_id}: {len(df)} days of data, {days} days predicted")
-    return PredictResponse(
+    result = PredictResponse(
         terrain_id=terrain_id,
         forecast=forecast,
         model_mape=None,
         model_rmse=None,
         model_type="simple",
     )
+    store_predictions(terrain_id, forecast, "simple")
+    return result
 
 
 def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
@@ -424,13 +454,15 @@ def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
         lag_1d = pred
         rolling_avg_7d = rolling_avg_7d * 0.85 + pred * 0.15  # approximate
 
-    return PredictResponse(
+    result = PredictResponse(
         terrain_id=terrain_id,
         forecast=forecast,
         model_mape=bundle.get("mape"),
         model_rmse=bundle.get("rmse"),
         model_type="lightgbm",
     )
+    store_predictions(terrain_id, forecast, "lightgbm")
+    return result
 
 
 # ─── FastAPI app ──────────────────────────────────────────────
@@ -491,3 +523,41 @@ def train_all():
         except Exception as e:
             results.append({"terrain_id": str(tid), "status": "error", "message": str(e)})
     return {"trained": len([r for r in results if r["status"] == "success"]), "total": len(terrain_ids), "results": results}
+
+
+@app.get("/predictions/{terrain_id}")
+def get_predictions(terrain_id: str):
+    """Return stored predictions with actual values backfilled from acrel_agg_daily."""
+    try:
+        with get_conn() as conn:
+            # Backfill actual_kwh for past prediction days
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE ml_predictions p
+                    SET actual_kwh = sub.actual,
+                        error_pct = CASE WHEN p.predicted_kwh > 0
+                            THEN ROUND(ABS(sub.actual - p.predicted_kwh) / p.predicted_kwh * 100, 2)
+                            ELSE NULL END
+                    FROM (
+                        SELECT terrain_id, day, SUM(energy_total_delta) AS actual
+                        FROM acrel_agg_daily
+                        WHERE terrain_id = %s
+                        GROUP BY terrain_id, day
+                    ) sub
+                    WHERE p.terrain_id = sub.terrain_id
+                      AND p.predicted_day = sub.day
+                      AND p.actual_kwh IS NULL
+                """, (terrain_id,))
+                conn.commit()
+
+            df = pd.read_sql("""
+                SELECT predicted_day, model_type, predicted_kwh, lower_bound, upper_bound,
+                       actual_kwh, error_pct, created_at
+                FROM ml_predictions
+                WHERE terrain_id = %s
+                ORDER BY predicted_day DESC
+                LIMIT 90
+            """, conn, params=(terrain_id,))
+        return {"terrain_id": terrain_id, "predictions": df.to_dict(orient="records")}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"DB error: {e}")
