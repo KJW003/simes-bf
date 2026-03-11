@@ -158,14 +158,31 @@ done
 if [ $RETRIES -gt 0 ]; then ok "api-core is healthy."; fi
 
 # ── Quick status check for remaining services ────────────────
-for svc in simes-ingestion simes-worker-jobs; do
+for svc in simes-ingestion simes-worker-jobs simes-ml-service simes-frontend-web; do
   STATUS=$(docker inspect --format='{{.State.Status}}' "$svc" 2>/dev/null || echo "not found")
   if [ "$STATUS" = "running" ]; then
     ok "$svc is running."
   else
     warn "$svc status: $STATUS"
+    warn "Last logs from $svc:"
+    docker logs --tail 15 "$svc" 2>&1 || true
   fi
 done
+
+# ── Verify API is responding ─────────────────────────────────
+info "Verifying API health..."
+RETRIES=10
+API_OK=false
+until curl -sf http://localhost/api/health >/dev/null 2>&1; do
+  RETRIES=$((RETRIES - 1))
+  if [ $RETRIES -le 0 ]; then break; fi
+  sleep 2
+done
+if [ $RETRIES -gt 0 ]; then
+  ok "API is responding."; API_OK=true
+else
+  warn "API health check failed (may still be starting)."
+fi
 
 # ── Summary ──────────────────────────────────────────────────
 echo ""

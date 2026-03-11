@@ -2,7 +2,7 @@
  * Dashboard section components extracted for use in the unified WidgetBoard.
  * Each component is self-contained and fetches its own data.
  */
-import React, { useMemo, useState, useCallback } from 'react';
+import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -141,19 +141,31 @@ const METRIC_OPTIONS = [
 ] as const;
 
 /* ── UnifiedLoadCurve (Courbe des points) ── */
-export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId }: { terrainId: string; from?: string; to?: string }) {
+export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
   const [period, setPeriod] = useState<string>('24h');
   const [offsetDays, setOffsetDays] = useState(0);
   const [metric, setMetric] = useState<string>('active_power_total');
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
+
+  // Sync with dashboard time selector
+  useEffect(() => {
+    if (dashboardPeriod && dashboardPeriod !== 'live') {
+      const match = LOAD_PERIODS.find(p => p.key === dashboardPeriod);
+      if (match) { setPeriod(match.key); setOffsetDays(0); }
+    }
+  }, [dashboardPeriod]);
+
   const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
   const from = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
 
+  // Scale limit based on period to avoid data truncation
+  const limit = periodMs <= 48 * 3600_000 ? 10000 : periodMs <= 7 * 86400_000 ? 30000 : 50000;
+
   const metricOpt = METRIC_OPTIONS.find(m => m.value === metric) ?? METRIC_OPTIONS[0];
 
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data, isLoading } = useReadings(terrainId, { from, to, cols: metric });
+  const { data, isLoading } = useReadings(terrainId, { from, to, cols: metric, limit });
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
@@ -422,11 +434,20 @@ const COST_PERIODS = [
   { key: '365d', label: '1 an', days: 365 },
 ] as const;
 
-export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }: { terrainId: string }) {
+export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, dashboardPeriod }: { terrainId: string; dashboardPeriod?: string }) {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
   const [period, setPeriod] = useState<string>('30d');
   const [offsetDays, setOffsetDays] = useState(0);
+
+  // Sync with dashboard time selector
+  useEffect(() => {
+    if (dashboardPeriod && dashboardPeriod !== 'live') {
+      const match = COST_PERIODS.find(p => p.key === dashboardPeriod);
+      if (match) { setPeriod(match.key); setOffsetDays(0); }
+    }
+  }, [dashboardPeriod]);
+
   const periodDays = COST_PERIODS.find(p => p.key === period)?.days ?? 30;
   const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
@@ -446,7 +467,19 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
     }));
   }, [chartResult, prefs.tariffRate]);
 
-  if (!dailyCost.length) return null;
+  if (!dailyCost.length) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <DollarSign className="w-4 h-4 text-amber-600" />
+          Coût journalier
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée de coût disponible pour cette période</div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <Card>
@@ -497,10 +530,18 @@ const CARBON_PERIODS = [
   { key: '365d', label: '1 an', days: 365 },
 ] as const;
 
-export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { terrainId: string }) {
+export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, dashboardPeriod }: { terrainId: string; dashboardPeriod?: string }) {
   const prefs = usePreferences();
   const [period, setPeriod] = useState<string>('30d');
   const [offsetDays, setOffsetDays] = useState(0);
+
+  // Sync with dashboard time selector
+  useEffect(() => {
+    if (dashboardPeriod && dashboardPeriod !== 'live') {
+      const match = CARBON_PERIODS.find(p => p.key === dashboardPeriod);
+      if (match) { setPeriod(match.key); setOffsetDays(0); }
+    }
+  }, [dashboardPeriod]);
 
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
   const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
@@ -527,7 +568,19 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
   const totalCO2 = dailyCarbon.length ? dailyCarbon[dailyCarbon.length - 1].cumulative : 0;
   const totalKwh = dailyCarbon.reduce((s, d) => s + d.kwh, 0);
 
-  if (!dailyCarbon.length) return null;
+  if (!dailyCarbon.length) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <Leaf className="w-4 h-4 text-green-600" />
+          Empreinte carbone
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée carbone disponible pour cette période</div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <Card>

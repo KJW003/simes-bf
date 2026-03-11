@@ -485,15 +485,27 @@ router.get("/terrains/:terrainId/power-peaks", async (req, res) => {
     const days = Math.min(parseInt(req.query.days) || 30, 365);
     const since = new Date(Date.now() - days * 86400_000).toISOString().slice(0, 10);
 
-    const { rows } = await telemetryPool.query(
-      `SELECT pp.point_id, pp.peak_date, pp.max_power, pp.peak_time, mp.name AS point_name
-       FROM power_peaks pp
-       JOIN measurement_points mp ON mp.id = pp.point_id
-       WHERE pp.terrain_id = $1 AND pp.peak_date >= $2
-       ORDER BY pp.peak_date DESC, pp.max_power DESC`,
+    // power_peaks is in telemetry-db, measurement_points in core-db → separate queries
+    const { rows: peaks } = await telemetryPool.query(
+      `SELECT point_id, peak_date, max_power, peak_time
+       FROM power_peaks
+       WHERE terrain_id = $1 AND peak_date >= $2
+       ORDER BY peak_date DESC, max_power DESC`,
       [terrainId, since]
     );
 
+    // Fetch point names from core-db
+    const pointIds = [...new Set(peaks.map(r => r.point_id))];
+    const nameMap = new Map();
+    if (pointIds.length) {
+      const { rows: pts } = await corePool.query(
+        `SELECT id, name FROM measurement_points WHERE id = ANY($1)`,
+        [pointIds]
+      );
+      for (const p of pts) nameMap.set(p.id, p.name);
+    }
+
+    const rows = peaks.map(r => ({ ...r, point_name: nameMap.get(r.point_id) ?? r.point_id }));
     res.json({ ok: true, terrain_id: terrainId, peaks: rows });
   } catch (e) {
     log.error({ err: e.message }, "[telemetry/power-peaks]");
