@@ -29,8 +29,10 @@ const ORG_ROUTE_ACCESS: Record<OrgRouteKey, UserRole[]> = {
   admin: ['platform_super_admin'],
 };
 
+const SUPER_ADMIN_EXCLUDED: OrgRouteKey[] = ['anomalies'];
+
 export function canAccessOrgRoute(role: UserRole, key: OrgRouteKey) {
-  if (role === 'platform_super_admin') return true;
+  if (role === 'platform_super_admin') return !SUPER_ADMIN_EXCLUDED.includes(key);
   const allowed = ORG_ROUTE_ACCESS[key];
   return allowed ? allowed.includes(role) : false;
 }

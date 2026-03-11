@@ -480,6 +480,12 @@ export const api = {
       range: { from: string | null; to: string | null };
     }>('/admin/readings/batch-purge', { method: 'POST', body: JSON.stringify(data) }),
 
+  // ── Purge by date range (all points) ──
+  purgeByRange: (data: { from: string; to: string; includeReadings?: boolean }) =>
+    request<{ ok: boolean; range: { from: string; to: string }; deleted: { readings: number; agg_15m: number; agg_daily: number } }>(
+      '/admin/readings/purge-range', { method: 'POST', body: JSON.stringify(data) }
+    ),
+
   // ── Pipeline Repair Actions ──
   repairAggregations: (data: { from: string; to: string; point_id?: string; terrain_id?: string; site_id?: string }) =>
     request<{ ok: boolean; message: string }>('/admin/pipeline/repair-aggregations', { method: 'POST', body: JSON.stringify(data) }),

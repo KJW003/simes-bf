@@ -252,7 +252,7 @@ async function runCheckStaleDevices(payload = {}) {
 
     // 1) Find stale devices
     const staleDevices = await db.query(
-      `SELECT dr.id, dr.device_key, dr.label, dr.terrain_id, dr.point_id,
+      `SELECT dr.id, dr.device_key, dr.terrain_id, dr.point_id,
               dr.last_seen_at,
               EXTRACT(EPOCH FROM (NOW() - dr.last_seen_at)) / 60 AS minutes_silent,
               mp.name AS point_name, t.name AS terrain_name
@@ -273,7 +273,7 @@ async function runCheckStaleDevices(payload = {}) {
     for (const dev of staleDevices.rows) {
       const minutesSilent = Math.round(dev.minutes_silent);
       const severity = minutesSilent >= CRITICAL_MINUTES ? "critical" : "warning";
-      const deviceLabel = dev.label || dev.device_key;
+      const deviceLabel = dev.point_name || dev.device_key;
 
       // Check if an open incident already exists for this device
       const existing = await db.query(

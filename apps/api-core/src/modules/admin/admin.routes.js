@@ -1134,6 +1134,51 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
   }
 });
 
+// ─── DELETE aggregation + readings for a date range (all points) ────
+// POST /admin/readings/purge-range
+// Body: { from: "2025-03-07", to: "2025-03-07", includeReadings?: boolean }
+router.post("/admin/readings/purge-range", requireAuth, async (req, res) => {
+  const { from, to, includeReadings = true } = req.body || {};
+  if (!from || !to) return res.status(400).json({ ok: false, error: "from and to are required" });
+  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+
+  try {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    toDate.setHours(23, 59, 59, 999);
+
+    let readingsDeleted = 0;
+    if (includeReadings) {
+      const rr = await telemetryPool.query(
+        `DELETE FROM acrel_readings WHERE time >= $1 AND time <= $2`,
+        [fromDate.toISOString(), toDate.toISOString()]
+      );
+      readingsDeleted = rr.rowCount;
+    }
+
+    const r15 = await telemetryPool.query(
+      `DELETE FROM acrel_agg_15m WHERE bucket_start >= $1 AND bucket_start <= $2`,
+      [fromDate.toISOString(), toDate.toISOString()]
+    );
+
+    const rDay = await telemetryPool.query(
+      `DELETE FROM acrel_agg_daily WHERE day >= ($1)::date AND day <= ($2)::date`,
+      [from, to]
+    );
+
+    const deleted = { readings: readingsDeleted, agg_15m: r15.rowCount, agg_daily: rDay.rowCount };
+    log.info({ from, to, ...deleted }, 'purge-range completed');
+    auditLog('warn', 'api', `Purge range ${from} → ${to}: ${deleted.readings} readings, ${deleted.agg_15m} agg15m, ${deleted.agg_daily} daily`, {
+      from, to, deleted
+    }, req.userId || null);
+
+    res.json({ ok: true, range: { from, to }, deleted });
+  } catch (e) {
+    log.error({ err: e.message }, 'purge-range error');
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ═══════════════════════════════════════════════════════════════
 // Pipeline repair actions
 // ═══════════════════════════════════════════════════════════════

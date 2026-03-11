@@ -2036,6 +2036,14 @@ function PipelineTab() {
   });
   const [repairTo, setRepairTo] = useState(() => new Date().toISOString().slice(0, 10));
 
+  // Purge state
+  const [purging, setPurging] = useState(false);
+  const [purgeFrom, setPurgeFrom] = useState('');
+  const [purgeTo, setPurgeTo] = useState('');
+  const [purgeIncludeReadings, setPurgeIncludeReadings] = useState(true);
+  const [purgeResult, setPurgeResult] = useState<{ deleted: { readings: number; agg_15m: number; agg_daily: number } } | null>(null);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+
   const components = health?.components ?? [];
   const queues = components.filter((c: any) => c.name.startsWith('Queue:'));
   const infra = components.filter((c: any) => !c.name.startsWith('Queue:'));
@@ -2081,6 +2089,18 @@ function PipelineTab() {
     } catch { toast.error('Repair failed'); }
     setRepairing(false);
   }, [repairFrom, repairTo, refetch]);
+
+  const handlePurge = useCallback(async () => {
+    setPurging(true);
+    setPurgeResult(null);
+    try {
+      const res = await api.purgeByRange({ from: purgeFrom, to: purgeTo, includeReadings: purgeIncludeReadings });
+      setPurgeResult(res);
+      toast.success(`Supprimé: ${res.deleted.readings} readings, ${res.deleted.agg_15m} agg15m, ${res.deleted.agg_daily} daily`);
+    } catch { toast.error('Purge failed'); }
+    setPurging(false);
+    setPurgeConfirmOpen(false);
+  }, [purgeFrom, purgeTo, purgeIncludeReadings]);
 
   if (isLoading) return <div className="flex items-center justify-center py-12"><Loader2 className="w-5 h-5 animate-spin" /></div>;
 
@@ -2197,6 +2217,57 @@ function PipelineTab() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Purge Data */}
+      <Card className="border-red-200 dark:border-red-900">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2 text-red-700 dark:text-red-400"><Trash2 className="w-4 h-4" /> Purge de données</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">Supprime définitivement les agrégations et/ou readings bruts pour la période sélectionnée (tous les points).</p>
+          <div className="flex flex-wrap items-end gap-3">
+            <div>
+              <Label className="text-xs">Du</Label>
+              <Input type="date" className="h-8 w-40" value={purgeFrom} onChange={e => setPurgeFrom(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Au</Label>
+              <Input type="date" className="h-8 w-40" value={purgeTo} onChange={e => setPurgeTo(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
+            </div>
+            <div className="flex items-center gap-2">
+              <Switch checked={purgeIncludeReadings} onCheckedChange={setPurgeIncludeReadings} id="purge-readings" />
+              <Label htmlFor="purge-readings" className="text-xs">Inclure readings bruts</Label>
+            </div>
+            <Button size="sm" variant="destructive" onClick={() => setPurgeConfirmOpen(true)} disabled={purging || !purgeFrom || !purgeTo}>
+              <Trash2 className="w-3.5 h-3.5 mr-1" /> Purger
+            </Button>
+          </div>
+          {purgeResult && (
+            <div className="mt-3 p-2 bg-red-50 dark:bg-red-900/20 rounded text-xs">
+              <span className="font-semibold">Résultat :</span> {purgeResult.deleted.readings} readings, {purgeResult.deleted.agg_15m} agg_15m, {purgeResult.deleted.agg_daily} agg_daily supprimés
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Purge confirmation dialog */}
+      <Dialog open={purgeConfirmOpen} onOpenChange={setPurgeConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-red-600">Confirmer la suppression</DialogTitle>
+            <DialogDescription>
+              Vous allez supprimer {purgeIncludeReadings ? 'les readings bruts + ' : ''}les agrégations (15m et daily) du <strong>{purgeFrom}</strong> au <strong>{purgeTo}</strong> pour <strong>tous les points</strong>. Cette action est irréversible.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <DialogClose asChild><Button variant="outline">Annuler</Button></DialogClose>
+            <Button variant="destructive" onClick={handlePurge} disabled={purging}>
+              {purging ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Trash2 className="w-3.5 h-3.5 mr-1" />}
+              Confirmer la purge
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -2207,7 +2278,7 @@ function PipelineTab() {
 
 const JOB_TYPES = [
   { value: 'aggregate', label: 'Agrégation télémétrie', desc: 'Re-calcule 15m + daily' },
-  { value: 'forecast', label: 'Prévisions ML', desc: 'LightGBM forecast' },
+  { value: 'forecast', label: 'Entraînement ML (prévisions)', desc: 'Entraîne tous les modèles LightGBM' },
   { value: 'report', label: 'Rapport', desc: 'Génère un rapport PDF' },
   { value: 'facture', label: 'Facture', desc: 'Génère une facture' },
   { value: 'audit-pv', label: 'Audit PV', desc: 'Analyse solaire' },
@@ -2219,6 +2290,7 @@ function RunsTab() {
   const [submitting, setSubmitting] = useState<string | null>(null);
   const [selectedJob, setSelectedJob] = useState<string>('aggregate');
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
+  const [trainingML, setTrainingML] = useState(false);
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(selectedJob);
@@ -2229,6 +2301,16 @@ function RunsTab() {
     } catch { toast.error('Échec de soumission'); }
     setSubmitting(null);
   }, [selectedJob, refetch]);
+
+  const handleTrainML = useCallback(async () => {
+    setTrainingML(true);
+    try {
+      await api.submitJob('forecast');
+      toast.success('Entraînement ML lancé — vérifiez les résultats ci-dessous');
+      setTimeout(() => refetch(), 2000);
+    } catch { toast.error('Échec du lancement ML'); }
+    setTrainingML(false);
+  }, [refetch]);
 
   const statusBadge = (s: string) => {
     switch (s) {
@@ -2277,6 +2359,40 @@ function RunsTab() {
               Soumettre
             </Button>
           </div>
+        </CardContent>
+      </Card>
+
+      {/* ML Training */}
+      <Card className="border-blue-200 dark:border-blue-900">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base flex items-center gap-2"><Activity className="w-4 h-4 text-blue-600" /> Entraînement IA prédictive</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">
+            Programmé automatiquement à <strong>03:00</strong> chaque jour. Lance l'entraînement de tous les modèles LightGBM sur le service ML.
+            Vérifiez dans l'historique des jobs ci-dessous si l'entraînement s'est exécuté (type: <code className="bg-muted px-1 rounded">forecast</code> ou <code className="bg-muted px-1 rounded">ai.retrain_forecasts</code>).
+          </p>
+          {(() => {
+            const mlRuns = (runs as any[]).filter((r: any) => r.type === 'forecast' || r.type === 'ai.retrain_forecasts');
+            const lastRun = mlRuns[0];
+            return (
+              <div className="flex flex-wrap items-center gap-3">
+                <Button size="sm" onClick={handleTrainML} disabled={trainingML}>
+                  {trainingML ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <Play className="w-3.5 h-3.5 mr-1" />}
+                  Lancer l'entraînement maintenant
+                </Button>
+                {lastRun ? (
+                  <div className="text-xs text-muted-foreground">
+                    Dernier run : {statusBadge(lastRun.status)} le {fmtDate(lastRun.created_at)}
+                    {lastRun.result?.trained != null && <span className="ml-2">({lastRun.result.trained}/{lastRun.result.total} modèles)</span>}
+                    {lastRun.error && <span className="ml-2 text-red-600">⚠️ {lastRun.error.slice(0, 80)}</span>}
+                  </div>
+                ) : (
+                  <span className="text-xs text-muted-foreground">Aucun run ML trouvé dans l'historique</span>
+                )}
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 

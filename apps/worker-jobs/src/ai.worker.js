@@ -1,6 +1,7 @@
 const { Worker } = require("bullmq");
 const { connection, db, telemetryDb, setRunStatus, insertJobResult } = require("./shared");
 const log = require("./config/logger");
+const { auditLog } = require("./audit-log");
 
 if (!connection) {
   log.warn("ai-worker skipped – no Redis connection");
@@ -182,8 +183,9 @@ new Worker(
         return { ok: true };
       }
 
-      if (job.name === "ai.retrain_forecasts") {
+      if (job.name === "ai.retrain_forecasts" || job.name === "forecast") {
         const mlUrl = process.env.ML_SERVICE_URL || "http://ml-service:8000";
+        auditLog('info', 'ai-worker', `ML retrain started (job: ${job.name})`, { jobId: job.id });
         const resp = await fetch(`${mlUrl}/train-all`, { method: "POST" });
         const result = await resp.json();
 
@@ -196,6 +198,7 @@ new Worker(
         }
 
         log.info({ trained: result.trained, total: result.total }, "ML retrain-all complete");
+        auditLog('info', 'ai-worker', `ML retrain complete: ${result.trained ?? 0}/${result.total ?? 0} models`, { trained: result.trained, total: result.total });
         return { ok: true };
       }
 
