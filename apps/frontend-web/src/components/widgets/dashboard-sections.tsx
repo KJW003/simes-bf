@@ -368,7 +368,19 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, 
 
   const historyPeaks = (historyData?.peaks ?? []) as Array<{ point_id: string; peak_date: string; max_power: number; peak_time: string; point_name: string }>;
 
-  if (!peaks.length && !historyPeaks.length) return null;
+  if (!peaks.length && !historyPeaks.length) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-primary" />
+          Pics de puissance
+        </CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée de pics disponible pour cette période</div>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <Card>

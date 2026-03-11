@@ -101,7 +101,7 @@ export function usePoints(terrainId: string | null) {
 export interface DashboardData {
   points_count: number;
   power_now_kw: number;
-  energy_today: { import_kwh: number; export_kwh: number; net_kwh: number };
+  energy_today: { total_kwh: number; import_kwh: number; export_kwh: number; net_kwh: number };
   last_update: string | null;
 }
 
