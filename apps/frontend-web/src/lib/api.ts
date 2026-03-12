@@ -510,6 +510,38 @@ export const api = {
   reprocessUnmapped: (limit?: number) =>
     request<{ ok: boolean; message: string }>('/admin/pipeline/reprocess-unmapped', { method: 'POST', body: JSON.stringify({ limit }) }),
 
+  // ── Disk Recovery ──
+  getDiskStats: () =>
+    request<{
+      ok: boolean;
+      database_size: number;
+      database_size_human: string;
+      trash_batches: number;
+      oldest_trash: string | null;
+      tables: Array<{
+        table: string;
+        row_count: number;
+        total_bytes: number;
+        table_bytes: number;
+        index_bytes: number;
+        total_human: string;
+        error?: string;
+      }>;
+    }>('/admin/disk-stats'),
+  runDiskRecovery: (opts?: { trash_max_age_days?: number; vacuum?: boolean; dry_run?: boolean }) =>
+    request<{
+      ok: boolean;
+      dry_run: boolean;
+      trash_batches_removed: number;
+      vacuumed: string[];
+      db_size_before: number;
+      db_size_after: number;
+      recovered: number;
+      recovered_human: string;
+      db_size_before_human: string;
+      db_size_after_human: string;
+    }>('/admin/disk-recovery', { method: 'POST', body: JSON.stringify(opts ?? {}) }),
+
   /** Base URL for raw fetch calls (e.g. file downloads) */
   baseURL: BASE,
 

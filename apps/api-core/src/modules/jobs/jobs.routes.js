@@ -74,4 +74,13 @@ router.post("/jobs/aggregate", async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+
+router.post("/jobs/disk-recovery", async (req, res) => {
+  try {
+    const run = await createRunAndEnqueue(JobTypes.DISK_RECOVERY, req.body);
+    res.status(201).json(run);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 module.exports = router;

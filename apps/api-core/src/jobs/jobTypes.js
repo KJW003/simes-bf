@@ -6,4 +6,5 @@ module.exports = {
   REPORT: "report",
   AGGREGATE: "telemetry.aggregate",
   PROCESS_HISTORICAL_MESSAGES: "telemetry.process_historical_messages",
+  DISK_RECOVERY: "telemetry.disk_recovery",
 };

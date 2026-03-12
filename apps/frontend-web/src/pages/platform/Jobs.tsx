@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -12,7 +12,7 @@ import api from '@/lib/api';
 import { toast } from 'sonner';
 import {
   Play, Send, RefreshCw, Loader2, CheckCircle, XCircle, Clock,
-  Activity, Database,
+  Activity, Database, HardDrive, Trash2,
 } from 'lucide-react';
 
 const JOB_TYPES = [
@@ -22,6 +22,7 @@ const JOB_TYPES = [
   { value: 'facture', label: 'Facture', desc: 'Génère une facture' },
   { value: 'audit-pv', label: 'Audit PV', desc: 'Analyse solaire' },
   { value: 'roi', label: 'ROI', desc: 'Analyse rentabilité' },
+  { value: 'disk-recovery', label: 'Récupération disque', desc: 'Trash cleanup + VACUUM FULL' },
 ] as const;
 
 const fmtDate = (d: string | null) =>
@@ -40,6 +41,33 @@ export default function Jobs() {
   const [selectedJob, setSelectedJob] = useState<string>('aggregate');
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [trainingML, setTrainingML] = useState(false);
+  const [diskStats, setDiskStats] = useState<any>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryResult, setRecoveryResult] = useState<any>(null);
+
+  const loadDiskStats = useCallback(async () => {
+    setLoadingStats(true);
+    try {
+      const data = await api.getDiskStats();
+      setDiskStats(data);
+    } catch { toast.error('Impossible de charger les stats disque'); }
+    setLoadingStats(false);
+  }, []);
+
+  useEffect(() => { loadDiskStats(); }, [loadDiskStats]);
+
+  const handleDiskRecovery = useCallback(async () => {
+    setRecovering(true);
+    setRecoveryResult(null);
+    try {
+      const res = await api.runDiskRecovery({ trash_max_age_days: 7, vacuum: true });
+      setRecoveryResult(res);
+      toast.success(`Récupéré ${res.recovered_human} — ${res.trash_batches_removed} lots trash supprimés, ${res.vacuumed?.length ?? 0} tables VACUUM`);
+      loadDiskStats();
+    } catch { toast.error('Échec de la récupération disque'); }
+    setRecovering(false);
+  }, [loadDiskStats]);
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(selectedJob);
@@ -138,6 +166,72 @@ export default function Jobs() {
               </div>
             ) : (
               <span className="text-xs text-muted-foreground">Aucun run ML trouvé dans l'historique</span>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Disk Recovery */}
+      <Card className="border-orange-200 dark:border-orange-900">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><HardDrive className="w-4 h-4 text-orange-600" /> Récupération d'espace disque</CardTitle>
+            <Button variant="ghost" size="sm" onClick={loadDiskStats} disabled={loadingStats}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingStats ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">
+            Supprime les lots trash &gt; 7 jours puis exécute <strong>VACUUM FULL</strong> sur toutes les tables pour libérer l'espace disque.
+            Programmé automatiquement chaque <strong>dimanche à 01:00</strong>.
+          </p>
+
+          {diskStats && (
+            <div className="mb-4 space-y-2">
+              <div className="flex items-center gap-4 text-sm">
+                <span className="font-medium">Base de données :</span>
+                <Badge variant="outline" className="text-base font-mono">{diskStats.database_size_human}</Badge>
+                {diskStats.trash_batches > 0 && (
+                  <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">
+                    <Trash2 className="w-3 h-3 mr-1" />{diskStats.trash_batches} lot{diskStats.trash_batches > 1 ? 's' : ''} trash
+                  </Badge>
+                )}
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b text-muted-foreground">
+                      <th className="py-1 px-2 text-left">Table</th>
+                      <th className="py-1 px-2 text-right">Lignes</th>
+                      <th className="py-1 px-2 text-right">Taille</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {diskStats.tables?.map((t: any) => (
+                      <tr key={t.table} className="border-b hover:bg-muted/50">
+                        <td className="py-1 px-2 font-mono">{t.table}</td>
+                        <td className="py-1 px-2 text-right">{t.row_count?.toLocaleString('fr-FR')}</td>
+                        <td className="py-1 px-2 text-right font-medium">{t.total_human}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button size="sm" variant="destructive" onClick={handleDiskRecovery} disabled={recovering}>
+              {recovering ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <HardDrive className="w-3.5 h-3.5 mr-1" />}
+              {recovering ? 'Récupération en cours…' : 'Lancer la récupération maintenant'}
+            </Button>
+            {recoveryResult && (
+              <div className="text-xs text-muted-foreground">
+                Avant : <strong>{recoveryResult.db_size_before_human}</strong> → Après : <strong>{recoveryResult.db_size_after_human}</strong>
+                {' '}— <span className="text-green-600 font-semibold">{recoveryResult.recovered_human} récupérés</span>
+                {' '}— {recoveryResult.trash_batches_removed} lots trash, {recoveryResult.vacuumed?.length ?? 0} tables VACUUM
+              </div>
             )}
           </div>
         </CardContent>

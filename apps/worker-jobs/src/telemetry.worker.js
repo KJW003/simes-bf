@@ -834,6 +834,66 @@ async function computePowerPeaks() {
   return { ok: true, date: yesterday, peaksUpserted: total };
 }
 
+async function runDiskRecovery(payload = {}) {
+  const trashMaxAgeDays = payload.trash_max_age_days ?? 7;
+
+  const results = { ok: true, trash_batches_removed: 0, vacuumed: [], db_size_before: 0, db_size_after: 0 };
+
+  // 1) Measure DB size before
+  const beforeRes = await telemetryDb.query(`SELECT pg_database_size(current_database()) AS db_bytes`);
+  results.db_size_before = parseInt(beforeRes.rows[0]?.db_bytes ?? 0);
+
+  // 2) Delete old trash batches (CASCADE deletes trash rows)
+  if (trashMaxAgeDays > 0) {
+    const del = await telemetryDb.query(
+      `DELETE FROM purge_batches WHERE restored_at IS NULL AND deleted_at < NOW() - ($1 || ' days')::interval`,
+      [String(trashMaxAgeDays)]
+    );
+    results.trash_batches_removed = del.rowCount ?? 0;
+    log.info(`Disk recovery: deleted ${results.trash_batches_removed} old trash batches (> ${trashMaxAgeDays} days)`);
+  }
+
+  // 3) VACUUM FULL to reclaim disk space
+  const tablesToVacuum = [
+    'acrel_readings_trash', 'acrel_agg_15m_trash', 'acrel_agg_daily_trash',
+    'purge_batches',
+    'acrel_readings', 'acrel_agg_15m', 'acrel_agg_daily',
+    'incoming_messages',
+  ];
+
+  for (const tbl of tablesToVacuum) {
+    try {
+      await telemetryDb.query(`VACUUM FULL ${tbl}`);
+      results.vacuumed.push(tbl);
+      log.info(`VACUUM FULL ${tbl} done`);
+    } catch (e) {
+      log.info(`VACUUM FULL ${tbl} skipped: ${e.message}`);
+    }
+  }
+
+  // 4) Measure DB size after
+  const afterRes = await telemetryDb.query(`SELECT pg_database_size(current_database()) AS db_bytes`);
+  results.db_size_after = parseInt(afterRes.rows[0]?.db_bytes ?? 0);
+  results.recovered = results.db_size_before - results.db_size_after;
+
+  const fmt = (b) => {
+    if (b === 0) return '0 B';
+    const k = 1024;
+    const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+    const i = Math.floor(Math.log(b) / Math.log(k));
+    return parseFloat((b / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  results.recovered_human = fmt(Math.max(0, results.recovered));
+  results.db_size_before_human = fmt(results.db_size_before);
+  results.db_size_after_human = fmt(results.db_size_after);
+
+  auditLog('warn', 'worker', `Disk recovery completed: trash=${results.trash_batches_removed}, vacuumed=${results.vacuumed.length}, recovered=${results.recovered_human}`, results);
+  log.info(`✓ Disk recovery: ${results.recovered_human} recovered, ${results.trash_batches_removed} trash batches removed, ${results.vacuumed.length} tables vacuumed`);
+
+  return results;
+}
+
 new Worker(
   "telemetry",
   async (job) => {
@@ -1000,6 +1060,19 @@ new Worker(
           await setRunStatus(runId, "success", { finished_at: new Date().toISOString(), result });
         }
         return { ok: true, result };
+      }
+
+      // ── telemetry.disk_recovery: trash cleanup + VACUUM FULL ──
+      if (job.name === "telemetry.disk_recovery") {
+        const summary = await runDiskRecovery(payload || {});
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          await setRunStatus(runId, summary.ok ? "success" : "failed", {
+            finished_at: new Date().toISOString(),
+            result: summary,
+          });
+        }
+        return { ok: true, summary };
       }
 
       // fallback for unknown job types

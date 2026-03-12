@@ -192,6 +192,27 @@ if (!connection) {
       );
 
       log.info("✓ AI anomaly detection scheduled: daily at 04:00");
+
+      // ── Disk recovery (trash cleanup + VACUUM): weekly Sunday at 01:00 ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.disk_recovery") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log.info({ key: job.key }, 'Removed old disk-recovery job');
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.disk_recovery",
+        { payload: { trash_max_age_days: 7 } },
+        {
+          repeat: { pattern: "0 1 * * 0" }, // Sunday at 01:00
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 1,
+        }
+      );
+
+      log.info("✓ Disk recovery scheduled: weekly Sunday at 01:00");
     } catch (e) {
       log.error(`✗ Failed to setup scheduler: ${e.message}`);
     }
