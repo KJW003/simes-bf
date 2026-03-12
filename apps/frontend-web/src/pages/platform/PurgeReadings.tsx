@@ -183,7 +183,7 @@ export default function PurgeReadings() {
     <div className="space-y-6">
       <PageHeader
         title="Purge des mesures"
-        description="Supprimer les données télémétrie de un ou plusieurs points de mesure"
+        description="Supprimer les readings et agrégations (agg_15m, agg_daily) par point de mesure — sélection par organisation, site et terrain"
       />
 
       {/* ── Breadcrumb ────────────────────────────────────── */}

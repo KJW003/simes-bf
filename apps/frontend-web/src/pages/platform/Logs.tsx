@@ -11,13 +11,14 @@ import {
 import { useLogs, useLogStats } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
 import {
-  FileSearch, AlertTriangle, Info, AlertOctagon, RefreshCw, Loader2, Search,
+  FileSearch, AlertTriangle, Info, AlertOctagon, RefreshCw, Loader2, Search, Bug,
 } from 'lucide-react';
 
 const levelConfig: Record<string, { label: string; className: string; icon: any }> = {
   info: { label: 'Info', className: 'text-blue-600 bg-blue-50 border-blue-200', icon: Info },
   warn: { label: 'Warning', className: 'text-amber-600 bg-amber-50 border-amber-200', icon: AlertTriangle },
   error: { label: 'Error', className: 'text-red-600 bg-red-50 border-red-200', icon: AlertOctagon },
+  debug: { label: 'Debug', className: 'text-gray-600 bg-gray-50 border-gray-200', icon: Bug },
 };
 
 const fmtDate = (d: string) => new Date(d).toLocaleString('fr-FR', {
@@ -54,12 +55,28 @@ export default function Logs() {
         }
       />
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
-        <KpiCard label="Total 24h" value={data?.total ?? 0} icon={<FileSearch className="w-4 h-4" />} />
-        <KpiCard label="Info" value={statMap.info ?? 0} icon={<Info className="w-4 h-4" />} />
-        <KpiCard label="Warnings" value={statMap.warn ?? 0} icon={<AlertTriangle className="w-4 h-4" />} variant={statMap.warn > 0 ? 'warning' : 'default'} />
-        <KpiCard label="Errors" value={statMap.error ?? 0} icon={<AlertOctagon className="w-4 h-4" />} variant={statMap.error > 0 ? 'critical' : 'default'} />
+      {/* Clickable Stats Cards */}
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4 animate-stagger-children">
+        <Card className={cn("cursor-pointer hover:ring-1 ring-primary/30 transition-all", levelFilter === '_all' && "ring-1 ring-primary")} onClick={() => setLevelFilter('_all')}>
+          <CardContent className="p-3 flex items-center justify-between">
+            <span className="text-sm font-medium">Total 24h</span>
+            <Badge variant="secondary">{data?.total ?? 0}</Badge>
+          </CardContent>
+        </Card>
+        {(['error', 'warn', 'info', 'debug'] as const).map(lvl => {
+          const count = statMap[lvl] ?? 0;
+          const isActive = levelFilter === lvl;
+          return (
+            <Card key={lvl} className={cn("cursor-pointer hover:ring-1 ring-primary/30 transition-all", isActive && "ring-1 ring-primary")} onClick={() => setLevelFilter(isActive ? '_all' : lvl)}>
+              <CardContent className="p-3 flex items-center justify-between">
+                <span className="text-sm capitalize font-medium">{levelConfig[lvl]?.label ?? lvl}</span>
+                <Badge variant={lvl === 'error' ? 'destructive' : lvl === 'warn' ? 'outline' : 'secondary'} className={cn(lvl === 'warn' && 'border-yellow-500 text-yellow-700')}>
+                  {count}
+                </Badge>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {/* Filters */}
@@ -72,6 +89,7 @@ export default function Logs() {
             <SelectItem value="info">Info</SelectItem>
             <SelectItem value="warn">Warning</SelectItem>
             <SelectItem value="error">Error</SelectItem>
+            <SelectItem value="debug">Debug</SelectItem>
           </SelectContent>
         </Select>
         <span className="text-sm text-muted-foreground ml-2">Source :</span>

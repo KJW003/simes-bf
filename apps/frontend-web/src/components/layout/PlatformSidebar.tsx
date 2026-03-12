@@ -13,6 +13,7 @@ import {
   Settings,
   Trash2,
   X,
+  Play,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -116,6 +117,7 @@ export function PlatformSidebar({ onClose }: { onClose?: () => void } = {}) {
               icon={Activity}
               label="Pipeline"
             />
+            <NavItem to="/platform/jobs" icon={Play} label="Jobs" />
             <NavItem to="/platform/logs" icon={FileSearch} label="Logs" />
           </NavSection>
 
