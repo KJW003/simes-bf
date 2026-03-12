@@ -1481,36 +1481,41 @@ router.post("/admin/pipeline/reprocess-unmapped", requireAuth, async (req, res) 
 // GET /admin/disk-stats — per-table disk usage
 router.get("/admin/disk-stats", requireAuth, async (req, res) => {
   try {
-    const tables = [
+    // Tables in telemetry DB
+    const telemetryTables = [
       'acrel_readings', 'acrel_agg_15m', 'acrel_agg_daily',
       'acrel_readings_trash', 'acrel_agg_15m_trash', 'acrel_agg_daily_trash',
-      'purge_batches', 'incoming_messages',
+      'purge_batches',
     ];
+    // Tables in core DB
+    const coreTables = ['incoming_messages'];
 
     const rows = [];
-    for (const tbl of tables) {
+    const queryTableStats = async (pool, tbl) => {
       try {
-        const sizeRes = await telemetryPool.query(
+        const sizeRes = await pool.query(
           `SELECT pg_total_relation_size($1::regclass) AS total_bytes,
                   pg_relation_size($1::regclass)       AS table_bytes,
                   pg_indexes_size($1::regclass)        AS index_bytes`,
           [tbl]
         );
-        const countRes = await telemetryPool.query(
+        const countRes = await pool.query(
           `SELECT count(*)::int AS row_count FROM ${tbl}`
         );
-        rows.push({
+        return {
           table: tbl,
           row_count: countRes.rows[0]?.row_count ?? 0,
           total_bytes: parseInt(sizeRes.rows[0]?.total_bytes ?? 0),
           table_bytes: parseInt(sizeRes.rows[0]?.table_bytes ?? 0),
           index_bytes: parseInt(sizeRes.rows[0]?.index_bytes ?? 0),
           total_human: formatBytes(parseInt(sizeRes.rows[0]?.total_bytes ?? 0)),
-        });
+        };
       } catch {
-        rows.push({ table: tbl, row_count: 0, total_bytes: 0, table_bytes: 0, index_bytes: 0, total_human: '0 B', error: 'table not found' });
+        return { table: tbl, row_count: 0, total_bytes: 0, table_bytes: 0, index_bytes: 0, total_human: '0 B', error: 'table not found' };
       }
-    }
+    };
+    for (const tbl of telemetryTables) rows.push(await queryTableStats(telemetryPool, tbl));
+    for (const tbl of coreTables) rows.push(await queryTableStats(corePool, tbl));
 
     // Database total size
     const dbSizeRes = await telemetryPool.query(
@@ -1542,67 +1547,13 @@ router.get("/admin/disk-stats", requireAuth, async (req, res) => {
   }
 });
 
-// POST /admin/disk-recovery — purge old trash + VACUUM FULL
+// POST /admin/disk-recovery — dispatch as async BullMQ job (VACUUM FULL is too slow for HTTP)
 router.post("/admin/disk-recovery", requireAuth, async (req, res) => {
   try {
-    const { trash_max_age_days = 7, vacuum = true, dry_run = false } = req.body || {};
-
-    const results = { trash_deleted: 0, trash_batches_removed: 0, vacuumed: [], db_size_before: 0, db_size_after: 0 };
-
-    // 1) Measure DB size before
-    const beforeRes = await telemetryPool.query(`SELECT pg_database_size(current_database()) AS db_bytes`);
-    results.db_size_before = parseInt(beforeRes.rows[0]?.db_bytes ?? 0);
-
-    // 2) Delete old trash batches (CASCADE removes trash rows)
-    if (trash_max_age_days > 0) {
-      if (dry_run) {
-        const preview = await telemetryPool.query(
-          `SELECT count(*)::int AS cnt FROM purge_batches WHERE restored_at IS NULL AND deleted_at < NOW() - ($1 || ' days')::interval`,
-          [String(trash_max_age_days)]
-        );
-        results.trash_batches_removed = preview.rows[0]?.cnt ?? 0;
-        results.trash_deleted = -1; // dry run
-      } else {
-        const del = await telemetryPool.query(
-          `DELETE FROM purge_batches WHERE restored_at IS NULL AND deleted_at < NOW() - ($1 || ' days')::interval`,
-          [String(trash_max_age_days)]
-        );
-        results.trash_batches_removed = del.rowCount ?? 0;
-        log.info(`Disk recovery: deleted ${results.trash_batches_removed} old trash batches (> ${trash_max_age_days} days)`);
-      }
-    }
-
-    // 3) VACUUM FULL on key tables to actually reclaim disk space
-    if (vacuum && !dry_run) {
-      const tablesToVacuum = [
-        'acrel_readings_trash', 'acrel_agg_15m_trash', 'acrel_agg_daily_trash',
-        'purge_batches',
-        'acrel_readings', 'acrel_agg_15m', 'acrel_agg_daily',
-        'incoming_messages',
-      ];
-
-      for (const tbl of tablesToVacuum) {
-        try {
-          await telemetryPool.query(`VACUUM FULL ${tbl}`);
-          results.vacuumed.push(tbl);
-          log.info(`VACUUM FULL ${tbl} done`);
-        } catch (e) {
-          log.info(`VACUUM FULL ${tbl} failed: ${e.message}`);
-        }
-      }
-    }
-
-    // 4) Measure DB size after
-    const afterRes = await telemetryPool.query(`SELECT pg_database_size(current_database()) AS db_bytes`);
-    results.db_size_after = parseInt(afterRes.rows[0]?.db_bytes ?? 0);
-    results.recovered = results.db_size_before - results.db_size_after;
-    results.recovered_human = formatBytes(Math.max(0, results.recovered));
-    results.db_size_before_human = formatBytes(results.db_size_before);
-    results.db_size_after_human = formatBytes(results.db_size_after);
-
-    auditLog('warn', 'api', `Disk recovery: trash=${results.trash_batches_removed} batches, vacuumed=${results.vacuumed.length} tables, recovered=${results.recovered_human}`, results, req.userId || null);
-
-    res.json({ ok: true, dry_run, ...results });
+    const { trash_max_age_days = 7, vacuum = true } = req.body || {};
+    await telemetryQueue.add(JobTypes.DISK_RECOVERY, { trash_max_age_days, vacuum }, { attempts: 1 });
+    log.info({ trash_max_age_days, vacuum }, 'Disk recovery job queued');
+    res.json({ ok: true, message: 'Job de récupération disque mis en file d\'attente' });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }

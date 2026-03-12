@@ -12,7 +12,7 @@ import api from '@/lib/api';
 import { toast } from 'sonner';
 import {
   Play, Send, RefreshCw, Loader2, CheckCircle, XCircle, Clock,
-  Activity, Database, HardDrive, Trash2,
+  Activity, Database, HardDrive, Trash2, RotateCcw, AlertTriangle,
 } from 'lucide-react';
 
 const JOB_TYPES = [
@@ -44,7 +44,10 @@ export default function Jobs() {
   const [diskStats, setDiskStats] = useState<any>(null);
   const [loadingStats, setLoadingStats] = useState(false);
   const [recovering, setRecovering] = useState(false);
-  const [recoveryResult, setRecoveryResult] = useState<any>(null);
+  const [purgeBatches, setPurgeBatches] = useState<any[]>([]);
+  const [loadingBatches, setLoadingBatches] = useState(false);
+  const [restoringId, setRestoringId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const loadDiskStats = useCallback(async () => {
     setLoadingStats(true);
@@ -55,19 +58,51 @@ export default function Jobs() {
     setLoadingStats(false);
   }, []);
 
-  useEffect(() => { loadDiskStats(); }, [loadDiskStats]);
+  const loadPurgeBatches = useCallback(async () => {
+    setLoadingBatches(true);
+    try {
+      const data = await api.getPurgeBatches();
+      setPurgeBatches(data.batches || []);
+    } catch { toast.error('Impossible de charger la corbeille'); }
+    setLoadingBatches(false);
+  }, []);
+
+  const handleRestore = useCallback(async (batchId: string) => {
+    setRestoringId(batchId);
+    try {
+      const res = await api.restorePurgeBatch(batchId);
+      toast.success(`Restauré : ${res.restored.readings} readings, ${res.restored.agg_15m} agg 15m, ${res.restored.agg_daily} agg daily`);
+      loadPurgeBatches();
+      loadDiskStats();
+    } catch (e: any) {
+      toast.error(e?.message || 'Échec de la restauration');
+    }
+    setRestoringId(null);
+  }, [loadPurgeBatches, loadDiskStats]);
+
+  const handleDeleteTrash = useCallback(async (batchId: string) => {
+    if (!window.confirm('Supprimer définitivement ce lot ? Les données ne pourront plus être restaurées.')) return;
+    setDeletingId(batchId);
+    try {
+      await api.deletePurgeBatch(batchId);
+      toast.success('Lot supprimé définitivement');
+      loadPurgeBatches();
+      loadDiskStats();
+    } catch { toast.error('Échec de la suppression'); }
+    setDeletingId(null);
+  }, [loadPurgeBatches, loadDiskStats]);
+
+  useEffect(() => { loadDiskStats(); loadPurgeBatches(); }, [loadDiskStats, loadPurgeBatches]);
 
   const handleDiskRecovery = useCallback(async () => {
     setRecovering(true);
-    setRecoveryResult(null);
     try {
-      const res = await api.runDiskRecovery({ trash_max_age_days: 7, vacuum: true });
-      setRecoveryResult(res);
-      toast.success(`Récupéré ${res.recovered_human} — ${res.trash_batches_removed} lots trash supprimés, ${res.vacuumed?.length ?? 0} tables VACUUM`);
-      loadDiskStats();
+      await api.runDiskRecovery({ trash_max_age_days: 7, vacuum: true });
+      toast.success('Job de récupération disque mis en file d\'attente — consultez l\'historique des jobs');
+      setTimeout(() => { loadDiskStats(); refetch(); }, 3000);
     } catch { toast.error('Échec de la récupération disque'); }
     setRecovering(false);
-  }, [loadDiskStats]);
+  }, [loadDiskStats, refetch]);
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(selectedJob);
@@ -171,6 +206,105 @@ export default function Jobs() {
         </CardContent>
       </Card>
 
+      {/* Corbeille — Restauration */}
+      <Card className="border-green-200 dark:border-green-900">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base flex items-center gap-2"><RotateCcw className="w-4 h-4 text-green-600" /> Corbeille — Restauration de données</CardTitle>
+            <Button variant="ghost" size="sm" onClick={loadPurgeBatches} disabled={loadingBatches}>
+              <RefreshCw className={`w-3.5 h-3.5 ${loadingBatches ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-xs text-muted-foreground mb-3">
+            Les données supprimées par une purge sont conservées ici. Vous pouvez les <strong>restaurer</strong> pour récupérer les mesures supprimées par erreur.
+          </p>
+
+          {loadingBatches ? (
+            <div className="flex justify-center py-6"><Loader2 className="w-5 h-5 animate-spin" /></div>
+          ) : purgeBatches.length === 0 ? (
+            <div className="py-6 text-center text-sm text-muted-foreground">Aucune donnée dans la corbeille</div>
+          ) : (
+            <div className="overflow-x-auto max-h-[50vh] overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-background z-10">
+                  <tr className="border-b text-left text-muted-foreground">
+                    <th className="py-2 px-2">Supprimé le</th>
+                    <th className="py-2 px-2">Période</th>
+                    <th className="py-2 px-2 text-right">Readings</th>
+                    <th className="py-2 px-2 text-right">Agg 15m</th>
+                    <th className="py-2 px-2 text-right">Agg Daily</th>
+                    <th className="py-2 px-2">Points</th>
+                    <th className="py-2 px-2">Statut</th>
+                    <th className="py-2 px-2 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {purgeBatches.map((b: any) => {
+                    const counts = b.counts || {};
+                    const isRestored = !!b.restored_at;
+                    const totalRows = (counts.readings || 0) + (counts.agg_15m || 0) + (counts.agg_daily || 0);
+                    return (
+                      <tr key={b.id} className="border-b hover:bg-muted/50">
+                        <td className="py-2 px-2 whitespace-nowrap">{fmtDate(b.deleted_at)}</td>
+                        <td className="py-2 px-2 whitespace-nowrap text-muted-foreground">
+                          {b.date_from ? new Date(b.date_from).toLocaleDateString('fr-FR') : '∞'}
+                          {' → '}
+                          {b.date_to ? new Date(b.date_to).toLocaleDateString('fr-FR') : '∞'}
+                        </td>
+                        <td className="py-2 px-2 text-right font-mono">{(counts.readings || 0).toLocaleString('fr-FR')}</td>
+                        <td className="py-2 px-2 text-right font-mono">{(counts.agg_15m || 0).toLocaleString('fr-FR')}</td>
+                        <td className="py-2 px-2 text-right font-mono">{(counts.agg_daily || 0).toLocaleString('fr-FR')}</td>
+                        <td className="py-2 px-2">
+                          <span className="text-muted-foreground">{b.point_ids?.length || 0} point{(b.point_ids?.length || 0) > 1 ? 's' : ''}</span>
+                        </td>
+                        <td className="py-2 px-2">
+                          {isRestored ? (
+                            <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">
+                              <CheckCircle className="w-3 h-3 mr-1" />Restauré
+                            </Badge>
+                          ) : (
+                            <Badge className="bg-orange-100 text-orange-800 dark:bg-orange-900 dark:text-orange-300">
+                              <AlertTriangle className="w-3 h-3 mr-1" />En corbeille
+                            </Badge>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            {!isRestored && (
+                              <Button
+                                size="sm"
+                                variant="default"
+                                className="h-7 text-xs bg-green-600 hover:bg-green-700"
+                                disabled={restoringId === b.id}
+                                onClick={() => handleRestore(b.id)}
+                              >
+                                {restoringId === b.id ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RotateCcw className="w-3 h-3 mr-1" />}
+                                Restaurer
+                              </Button>
+                            )}
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
+                              disabled={deletingId === b.id}
+                              onClick={() => handleDeleteTrash(b.id)}
+                            >
+                              {deletingId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
       {/* Disk Recovery */}
       <Card className="border-orange-200 dark:border-orange-900">
         <CardHeader className="pb-2">
@@ -226,13 +360,6 @@ export default function Jobs() {
               {recovering ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <HardDrive className="w-3.5 h-3.5 mr-1" />}
               {recovering ? 'Récupération en cours…' : 'Lancer la récupération maintenant'}
             </Button>
-            {recoveryResult && (
-              <div className="text-xs text-muted-foreground">
-                Avant : <strong>{recoveryResult.db_size_before_human}</strong> → Après : <strong>{recoveryResult.db_size_after_human}</strong>
-                {' '}— <span className="text-green-600 font-semibold">{recoveryResult.recovered_human} récupérés</span>
-                {' '}— {recoveryResult.trash_batches_removed} lots trash, {recoveryResult.vacuumed?.length ?? 0} tables VACUUM
-              </div>
-            )}
           </div>
         </CardContent>
       </Card>
