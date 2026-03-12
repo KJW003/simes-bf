@@ -354,7 +354,14 @@ export const api = {
   getGatewayDevices: (gatewayId: string) =>
     request<{ ok: boolean; devices: Array<Record<string, unknown>> }>(`/admin/gateways/${gatewayId}/devices`),
 
-  setTerrainContract: (terrainId: string, data: { tariff_plan_id: string; subscribed_power_kw: number }) =>
+  setTerrainContract: (terrainId: string, data: {
+    tariff_plan_id: string;
+    subscribed_power_kw: number;
+    meter_rental?: number;
+    post_rental?: number;
+    maintenance?: number;
+    capacitor_power_kw?: number;
+  }) =>
     request<Record<string, unknown>>(`/terrains/${terrainId}/contract`, {
       method: 'PUT',
       body: JSON.stringify(data),

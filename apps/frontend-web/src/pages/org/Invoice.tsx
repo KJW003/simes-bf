@@ -1,17 +1,25 @@
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
-import { useSubmitFacture, useFactureResult, useLatestFacture } from '@/hooks/useApi';
+import {
+  useSubmitFacture, useFactureResult, useLatestFacture,
+  useTariffPlans, useTerrainContract, useSaveTerrainContract,
+} from '@/hooks/useApi';
 import {
   Receipt, Zap, Clock, TrendingUp, FileText, AlertTriangle,
-  Loader2, CheckCircle2, Calculator, Info, CalendarDays,
+  Loader2, CheckCircle2, Calculator, CalendarDays,
+  Settings2, Save, Check,
 } from 'lucide-react';
-import { usePreferences, TARIFF_PRESETS } from '@/hooks/usePreferences';
+
 
 const formatCurrency = (value: number) => value.toLocaleString('fr-FR');
 
@@ -25,8 +33,56 @@ const defaultTo = () => new Date().toISOString().slice(0, 10);
 
 export default function Invoice() {
   const { selectedTerrain } = useAppContext();
-  const prefs = usePreferences();
+  const terrainId = selectedTerrain?.id ?? null;
 
+  // ── Contract & tariffs ──
+  const { data: tariffData } = useTariffPlans();
+  const { data: contractData, isLoading: contractLoading } = useTerrainContract(terrainId);
+  const saveContract = useSaveTerrainContract();
+
+  const tariffPlans = Array.isArray(tariffData) ? tariffData : ((tariffData as Record<string, unknown>)?.tariffs as Array<Record<string, unknown>>) ?? [];
+  const existingContract = (contractData as Record<string, unknown>)?.contract as Record<string, unknown> | undefined;
+  const hasContract = !!existingContract;
+
+  // Contract form state
+  const [contractForm, setContractForm] = useState({
+    tariff_plan_id: '',
+    subscribed_power_kw: 100,
+    meter_rental: 0,
+    post_rental: 0,
+    maintenance: 0,
+    capacitor_power_kw: 0,
+  });
+  const [contractSaved, setContractSaved] = useState(false);
+
+  // Sync form when contract loads
+  useEffect(() => {
+    if (existingContract) {
+      setContractForm({
+        tariff_plan_id: String(existingContract.tariff_plan_id ?? ''),
+        subscribed_power_kw: Number(existingContract.subscribed_power_kw ?? 100),
+        meter_rental: Number(existingContract.meter_rental ?? 0),
+        post_rental: Number(existingContract.post_rental ?? 0),
+        maintenance: Number(existingContract.maintenance ?? 0),
+        capacitor_power_kw: Number(existingContract.capacitor_power_kw ?? 0),
+      });
+    } else if (tariffPlans.length > 0 && !contractForm.tariff_plan_id) {
+      setContractForm(prev => ({ ...prev, tariff_plan_id: String(tariffPlans[0].id) }));
+    }
+  }, [existingContract, tariffPlans]);
+
+  const handleSaveContract = async () => {
+    if (!terrainId || !contractForm.tariff_plan_id) return;
+    try {
+      await saveContract.mutateAsync({ terrainId, data: contractForm });
+      setContractSaved(true);
+      setTimeout(() => setContractSaved(false), 2000);
+    } catch (e) {
+      console.error('Erreur sauvegarde contrat:', e);
+    }
+  };
+
+  // ── Facture ──
   const [runId, setRunId] = useState<string | null>(null);
   const [dateFrom, setDateFrom] = useState(defaultFrom);
   const [dateTo, setDateTo] = useState(defaultTo);
@@ -38,13 +94,13 @@ export default function Invoice() {
   const hasLiveResult = !!liveResult;
 
   const handleCalculate = async () => {
-    if (!selectedTerrain) return;
+    if (!selectedTerrain || !hasContract) return;
     try {
       const run = await submitFacture.mutateAsync({
         terrain_id: selectedTerrain.id,
         from: new Date(dateFrom).toISOString(),
         to: new Date(dateTo).toISOString(),
-        subscribed_power_kw: prefs.subscribedPowerKw,
+        subscribed_power_kw: contractForm.subscribed_power_kw,
       });
       setRunId(run.id);
     } catch (e) {
@@ -62,7 +118,6 @@ export default function Invoice() {
   const apiVersion = hasLiveResult ? String(liveResult.version ?? 'V1') : 'V1';
   const apiPeriod = hasLiveResult ? (liveResult.period as { from?: string; to?: string; hours?: number } | undefined) : undefined;
 
-  const planLabel = TARIFF_PRESETS[prefs.tariffGroup]?.plans[prefs.tariffPlan]?.label ?? prefs.tariffPlan;
 
   const handleExportPDF = useCallback(() => {
     if (!hasLiveResult || !apiBreakdown) return;
@@ -143,7 +198,7 @@ ${apiCosPhi > 0 && apiCosPhi < 0.93 ? `<div class="warning">⚠ cos φ = ${apiCo
               <Input type="date" className="h-8 w-36 text-xs" value={dateTo} onChange={e => setDateTo(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
             </div>
             {selectedTerrain && (
-              <Button size="sm" onClick={handleCalculate} disabled={submitFacture.isPending || pollingFacture}>
+              <Button size="sm" onClick={handleCalculate} disabled={submitFacture.isPending || pollingFacture || !hasContract}>
                 {submitFacture.isPending || pollingFacture ? (
                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                 ) : (
@@ -160,14 +215,87 @@ ${apiCosPhi > 0 && apiCosPhi < 0.93 ? `<div class="warning">⚠ cos φ = ${apiCo
         }
       />
 
-      {/* Preview banner */}
-      <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm flex items-start gap-3 text-amber-800 dark:text-amber-200">
-        <Info className="w-4 h-4 mt-0.5 shrink-0" />
-        <div>
-          <span className="font-medium">Module en préversion</span> — les calculs sont indicatifs et basés sur le plan <span className="font-medium">{planLabel}</span> (PS {prefs.subscribedPowerKw} kW).
-          Modifiez les paramètres tarifaires dans <span className="font-medium">Paramètres → Configuration tarifaire</span>.
+      {/* Contract status banner */}
+      {!contractLoading && !hasContract && (
+        <div className="rounded-lg border border-amber-300/50 bg-amber-50 dark:bg-amber-950/30 px-4 py-3 text-sm flex items-start gap-3 text-amber-800 dark:text-amber-200">
+          <AlertTriangle className="w-4 h-4 mt-0.5 shrink-0" />
+          <div>
+            <span className="font-medium">Aucun contrat configuré</span> — configurez le contrat ci-dessous avant de lancer le calcul de facture.
+          </div>
         </div>
-      </div>
+      )}
+
+      {/* Contract configuration card */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-base font-medium flex items-center gap-2">
+              <Settings2 className="w-4 h-4" /> Contrat terrain
+            </CardTitle>
+            {hasContract && (
+              <Badge variant="outline" className="text-xs badge-ok">Contrat actif</Badge>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
+            <div className="space-y-1.5">
+              <Label className="text-xs">Plan tarifaire</Label>
+              <Select
+                value={contractForm.tariff_plan_id}
+                onValueChange={v => setContractForm(f => ({ ...f, tariff_plan_id: v }))}
+              >
+                <SelectTrigger className="h-8 text-xs">
+                  <SelectValue placeholder="Sélectionner…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {tariffPlans.map((p: Record<string, unknown>) => (
+                    <SelectItem key={String(p.id)} value={String(p.id)}>
+                      {String(p.name ?? p.plan_code ?? p.id)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Puissance souscrite (kW)</Label>
+              <Input type="number" className="h-8 text-xs" value={contractForm.subscribed_power_kw}
+                onChange={e => setContractForm(f => ({ ...f, subscribed_power_kw: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Batterie condensateur (kW)</Label>
+              <Input type="number" className="h-8 text-xs" value={contractForm.capacitor_power_kw}
+                onChange={e => setContractForm(f => ({ ...f, capacitor_power_kw: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Location compteur</Label>
+              <Input type="number" className="h-8 text-xs" value={contractForm.meter_rental}
+                onChange={e => setContractForm(f => ({ ...f, meter_rental: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Location poste</Label>
+              <Input type="number" className="h-8 text-xs" value={contractForm.post_rental}
+                onChange={e => setContractForm(f => ({ ...f, post_rental: Number(e.target.value) }))} />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Entretien</Label>
+              <Input type="number" className="h-8 text-xs" value={contractForm.maintenance}
+                onChange={e => setContractForm(f => ({ ...f, maintenance: Number(e.target.value) }))} />
+            </div>
+          </div>
+          <div className="flex justify-end mt-4">
+            <Button size="sm" onClick={handleSaveContract} disabled={saveContract.isPending || !terrainId || !contractForm.tariff_plan_id}>
+              {contractSaved ? (
+                <><Check className="w-4 h-4 mr-1" /> Enregistré</>
+              ) : saveContract.isPending ? (
+                <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Enregistrement…</>
+              ) : (
+                <><Save className="w-4 h-4 mr-1" /> Enregistrer le contrat</>
+              )}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
 
       {hasLiveResult && (
         <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 text-sm flex items-center gap-3">

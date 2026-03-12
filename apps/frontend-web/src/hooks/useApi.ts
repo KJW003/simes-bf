@@ -202,6 +202,36 @@ export function useTariffPlans() {
   });
 }
 
+export function useTerrainContract(terrainId: string | null) {
+  return useQuery({
+    queryKey: ['terrain-contract', terrainId],
+    queryFn: () => api.getTerrainContract(terrainId!),
+    enabled: !!terrainId,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useSaveTerrainContract() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ terrainId, data }: {
+      terrainId: string;
+      data: {
+        tariff_plan_id: string;
+        subscribed_power_kw: number;
+        meter_rental?: number;
+        post_rental?: number;
+        maintenance?: number;
+        capacitor_power_kw?: number;
+      };
+    }) => api.setTerrainContract(terrainId, data),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['terrain-contract', vars.terrainId] });
+    },
+  });
+}
+
 // ─── Terrain Overview (points + zones + readings) ──────────
 
 export interface TerrainOverviewData {
