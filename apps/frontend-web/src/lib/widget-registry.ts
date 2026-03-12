@@ -31,6 +31,7 @@ import {
   DollarSign,
   Leaf,
   TrendingUp,
+  Table2,
 } from 'lucide-react';
 
 // -------------------------
@@ -841,6 +842,55 @@ export const widgetDefinitions: WidgetDefinition[] = [
       },
     },
     resolver: batteryStatusResolver,
+    renderer: () => null,
+  },
+  // ── Generic configurable widgets ──
+  {
+    id: 'generic-chart',
+    title: 'Graphique personnalisé',
+    description: 'Courbe multi-métrique configurable — ligne, surface ou barres. Toutes métriques, tous scopes.',
+    category: 'core',
+    supportedSizes: ['sm', 'md', 'lg'],
+    icon: LineChartIcon,
+    configSchema: {
+      allowedScopes: ['POINT', 'ZONE', 'TERRAIN', 'CATEGORY'],
+      allowedDataSources: ['POINT', 'ZONE_AGG', 'TERRAIN_AGG', 'CATEGORY_AGG'],
+      supportedMetrics: ['P', 'Q', 'S', 'V', 'I', 'PF', 'THD', 'Energy', 'Freq', 'VUnbal', 'IUnbal'],
+      supportsMultiMetric: true,
+      hasTimeRange: true,
+      defaultConfig: {
+        scopeType: 'TERRAIN',
+        dataSource: { type: 'TERRAIN_AGG', refId: '' },
+        metrics: ['P', 'V', 'I'],
+        timeRange: { mode: 'WIDGET_MANAGED', value: '1D' },
+        display: { viewMode: 'CHART', multiMetricMode: 'TABS' },
+      },
+    },
+    resolver: energyQualityResolver,
+    renderer: () => null,
+  },
+  {
+    id: 'generic-table',
+    title: 'Tableau de données',
+    description: 'Tableau triable avec horodatage, métriques, min/moy/max. Export et filtrage.',
+    category: 'core',
+    supportedSizes: ['sm', 'md', 'lg'],
+    icon: Table2,
+    configSchema: {
+      allowedScopes: ['POINT', 'ZONE', 'TERRAIN', 'CATEGORY'],
+      allowedDataSources: ['POINT', 'ZONE_AGG', 'TERRAIN_AGG', 'CATEGORY_AGG'],
+      supportedMetrics: ['P', 'Q', 'S', 'V', 'I', 'PF', 'THD', 'Energy', 'Freq', 'VUnbal', 'IUnbal'],
+      supportsMultiMetric: true,
+      hasTimeRange: true,
+      defaultConfig: {
+        scopeType: 'TERRAIN',
+        dataSource: { type: 'TERRAIN_AGG', refId: '' },
+        metrics: ['P', 'V', 'PF'],
+        timeRange: { mode: 'WIDGET_MANAGED', value: '1D' },
+        display: { viewMode: 'TABLE', multiMetricMode: 'TABS' },
+      },
+    },
+    resolver: energyQualityResolver,
     renderer: () => null,
   },
 ];

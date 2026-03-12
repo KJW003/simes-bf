@@ -51,6 +51,10 @@ import {
   AlertTriangle,
   BarChart3,
   ExternalLink,
+  Table2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
 } from 'lucide-react';
 import type {
   WidgetLayoutItem,
@@ -198,6 +202,166 @@ function MetricChart({
           />
         </LineChart>
       </ResponsiveContainer>
+    </div>
+  );
+}
+
+// -------------------------
+// MetricTable – tabular view for time series data
+// -------------------------
+type SortDir = 'asc' | 'desc';
+
+function MetricTable({
+  data,
+  config,
+  size,
+}: {
+  data: ResolvedWidgetData;
+  config: WidgetConfig;
+  size: WidgetSize;
+}) {
+  const metrics = data.availableMetrics;
+  const colLabels = (data.meta?.columnLabels ?? {}) as Record<string, string>;
+  const colUnits = (data.meta?.unitByMetric ?? {}) as Record<string, string>;
+  const getLabel = (m: string) => colLabels[m] ?? METRIC_LABELS[m as MetricKey] ?? m;
+  const getUnit = (m: string) => colUnits[m] ?? METRIC_UNITS[m as MetricKey] ?? '';
+  const [sortCol, setSortCol] = useState<string>('ts');
+  const [sortDir, setSortDir] = useState<SortDir>('desc');
+
+  const rows = useMemo(() => {
+    const tsMap = new Map<number, Record<string, number | undefined>>();
+    for (const m of metrics) {
+      for (const pt of data.series?.[m] ?? []) {
+        if (!tsMap.has(pt.ts)) tsMap.set(pt.ts, {});
+        tsMap.get(pt.ts)![m] = pt.value;
+      }
+    }
+    const arr = Array.from(tsMap.entries()).map(([ts, vals]) => ({ ts, ...vals }));
+    arr.sort((a, b) => {
+      const aVal = sortCol === 'ts' ? a.ts : ((a as Record<string, unknown>)[sortCol] as number ?? 0);
+      const bVal = sortCol === 'ts' ? b.ts : ((b as Record<string, unknown>)[sortCol] as number ?? 0);
+      return sortDir === 'asc' ? aVal - bVal : bVal - aVal;
+    });
+    return arr;
+  }, [data.series, metrics, sortCol, sortDir]);
+
+  const summary = useMemo(() => {
+    const result: Record<string, { min: number; avg: number; max: number }> = {};
+    for (const m of metrics) {
+      const series = data.series?.[m] ?? [];
+      if (series.length === 0) continue;
+      const vals = series.map(p => p.value);
+      result[m] = {
+        min: Math.min(...vals),
+        avg: vals.reduce((s, v) => s + v, 0) / vals.length,
+        max: Math.max(...vals),
+      };
+    }
+    return result;
+  }, [data.series, metrics]);
+
+  const toggleSort = (col: string) => {
+    if (sortCol === col) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortCol(col);
+      setSortDir('desc');
+    }
+  };
+
+  const SortIcon = ({ col }: { col: string }) => {
+    if (sortCol !== col) return <ArrowUpDown className="w-3 h-3 opacity-30" />;
+    return sortDir === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
+  };
+
+  const maxRows = size === 'sm' ? 5 : size === 'md' ? 10 : 20;
+  const displayRows = rows.slice(0, maxRows);
+
+  if (metrics.length === 0 || rows.length === 0) {
+    return (
+      <div className="flex items-center justify-center h-24 text-xs text-muted-foreground border border-dashed rounded-md">
+        <Table2 className="w-4 h-4 mr-2 opacity-40" />
+        Aucune donnée tabulaire
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1">
+      <div className={cn('overflow-auto', size === 'sm' ? 'max-h-40' : size === 'md' ? 'max-h-64' : 'max-h-96')}>
+        <table className="w-full text-xs border-collapse">
+          <thead className="sticky top-0 bg-background z-10">
+            <tr>
+              <th
+                className="text-left px-2 py-1.5 border-b font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground"
+                onClick={() => toggleSort('ts')}
+              >
+                <span className="inline-flex items-center gap-1">Horodatage <SortIcon col="ts" /></span>
+              </th>
+              {metrics.map(m => (
+                <th
+                  key={m}
+                  className="text-right px-2 py-1.5 border-b font-medium text-muted-foreground cursor-pointer select-none hover:text-foreground"
+                  onClick={() => toggleSort(m)}
+                >
+                  <span className="inline-flex items-center gap-1 justify-end">
+                    {getLabel(m)} {getUnit(m) && <span className="text-[10px] opacity-60">({getUnit(m)})</span>}
+                    <SortIcon col={m} />
+                  </span>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {displayRows.map((row, idx) => (
+              <tr key={row.ts} className={cn(idx % 2 === 0 ? 'bg-muted/30' : '')}>
+                <td className="px-2 py-1 border-b border-b-muted/40 text-muted-foreground whitespace-nowrap">
+                  {fmtDateTime(row.ts)}
+                </td>
+                {metrics.map(m => {
+                  const val = (row as Record<string, unknown>)[m] as number | undefined;
+                  return (
+                    <td key={m} className="text-right px-2 py-1 border-b border-b-muted/40 font-mono tabular-nums">
+                      {val != null ? Number(val).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+          <tfoot className="border-t-2">
+            <tr className="bg-muted/50 font-medium">
+              <td className="px-2 py-1 text-muted-foreground">Min</td>
+              {metrics.map(m => (
+                <td key={m} className="text-right px-2 py-1 font-mono tabular-nums">
+                  {summary[m] ? Number(summary[m].min).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
+                </td>
+              ))}
+            </tr>
+            <tr className="bg-muted/50 font-medium">
+              <td className="px-2 py-1 text-muted-foreground">Moy</td>
+              {metrics.map(m => (
+                <td key={m} className="text-right px-2 py-1 font-mono tabular-nums">
+                  {summary[m] ? Number(summary[m].avg).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
+                </td>
+              ))}
+            </tr>
+            <tr className="bg-muted/50 font-medium">
+              <td className="px-2 py-1 text-muted-foreground">Max</td>
+              {metrics.map(m => (
+                <td key={m} className="text-right px-2 py-1 font-mono tabular-nums">
+                  {summary[m] ? Number(summary[m].max).toLocaleString('fr-FR', { maximumFractionDigits: 2 }) : '–'}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {rows.length > maxRows && (
+        <div className="text-[10px] text-muted-foreground text-center">
+          {maxRows} / {rows.length} lignes affichées
+        </div>
+      )}
     </div>
   );
 }
@@ -403,6 +567,12 @@ function renderWidgetContent(
         </div>
       );
     }
+
+    // ── Generic configurable widgets ──
+    case 'generic-chart':
+      return <MultiMetricWidget size={size} data={data} config={config} />;
+    case 'generic-table':
+      return <MetricTable data={data} config={config} size={size} />;
 
     default:
       return <div className="text-xs text-muted-foreground">Widget inconnu</div>;
