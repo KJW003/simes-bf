@@ -49,10 +49,18 @@ docker exec "$CONTAINER" psql -U "$USER" -d "$DB" -c "
 # ── Step 3: Install pg_dirtyread ─────────────────────────────────
 echo ""
 echo "[3/6] Installing pg_dirtyread extension..."
-docker exec "$CONTAINER" bash -c '
-  # Install build dependencies
-  apt-get update -qq
-  apt-get install -y -qq git make gcc postgresql-server-dev-16 > /dev/null 2>&1
+docker exec "$CONTAINER" sh -c '
+  # Detect package manager (Alpine = apk, Debian/Ubuntu = apt-get)
+  if command -v apk > /dev/null 2>&1; then
+    echo "  Alpine detected — using apk"
+    apk add --no-cache build-base git clang llvm > /dev/null 2>&1
+  elif command -v apt-get > /dev/null 2>&1; then
+    echo "  Debian/Ubuntu detected — using apt-get"
+    apt-get update -qq
+    apt-get install -y -qq git make gcc postgresql-server-dev-16 > /dev/null 2>&1
+  else
+    echo "ERROR: no supported package manager found"; exit 1
+  fi
 
   # Clone and compile pg_dirtyread
   cd /tmp
