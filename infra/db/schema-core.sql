@@ -130,8 +130,20 @@ CREATE TABLE IF NOT EXISTS tariff_plans (
   tde_tdsaae_rate DOUBLE PRECISION NOT NULL DEFAULT 2,
   penalty_enabled BOOLEAN NOT NULL DEFAULT TRUE,
   meta JSONB NOT NULL DEFAULT '{}'::jsonb,
+  -- Billing V2: loss coefficients
+  alpha_a DOUBLE PRECISION NOT NULL DEFAULT 0,
+  beta_a  DOUBLE PRECISION NOT NULL DEFAULT 0,
+  alpha_r DOUBLE PRECISION NOT NULL DEFAULT 0,
+  beta_r  DOUBLE PRECISION NOT NULL DEFAULT 0,
   UNIQUE (plan_code, valid_from)
 );
+
+-- Ensure billing V2 columns exist on existing installations
+ALTER TABLE tariff_plans
+  ADD COLUMN IF NOT EXISTS alpha_a DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS beta_a  DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS alpha_r DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS beta_r  DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS tariff_plans_group_idx ON tariff_plans(group_code);
 
@@ -144,10 +156,16 @@ CREATE TABLE IF NOT EXISTS terrain_contracts (
   meter_rental DOUBLE PRECISION NOT NULL DEFAULT 0,
   post_rental DOUBLE PRECISION NOT NULL DEFAULT 0,
   maintenance DOUBLE PRECISION NOT NULL DEFAULT 0,
+  -- Billing V2: capacitor bank power
+  capacitor_power_kw DOUBLE PRECISION NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (terrain_id)
 );
+
+-- Ensure billing V2 column exists on existing installations
+ALTER TABLE terrain_contracts
+  ADD COLUMN IF NOT EXISTS capacitor_power_kw DOUBLE PRECISION NOT NULL DEFAULT 0;
 
 CREATE INDEX IF NOT EXISTS terrain_contracts_terrain_idx ON terrain_contracts(terrain_id);
 

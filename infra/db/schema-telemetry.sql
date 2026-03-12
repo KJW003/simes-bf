@@ -142,8 +142,17 @@ CREATE TABLE IF NOT EXISTS acrel_agg_15m (
   energy_export_delta DOUBLE PRECISION,
   energy_total_delta DOUBLE PRECISION,
 
+  -- Billing V2 columns
+  reactive_energy_import_delta DOUBLE PRECISION,
+  power_factor_avg DOUBLE PRECISION,
+
   PRIMARY KEY (point_id, bucket_start)
 );
+
+-- Ensure billing V2 columns exist on existing installations
+ALTER TABLE acrel_agg_15m
+  ADD COLUMN IF NOT EXISTS reactive_energy_import_delta DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS power_factor_avg DOUBLE PRECISION;
 
 SELECT create_hypertable('acrel_agg_15m', 'bucket_start', if_not_exists => TRUE);
 
@@ -167,8 +176,17 @@ CREATE TABLE IF NOT EXISTS acrel_agg_daily (
   energy_export_delta DOUBLE PRECISION,
   energy_total_delta DOUBLE PRECISION,
 
+  -- Billing V2 columns
+  reactive_energy_import_delta DOUBLE PRECISION,
+  power_factor_avg DOUBLE PRECISION,
+
   PRIMARY KEY (point_id, day)
 );
+
+-- Ensure billing V2 columns exist on existing installations
+ALTER TABLE acrel_agg_daily
+  ADD COLUMN IF NOT EXISTS reactive_energy_import_delta DOUBLE PRECISION,
+  ADD COLUMN IF NOT EXISTS power_factor_avg DOUBLE PRECISION;
 
 CREATE INDEX IF NOT EXISTS acrel_agg_daily_site_day_idx ON acrel_agg_daily (site_id, day DESC);
 CREATE INDEX IF NOT EXISTS acrel_agg_daily_terrain_idx ON acrel_agg_daily (terrain_id, day DESC);

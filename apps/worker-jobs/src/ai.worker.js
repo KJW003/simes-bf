@@ -73,7 +73,7 @@ async function computeFacture(payload = {}) {
             active_power_max,
             COALESCE(energy_total_delta, energy_import_delta, 0) AS energy_delta,
             COALESCE(reactive_energy_import_delta, 0) AS reactive_delta,
-            power_factor_avg
+            COALESCE(power_factor_avg, 1) AS power_factor_avg
      FROM acrel_agg_15m
      WHERE terrain_id = $1 AND bucket_start >= $2 AND bucket_start < $3
      ORDER BY bucket_start ASC`,

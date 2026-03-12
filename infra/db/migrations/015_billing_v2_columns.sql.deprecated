@@ -1,4 +1,12 @@
 -- 015_billing_v2_columns.sql
+-- ⚠ DEPRECATED — This migration is superseded by 015a + 015b.
+-- It mixed core + telemetry tables in one file, causing the migration
+-- runner to fail (acrel_agg_* tables don't exist in core-db).
+-- Kept for reference; the runner skips it because 015a/015b are applied instead.
+-- See: 015a_telemetry_billing_v2_agg_columns.sql
+--      015b_core_billing_v2_tariff_columns.sql
+--
+-- Original description:
 -- Add columns needed for SONABEL billing V2:
 -- 1. Reactive energy delta + power factor avg in aggregation tables
 -- 2. Loss coefficients in tariff_plans
