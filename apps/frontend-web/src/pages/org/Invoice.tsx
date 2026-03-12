@@ -1,24 +1,35 @@
-import React, { useState } from 'react';
+import React, { useCallback, useState } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { useAppContext } from '@/contexts/AppContext';
 import { useSubmitFacture, useFactureResult, useLatestFacture } from '@/hooks/useApi';
 import {
   Receipt, Zap, Clock, TrendingUp, FileText, AlertTriangle,
-  Loader2, CheckCircle2, Calculator, Info,
+  Loader2, CheckCircle2, Calculator, Info, CalendarDays,
 } from 'lucide-react';
 import { usePreferences, TARIFF_PRESETS } from '@/hooks/usePreferences';
 
 const formatCurrency = (value: number) => value.toLocaleString('fr-FR');
+
+// Default period: last 30 days
+const defaultFrom = () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().slice(0, 10);
+};
+const defaultTo = () => new Date().toISOString().slice(0, 10);
 
 export default function Invoice() {
   const { selectedTerrain } = useAppContext();
   const prefs = usePreferences();
 
   const [runId, setRunId] = useState<string | null>(null);
+  const [dateFrom, setDateFrom] = useState(defaultFrom);
+  const [dateTo, setDateTo] = useState(defaultTo);
   const submitFacture = useSubmitFacture();
   const { data: apiFacture, isLoading: pollingFacture } = useFactureResult(runId);
   const { data: latestFacture } = useLatestFacture();
@@ -31,6 +42,8 @@ export default function Invoice() {
     try {
       const run = await submitFacture.mutateAsync({
         terrain_id: selectedTerrain.id,
+        from: new Date(dateFrom).toISOString(),
+        to: new Date(dateTo).toISOString(),
         subscribed_power_kw: prefs.subscribedPowerKw,
       });
       setRunId(run.id);
@@ -47,8 +60,74 @@ export default function Invoice() {
   const apiCosPhi = hasLiveResult ? Number(liveResult.cosPhi ?? 0) : 0;
   const apiKma = hasLiveResult ? Number(liveResult.Kma ?? 1) : 1;
   const apiVersion = hasLiveResult ? String(liveResult.version ?? 'V1') : 'V1';
+  const apiPeriod = hasLiveResult ? (liveResult.period as { from?: string; to?: string; hours?: number } | undefined) : undefined;
 
   const planLabel = TARIFF_PRESETS[prefs.tariffGroup]?.plans[prefs.tariffPlan]?.label ?? prefs.tariffPlan;
+
+  const handleExportPDF = useCallback(() => {
+    if (!hasLiveResult || !apiBreakdown) return;
+    const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const terrainName = esc(selectedTerrain?.name ?? 'Terrain');
+    const dateStr = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'long', year: 'numeric' });
+    const periodLabel = apiPeriod
+      ? `${new Date(apiPeriod.from!).toLocaleDateString('fr-FR')} → ${new Date(apiPeriod.to!).toLocaleDateString('fr-FR')}`
+      : `${dateFrom} → ${dateTo}`;
+
+    const rows = apiBreakdown.map(r =>
+      `<tr><td>${esc(r.label)}</td><td class="r">${r.kwh != null ? formatCurrency(Math.round(r.kwh)) : '-'}</td><td class="r">${r.rate != null ? formatCurrency(Number(r.rate)) : '-'}</td><td class="r b">${r.amount != null ? formatCurrency(Math.round(r.amount)) : '-'}</td></tr>`
+    ).join('');
+
+    const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>Facture SIMES</title>
+<style>
+  body{font-family:Arial,sans-serif;margin:40px;color:#333}
+  h1{color:#1a56db;border-bottom:2px solid #1a56db;padding-bottom:8px}
+  .meta{color:#666;margin-bottom:20px;font-size:13px}
+  .kpi-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin:16px 0}
+  .kpi{border:1px solid #ddd;border-radius:8px;padding:12px;text-align:center}
+  .kpi .value{font-size:20px;font-weight:bold;color:#1a56db}
+  .kpi .label{font-size:11px;color:#888;margin-top:4px}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:13px}
+  th,td{border:1px solid #ddd;padding:6px 10px;text-align:left}
+  th{background:#f5f5f5}
+  .r{text-align:right;font-variant-numeric:tabular-nums}
+  .b{font-weight:bold}
+  .total-row{background:#f0f4ff;font-weight:bold}
+  .warning{color:#b45309;background:#fef3c7;border:1px solid #fcd34d;border-radius:6px;padding:10px;margin:12px 0;font-size:13px}
+  .footer{margin-top:40px;font-size:11px;color:#aaa;text-align:center;border-top:1px solid #eee;padding-top:8px}
+  @media print{body{margin:20px}}
+</style></head><body>
+<h1>Facture SONABEL — Estimation SIMES</h1>
+<p class="meta">${terrainName} — ${dateStr}<br>Période de facturation : ${periodLabel}<br>Plan tarifaire : ${esc(apiPlanName)} (${apiVersion})</p>
+
+<div class="kpi-grid">
+  <div class="kpi"><div class="value">${formatCurrency(Math.round(apiTotal))}</div><div class="label">Total TTC (XOF)</div></div>
+  <div class="kpi"><div class="value">${(apiTotalKwh / 1000).toFixed(1)}</div><div class="label">Consommation (MWh)</div></div>
+  <div class="kpi"><div class="value">${apiMaxDemand.toFixed(1)}</div><div class="label">Puissance max (kW)</div></div>
+  <div class="kpi"><div class="value">${apiCosPhi.toFixed(3)}</div><div class="label">cos φ</div></div>
+  <div class="kpi"><div class="value">${apiKma.toFixed(3)}</div><div class="label">Kma</div></div>
+</div>
+
+${apiCosPhi > 0 && apiCosPhi < 0.93 ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt; 0.93 — Pénalité Kma = ${apiKma.toFixed(3)} appliquée sur la prime de puissance.</div>` : ''}
+
+<h2>Détail de la facturation</h2>
+<table>
+  <thead><tr><th>Catégorie</th><th class="r">kWh</th><th class="r">Tarif (XOF)</th><th class="r">Montant (XOF)</th></tr></thead>
+  <tbody>
+    ${rows}
+    <tr class="total-row"><td>Total TTC</td><td class="r">${formatCurrency(Math.round(apiTotalKwh))}</td><td></td><td class="r">${formatCurrency(Math.round(apiTotal))}</td></tr>
+  </tbody>
+</table>
+
+<div class="footer">Document généré automatiquement par SIMES — ${dateStr}</div>
+</body></html>`;
+
+    const w = window.open('', '_blank', 'width=900,height=700');
+    if (!w) return;
+    w.document.write(html);
+    w.document.close();
+    w.focus();
+    w.print();
+  }, [hasLiveResult, apiBreakdown, apiTotal, apiTotalKwh, apiMaxDemand, apiCosPhi, apiKma, apiPlanName, apiVersion, apiPeriod, selectedTerrain, dateFrom, dateTo]);
 
   return (
     <div className="space-y-6">
@@ -56,7 +135,13 @@ export default function Invoice() {
         title="Facturation"
         description={"Estimation de facture – " + (selectedTerrain?.name ?? 'Site')}
         actions={
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-1">
+              <CalendarDays className="w-4 h-4 text-muted-foreground" />
+              <Input type="date" className="h-8 w-36 text-xs" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+              <span className="text-muted-foreground text-xs">→</span>
+              <Input type="date" className="h-8 w-36 text-xs" value={dateTo} onChange={e => setDateTo(e.target.value)} max={new Date().toISOString().slice(0, 10)} />
+            </div>
             {selectedTerrain && (
               <Button size="sm" onClick={handleCalculate} disabled={submitFacture.isPending || pollingFacture}>
                 {submitFacture.isPending || pollingFacture ? (
@@ -64,10 +149,10 @@ export default function Invoice() {
                 ) : (
                   <Calculator className="w-4 h-4 mr-2" />
                 )}
-                Calculer (API)
+                Calculer
               </Button>
             )}
-            <Button variant="outline" size="sm">
+            <Button variant="outline" size="sm" onClick={handleExportPDF} disabled={!hasLiveResult}>
               <FileText className="w-4 h-4 mr-2" />
               Exporter PDF
             </Button>
