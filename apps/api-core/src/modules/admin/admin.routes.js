@@ -966,8 +966,7 @@ router.get("/logs/scheduler", requireAuth, async (req, res) => {
 
 // ─── DELETE readings for a specific point (with optional date range) ────
 // DELETE /admin/readings/:pointId?from=...&to=...
-// If no from/to → deletes ALL readings + aggregations for this point
-// If from and/or to → deletes only within that time range
+// Backs up data to trash tables before deletion for recovery
 router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
   const { pointId } = req.params;
   const { from, to } = req.query;
@@ -975,6 +974,7 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
   if (!pointId) return res.status(400).json({ ok: false, error: "pointId is required" });
   if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
 
+  const client = await telemetryPool.connect();
   try {
     // Verify the point exists
     const pointCheck = await corePool.query(
@@ -982,6 +982,7 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
       [pointId]
     );
     if (pointCheck.rows.length === 0) {
+      client.release();
       return res.status(404).json({ ok: false, error: "Point not found" });
     }
     const pointName = pointCheck.rows[0].name;
@@ -990,78 +991,81 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
     const conditions = ["point_id = $1"];
     const params = [pointId];
     let paramIdx = 2;
-
-    if (from) {
-      conditions.push(`time >= $${paramIdx}`);
-      params.push(from);
-      paramIdx++;
-    }
-    if (to) {
-      conditions.push(`time <= $${paramIdx}`);
-      params.push(to);
-      paramIdx++;
-    }
-
+    if (from) { conditions.push(`time >= $${paramIdx}`); params.push(from); paramIdx++; }
+    if (to) { conditions.push(`time <= $${paramIdx}`); params.push(to); paramIdx++; }
     const where = conditions.join(" AND ");
 
-    // Delete from acrel_readings
-    const rReadings = await telemetryPool.query(
-      `DELETE FROM acrel_readings WHERE ${where}`,
-      params
-    );
-
-    // Delete from acrel_agg_15m (use bucket_start instead of time)
     const agg15Conditions = conditions.map(c => c.replace(/\btime\b/g, "bucket_start"));
-    const r15m = await telemetryPool.query(
-      `DELETE FROM acrel_agg_15m WHERE ${agg15Conditions.join(" AND ")}`,
-      params
-    );
 
-    // Delete from acrel_agg_daily (use day instead of time, cast to date)
     const aggDayConditions = ["point_id = $1"];
     const dayParams = [pointId];
     let dayIdx = 2;
-    if (from) {
-      aggDayConditions.push(`day >= ($${dayIdx})::date`);
-      dayParams.push(from);
-      dayIdx++;
-    }
-    if (to) {
-      aggDayConditions.push(`day <= ($${dayIdx})::date`);
-      dayParams.push(to);
-      dayIdx++;
-    }
-    const rDay = await telemetryPool.query(
-      `DELETE FROM acrel_agg_daily WHERE ${aggDayConditions.join(" AND ")}`,
-      dayParams
-    );
+    if (from) { aggDayConditions.push(`day >= ($${dayIdx})::date`); dayParams.push(from); dayIdx++; }
+    if (to) { aggDayConditions.push(`day <= ($${dayIdx})::date`); dayParams.push(to); dayIdx++; }
 
-    log.info({ point: pointName, pointId, from: from || 'ALL', to: to || 'ALL', readings: rReadings.rowCount, agg15m: r15m.rowCount, aggDaily: rDay.rowCount }, 'purge completed');
-    auditLog('warn', 'api', `Purge données: ${pointName} (${rReadings.rowCount} readings, ${r15m.rowCount} agg15m, ${rDay.rowCount} daily)`, {
-      point_id: pointId, point_name: pointName,
-      from: from || null, to: to || null,
-      deleted: { readings: rReadings.rowCount, agg_15m: r15m.rowCount, agg_daily: rDay.rowCount },
+    await client.query('BEGIN');
+
+    // Create purge batch
+    const batch = await client.query(
+      `INSERT INTO purge_batches (deleted_by, point_ids, date_from, date_to, counts)
+       VALUES ($1, $2, $3, $4, '{}') RETURNING id`,
+      [req.userId || null, [pointId], from || null, to || null]
+    );
+    const batchId = batch.rows[0].id;
+
+    // Backup + delete readings
+    await client.query(
+      `INSERT INTO acrel_readings_trash SELECT $${paramIdx}::uuid, r.* FROM acrel_readings r WHERE ${where}`,
+      [...params, batchId]
+    );
+    const rReadings = await client.query(`DELETE FROM acrel_readings WHERE ${where}`, params);
+
+    // Backup + delete agg_15m
+    await client.query(
+      `INSERT INTO acrel_agg_15m_trash SELECT $${paramIdx}::uuid, a.* FROM acrel_agg_15m a WHERE ${agg15Conditions.join(" AND ")}`,
+      [...params, batchId]
+    );
+    const r15m = await client.query(`DELETE FROM acrel_agg_15m WHERE ${agg15Conditions.join(" AND ")}`, params);
+
+    // Backup + delete agg_daily
+    await client.query(
+      `INSERT INTO acrel_agg_daily_trash SELECT $${dayIdx}::uuid, d.* FROM acrel_agg_daily d WHERE ${aggDayConditions.join(" AND ")}`,
+      [...dayParams, batchId]
+    );
+    const rDay = await client.query(`DELETE FROM acrel_agg_daily WHERE ${aggDayConditions.join(" AND ")}`, dayParams);
+
+    // Update batch with counts
+    const counts = { readings: rReadings.rowCount, agg_15m: r15m.rowCount, agg_daily: rDay.rowCount };
+    await client.query(`UPDATE purge_batches SET counts = $1 WHERE id = $2`, [JSON.stringify(counts), batchId]);
+
+    await client.query('COMMIT');
+
+    log.info({ point: pointName, pointId, batchId, from: from || 'ALL', to: to || 'ALL', ...counts }, 'purge completed (backed up)');
+    auditLog('warn', 'api', `Purge données: ${pointName} (${counts.readings} readings, ${counts.agg_15m} agg15m, ${counts.agg_daily} daily) — batch ${batchId}`, {
+      point_id: pointId, point_name: pointName, purge_batch_id: batchId,
+      from: from || null, to: to || null, deleted: counts,
     }, req.userId || null);
 
     res.json({
       ok: true,
       point: pointName,
-      deleted: {
-        readings: rReadings.rowCount,
-        agg_15m: r15m.rowCount,
-        agg_daily: rDay.rowCount,
-      },
+      purge_batch_id: batchId,
+      deleted: counts,
       range: { from: from || null, to: to || null },
     });
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'purge error');
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
   }
 });
 
 // ─── BATCH DELETE readings for multiple points (with optional date range) ────
 // POST /admin/readings/batch-purge
 // Body: { pointIds: string[], from?: string, to?: string }
+// Backs up data to trash tables before deletion for recovery
 router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
   const { pointIds = [], from, to } = req.body || {};
 
@@ -1070,6 +1074,7 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
   }
   if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
 
+  const client = await telemetryPool.connect();
   try {
     // Verify all points exist
     const pointCheck = await corePool.query(
@@ -1078,103 +1083,290 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
     );
     const foundPoints = pointCheck.rows;
     if (foundPoints.length === 0) {
+      client.release();
       return res.status(404).json({ ok: false, error: "No valid points found" });
     }
-    const pointMap = Object.fromEntries(foundPoints.map(p => [p.id, p.name]));
     const ids = foundPoints.map(p => p.id);
 
-    // Bulk delete using ANY($1) instead of per-point loop
+    // Build WHERE clauses
     const readingsConds = ['point_id = ANY($1)'];
     const readingsParams = [ids];
     let pIdx = 2;
     if (from) { readingsConds.push(`time >= $${pIdx}`); readingsParams.push(from); pIdx++; }
     if (to) { readingsConds.push(`time <= $${pIdx}`); readingsParams.push(to); pIdx++; }
     const readingsWhere = readingsConds.join(' AND ');
-
-    const rReadings = await telemetryPool.query(
-      `DELETE FROM acrel_readings WHERE ${readingsWhere}`, readingsParams
-    );
-    const r15m = await telemetryPool.query(
-      `DELETE FROM acrel_agg_15m WHERE ${readingsConds.map(c => c.replace(/\btime\b/g, 'bucket_start')).join(' AND ')}`, readingsParams
-    );
+    const agg15Where = readingsConds.map(c => c.replace(/\btime\b/g, 'bucket_start')).join(' AND ');
 
     const dayConds = ['point_id = ANY($1)'];
     const dayParams = [ids];
     let dIdx = 2;
     if (from) { dayConds.push(`day >= ($${dIdx})::date`); dayParams.push(from); dIdx++; }
     if (to) { dayConds.push(`day <= ($${dIdx})::date`); dayParams.push(to); dIdx++; }
-    const rDay = await telemetryPool.query(
-      `DELETE FROM acrel_agg_daily WHERE ${dayConds.join(' AND ')}`, dayParams
+    const dayWhere = dayConds.join(' AND ');
+
+    await client.query('BEGIN');
+
+    // Create purge batch
+    const batch = await client.query(
+      `INSERT INTO purge_batches (deleted_by, point_ids, date_from, date_to, counts)
+       VALUES ($1, $2, $3, $4, '{}') RETURNING id`,
+      [req.userId || null, ids, from || null, to || null]
     );
+    const batchId = batch.rows[0].id;
 
-    const totalReadings = rReadings.rowCount;
-    const totalAgg15m = r15m.rowCount;
-    const totalAggDaily = rDay.rowCount;
+    // Backup + delete readings
+    await client.query(
+      `INSERT INTO acrel_readings_trash SELECT $${pIdx}::uuid, r.* FROM acrel_readings r WHERE ${readingsWhere}`,
+      [...readingsParams, batchId]
+    );
+    const rReadings = await client.query(`DELETE FROM acrel_readings WHERE ${readingsWhere}`, readingsParams);
 
-    auditLog('warn', 'api', `Batch purge ${ids.length} points: ${totalReadings} readings, ${totalAgg15m} agg15m, ${totalAggDaily} daily`, {
-      point_ids: ids, from: from || null, to: to || null,
+    // Backup + delete agg_15m
+    await client.query(
+      `INSERT INTO acrel_agg_15m_trash SELECT $${pIdx}::uuid, a.* FROM acrel_agg_15m a WHERE ${agg15Where}`,
+      [...readingsParams, batchId]
+    );
+    const r15m = await client.query(`DELETE FROM acrel_agg_15m WHERE ${agg15Where}`, readingsParams);
+
+    // Backup + delete agg_daily
+    await client.query(
+      `INSERT INTO acrel_agg_daily_trash SELECT $${dIdx}::uuid, d.* FROM acrel_agg_daily d WHERE ${dayWhere}`,
+      [...dayParams, batchId]
+    );
+    const rDay = await client.query(`DELETE FROM acrel_agg_daily WHERE ${dayWhere}`, dayParams);
+
+    const totals = { readings: rReadings.rowCount, agg_15m: r15m.rowCount, agg_daily: rDay.rowCount };
+    await client.query(`UPDATE purge_batches SET counts = $1 WHERE id = $2`, [JSON.stringify(totals), batchId]);
+
+    await client.query('COMMIT');
+
+    auditLog('warn', 'api', `Batch purge ${ids.length} points: ${totals.readings} readings, ${totals.agg_15m} agg15m, ${totals.agg_daily} daily — batch ${batchId}`, {
+      point_ids: ids, purge_batch_id: batchId, from: from || null, to: to || null,
     }, req.userId || null);
 
-    log.info({ points: foundPoints.length, from: from || 'ALL', to: to || 'ALL', totalReadings, totalAgg15m, totalAggDaily }, 'batch-purge completed');
+    log.info({ points: foundPoints.length, batchId, from: from || 'ALL', to: to || 'ALL', ...totals }, 'batch-purge completed (backed up)');
 
     res.json({
       ok: true,
       points_purged: foundPoints.length,
       point_ids: ids,
-      totals: {
-        readings: totalReadings,
-        agg_15m: totalAgg15m,
-        agg_daily: totalAggDaily,
-      },
+      purge_batch_id: batchId,
+      totals,
       range: { from: from || null, to: to || null },
     });
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'batch-purge error');
     res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
   }
 });
 
 // ─── DELETE aggregation + readings for a date range (all points) ────
 // POST /admin/readings/purge-range
 // Body: { from: "2025-03-07", to: "2025-03-07", includeReadings?: boolean }
+// Backs up data to trash tables before deletion for recovery
 router.post("/admin/readings/purge-range", requireAuth, async (req, res) => {
   const { from, to, includeReadings = true } = req.body || {};
   if (!from || !to) return res.status(400).json({ ok: false, error: "from and to are required" });
   if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
 
+  const client = await telemetryPool.connect();
   try {
     const fromDate = new Date(from);
     const toDate = new Date(to);
     toDate.setHours(23, 59, 59, 999);
+    const fromISO = fromDate.toISOString();
+    const toISO = toDate.toISOString();
+
+    await client.query('BEGIN');
+
+    // Create purge batch (point_ids empty = all points in range)
+    const batch = await client.query(
+      `INSERT INTO purge_batches (deleted_by, point_ids, date_from, date_to, counts)
+       VALUES ($1, '{}', $2, $3, '{}') RETURNING id`,
+      [req.userId || null, fromISO, toISO]
+    );
+    const batchId = batch.rows[0].id;
 
     let readingsDeleted = 0;
     if (includeReadings) {
-      const rr = await telemetryPool.query(
+      await client.query(
+        `INSERT INTO acrel_readings_trash SELECT $3::uuid, r.* FROM acrel_readings r WHERE time >= $1 AND time <= $2`,
+        [fromISO, toISO, batchId]
+      );
+      const rr = await client.query(
         `DELETE FROM acrel_readings WHERE time >= $1 AND time <= $2`,
-        [fromDate.toISOString(), toDate.toISOString()]
+        [fromISO, toISO]
       );
       readingsDeleted = rr.rowCount;
     }
 
-    const r15 = await telemetryPool.query(
+    await client.query(
+      `INSERT INTO acrel_agg_15m_trash SELECT $3::uuid, a.* FROM acrel_agg_15m a WHERE bucket_start >= $1 AND bucket_start <= $2`,
+      [fromISO, toISO, batchId]
+    );
+    const r15 = await client.query(
       `DELETE FROM acrel_agg_15m WHERE bucket_start >= $1 AND bucket_start <= $2`,
-      [fromDate.toISOString(), toDate.toISOString()]
+      [fromISO, toISO]
     );
 
-    const rDay = await telemetryPool.query(
+    await client.query(
+      `INSERT INTO acrel_agg_daily_trash SELECT $3::uuid, d.* FROM acrel_agg_daily d WHERE day >= ($1)::date AND day <= ($2)::date`,
+      [from, to, batchId]
+    );
+    const rDay = await client.query(
       `DELETE FROM acrel_agg_daily WHERE day >= ($1)::date AND day <= ($2)::date`,
       [from, to]
     );
 
     const deleted = { readings: readingsDeleted, agg_15m: r15.rowCount, agg_daily: rDay.rowCount };
-    log.info({ from, to, ...deleted }, 'purge-range completed');
-    auditLog('warn', 'api', `Purge range ${from} → ${to}: ${deleted.readings} readings, ${deleted.agg_15m} agg15m, ${deleted.agg_daily} daily`, {
-      from, to, deleted
+    await client.query(`UPDATE purge_batches SET counts = $1 WHERE id = $2`, [JSON.stringify(deleted), batchId]);
+
+    await client.query('COMMIT');
+
+    log.info({ from, to, batchId, ...deleted }, 'purge-range completed (backed up)');
+    auditLog('warn', 'api', `Purge range ${from} → ${to}: ${deleted.readings} readings, ${deleted.agg_15m} agg15m, ${deleted.agg_daily} daily — batch ${batchId}`, {
+      from, to, purge_batch_id: batchId, deleted
     }, req.userId || null);
 
-    res.json({ ok: true, range: { from, to }, deleted });
+    res.json({ ok: true, range: { from, to }, purge_batch_id: batchId, deleted });
   } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'purge-range error');
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════
+// Purge history & restore
+// ═══════════════════════════════════════════════════════════════
+
+// GET /admin/purge-batches — List recent purge batches
+router.get("/admin/purge-batches", requireAuth, async (req, res) => {
+  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+  try {
+    const r = await telemetryPool.query(
+      `SELECT id, deleted_at, deleted_by, point_ids, date_from, date_to, counts, restored_at
+       FROM purge_batches ORDER BY deleted_at DESC LIMIT 50`
+    );
+    res.json({ ok: true, batches: r.rows });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// POST /admin/purge-batches/:batchId/restore — Restore purged data from trash
+router.post("/admin/purge-batches/:batchId/restore", requireAuth, async (req, res) => {
+  const { batchId } = req.params;
+  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+
+  const client = await telemetryPool.connect();
+  try {
+    // Verify batch exists and not already restored
+    const batchCheck = await client.query(
+      `SELECT id, counts, restored_at FROM purge_batches WHERE id = $1`, [batchId]
+    );
+    if (batchCheck.rows.length === 0) {
+      client.release();
+      return res.status(404).json({ ok: false, error: "Batch not found" });
+    }
+    if (batchCheck.rows[0].restored_at) {
+      client.release();
+      return res.status(400).json({ ok: false, error: "Batch already restored" });
+    }
+
+    await client.query('BEGIN');
+
+    // Restore readings (ON CONFLICT skip duplicates)
+    const rReadings = await client.query(
+      `INSERT INTO acrel_readings
+       SELECT time, org_id, site_id, terrain_id, point_id, raw,
+              voltage_a, voltage_b, voltage_c, voltage_ab, voltage_bc, voltage_ca,
+              current_a, current_b, current_c, current_sum, aftercurrent,
+              active_power_a, active_power_b, active_power_c, active_power_total,
+              reactive_power_a, reactive_power_b, reactive_power_c, reactive_power_total,
+              apparent_power_a, apparent_power_b, apparent_power_c, apparent_power_total,
+              power_factor_a, power_factor_b, power_factor_c, power_factor_total,
+              frequency, voltage_unbalance, current_unbalance,
+              energy_total, energy_import, energy_export, reactive_energy_import, reactive_energy_export,
+              energy_total_a, energy_import_a, energy_export_a,
+              energy_total_b, energy_import_b, energy_export_b,
+              energy_total_c, energy_import_c, energy_export_c,
+              energy_spike, energy_peak, energy_flat, energy_valley,
+              thdu_a, thdu_b, thdu_c, thdi_a, thdi_b, thdi_c,
+              temp_a, temp_b, temp_c, temp_n,
+              di_state, do1_state, do2_state, alarm_state,
+              rssi_lora, rssi_gateway, snr_gateway, f_cnt
+       FROM acrel_readings_trash WHERE purge_batch_id = $1
+       ON CONFLICT (point_id, time) DO NOTHING`,
+      [batchId]
+    );
+
+    // Restore agg_15m
+    const r15m = await client.query(
+      `INSERT INTO acrel_agg_15m
+       SELECT bucket_start, org_id, site_id, terrain_id, point_id,
+              samples_count, active_power_avg, active_power_max, voltage_a_avg,
+              energy_import_delta, energy_export_delta, energy_total_delta
+       FROM acrel_agg_15m_trash WHERE purge_batch_id = $1
+       ON CONFLICT (point_id, bucket_start) DO NOTHING`,
+      [batchId]
+    );
+
+    // Restore agg_daily
+    const rDay = await client.query(
+      `INSERT INTO acrel_agg_daily
+       SELECT day, org_id, site_id, terrain_id, point_id,
+              samples_count, active_power_avg, active_power_max,
+              energy_import_delta, energy_export_delta, energy_total_delta
+       FROM acrel_agg_daily_trash WHERE purge_batch_id = $1
+       ON CONFLICT (point_id, day) DO NOTHING`,
+      [batchId]
+    );
+
+    // Mark batch as restored
+    await client.query(
+      `UPDATE purge_batches SET restored_at = now() WHERE id = $1`, [batchId]
+    );
+
+    // Clean trash for this batch
+    await client.query(`DELETE FROM acrel_readings_trash WHERE purge_batch_id = $1`, [batchId]);
+    await client.query(`DELETE FROM acrel_agg_15m_trash WHERE purge_batch_id = $1`, [batchId]);
+    await client.query(`DELETE FROM acrel_agg_daily_trash WHERE purge_batch_id = $1`, [batchId]);
+
+    await client.query('COMMIT');
+
+    const restored = { readings: rReadings.rowCount, agg_15m: r15m.rowCount, agg_daily: rDay.rowCount };
+    log.info({ batchId, ...restored }, 'purge restore completed');
+    auditLog('info', 'api', `Restauration purge batch ${batchId}: ${restored.readings} readings, ${restored.agg_15m} agg15m, ${restored.agg_daily} daily`, {
+      purge_batch_id: batchId, restored
+    }, req.userId || null);
+
+    res.json({ ok: true, purge_batch_id: batchId, restored });
+  } catch (e) {
+    await client.query('ROLLBACK').catch(() => {});
+    log.error({ err: e.message }, 'purge restore error');
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    client.release();
+  }
+});
+
+// DELETE /admin/purge-batches/:batchId — Permanently delete trash data (no recovery)
+router.delete("/admin/purge-batches/:batchId", requireAuth, async (req, res) => {
+  const { batchId } = req.params;
+  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+
+  try {
+    // CASCADE will delete from trash tables too
+    const r = await telemetryPool.query(`DELETE FROM purge_batches WHERE id = $1`, [batchId]);
+    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "Batch not found" });
+    res.json({ ok: true });
+  } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });

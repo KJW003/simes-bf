@@ -482,8 +482,22 @@ export const api = {
 
   // ── Purge by date range (all points) ──
   purgeByRange: (data: { from: string; to: string; includeReadings?: boolean }) =>
-    request<{ ok: boolean; range: { from: string; to: string }; deleted: { readings: number; agg_15m: number; agg_daily: number } }>(
+    request<{ ok: boolean; range: { from: string; to: string }; purge_batch_id: string; deleted: { readings: number; agg_15m: number; agg_daily: number } }>(
       '/admin/readings/purge-range', { method: 'POST', body: JSON.stringify(data) }
+    ),
+
+  // ── Purge batches (trash / restore) ──
+  getPurgeBatches: () =>
+    request<{ ok: boolean; batches: Array<{ id: string; deleted_at: string; deleted_by: string | null; point_ids: string[]; date_from: string | null; date_to: string | null; counts: { readings: number; agg_15m: number; agg_daily: number }; restored_at: string | null }> }>(
+      '/admin/purge-batches'
+    ),
+  restorePurgeBatch: (batchId: string) =>
+    request<{ ok: boolean; purge_batch_id: string; restored: { readings: number; agg_15m: number; agg_daily: number } }>(
+      `/admin/purge-batches/${encodeURIComponent(batchId)}/restore`, { method: 'POST' }
+    ),
+  deletePurgeBatch: (batchId: string) =>
+    request<{ ok: boolean }>(
+      `/admin/purge-batches/${encodeURIComponent(batchId)}`, { method: 'DELETE' }
     ),
 
   // ── Pipeline Repair Actions ──

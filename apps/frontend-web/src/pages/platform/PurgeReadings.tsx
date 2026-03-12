@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useMemo, useCallback, useEffect } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { Navigate } from 'react-router-dom';
 import { PageHeader } from '@/components/ui/page-header';
@@ -15,10 +15,11 @@ import { useOrgs, useAllSites, useAllTerrains } from '@/hooks/useApi';
 import api from '@/lib/api';
 import type { ApiOrg, ApiSite, ApiTerrain, ApiMeasurementPoint } from '@/lib/api';
 import { cn } from '@/lib/utils';
+import { toast } from 'sonner';
 import {
   Trash2, AlertTriangle, Loader2, CheckCircle2,
   Building2, MapPin, Layers, Activity, Search, Calendar, ChevronRight,
-  ArrowLeft,
+  ArrowLeft, RotateCcw, History, X,
 } from 'lucide-react';
 
 /* ═══════════════════════════════════════════════════════════════
@@ -77,6 +78,23 @@ export default function PurgeReadings() {
   const { data: orgs = [] } = useOrgs() as { data: ApiOrg[] | undefined };
   const { data: allSites = [] } = useAllSites() as { data: (ApiSite & { org_name?: string })[] | undefined };
   const { data: allTerrains = [] } = useAllTerrains() as { data: (ApiTerrain & { site_name?: string; org_name?: string; org_id?: string })[] | undefined };
+
+  // ── Purge history / restore ───────────────────────────────
+  type PurgeBatch = { id: string; deleted_at: string; deleted_by: string | null; point_ids: string[]; date_from: string | null; date_to: string | null; counts: { readings: number; agg_15m: number; agg_daily: number }; restored_at: string | null };
+  const [batches, setBatches] = useState<PurgeBatch[]>([]);
+  const [loadingBatches, setLoadingBatches] = useState(false);
+  const [restoringBatchId, setRestoringBatchId] = useState<string | null>(null);
+
+  const loadBatches = useCallback(async () => {
+    setLoadingBatches(true);
+    try {
+      const r = await api.getPurgeBatches();
+      setBatches(r.batches || []);
+    } catch { setBatches([]); }
+    finally { setLoadingBatches(false); }
+  }, []);
+
+  useEffect(() => { loadBatches(); }, [loadBatches]);
 
   // ── Cascade filtering ─────────────────────────────────────
   const filteredSites = useMemo(() =>
@@ -156,6 +174,7 @@ export default function PurgeReadings() {
       });
       setResult(res);
       setSelectedPointIds(new Set());
+      loadBatches();
     } catch (e: any) {
       alert('Erreur: ' + (e.message || 'Échec de la suppression'));
     } finally {
@@ -540,7 +559,8 @@ export default function PurgeReadings() {
               <AlertTriangle className="w-5 h-5" /> Confirmer la suppression
             </DialogTitle>
             <DialogDescription>
-              Cette action est irréversible. Les données supprimées ne pourront pas être récupérées.
+              Les données seront sauvegardées dans la corbeille (30 jours) avant suppression.
+              Vous pourrez les restaurer depuis l'historique ci-dessous.
             </DialogDescription>
           </DialogHeader>
 
@@ -585,6 +605,117 @@ export default function PurgeReadings() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* ═══════════════════════════════════════════════════════
+          PURGE HISTORY — Trash / Restore
+          ═══════════════════════════════════════════════════════ */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <History className="w-4 h-4 text-muted-foreground" />
+              <CardTitle className="text-sm">Historique des purges</CardTitle>
+              <CardDescription className="mt-0 ml-2">
+                Les données sont conservées 30 jours dans la corbeille
+              </CardDescription>
+            </div>
+            <Button variant="ghost" size="sm" onClick={loadBatches} disabled={loadingBatches} className="h-7 gap-1.5 text-xs">
+              <RotateCcw className={cn("w-3 h-3", loadingBatches && "animate-spin")} /> Actualiser
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {loadingBatches && batches.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" /> Chargement…
+            </div>
+          ) : batches.length === 0 ? (
+            <div className="py-8 text-center text-sm text-muted-foreground">
+              Aucune purge enregistrée
+            </div>
+          ) : (
+            <div className="space-y-2 max-h-[400px] overflow-y-auto">
+              {batches.map(b => {
+                const counts = b.counts || { readings: 0, agg_15m: 0, agg_daily: 0 };
+                const isRestored = !!b.restored_at;
+                const isRestoring = restoringBatchId === b.id;
+                const total = (counts.readings || 0) + (counts.agg_15m || 0) + (counts.agg_daily || 0);
+                return (
+                  <div key={b.id} className={cn(
+                    "flex items-center gap-3 p-3 rounded-lg border transition-colors",
+                    isRestored ? "bg-emerald-50/50 border-emerald-200/50" : "hover:border-primary/30",
+                  )}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium">
+                          {new Date(b.deleted_at).toLocaleString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                        </span>
+                        {isRestored && <Badge variant="outline" className="text-[9px] text-emerald-700 border-emerald-300">Restauré</Badge>}
+                      </div>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+                        <span>{b.point_ids?.length || 0} point{(b.point_ids?.length || 0) > 1 ? 's' : ''}</span>
+                        <span className="tabular-nums">{counts.readings?.toLocaleString()} readings</span>
+                        <span className="tabular-nums">{counts.agg_15m?.toLocaleString()} agg15m</span>
+                        <span className="tabular-nums">{counts.agg_daily?.toLocaleString()} daily</span>
+                        {b.date_from && (
+                          <span>
+                            {new Date(b.date_from).toLocaleDateString('fr-FR')}
+                            {' → '}
+                            {b.date_to ? new Date(b.date_to).toLocaleDateString('fr-FR') : '∞'}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                    <div className="flex gap-1.5 shrink-0">
+                      {!isRestored && total > 0 && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="h-7 gap-1.5 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50"
+                          disabled={isRestoring}
+                          onClick={async () => {
+                            if (!confirm(`Restaurer ${total.toLocaleString()} enregistrements ?`)) return;
+                            setRestoringBatchId(b.id);
+                            try {
+                              const r = await api.restorePurgeBatch(b.id);
+                              toast.success(`Restauration : ${r.restored.readings} readings, ${r.restored.agg_15m} agg15m, ${r.restored.agg_daily} daily`);
+                              loadBatches();
+                            } catch (e: any) {
+                              toast.error(e.message || 'Erreur de restauration');
+                            } finally {
+                              setRestoringBatchId(null);
+                            }
+                          }}
+                        >
+                          {isRestoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                          Restaurer
+                        </Button>
+                      )}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
+                        onClick={async () => {
+                          if (!confirm('Supprimer définitivement cette sauvegarde ?')) return;
+                          try {
+                            await api.deletePurgeBatch(b.id);
+                            toast.success('Sauvegarde supprimée');
+                            loadBatches();
+                          } catch (e: any) {
+                            toast.error(e.message || 'Erreur');
+                          }
+                        }}
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
