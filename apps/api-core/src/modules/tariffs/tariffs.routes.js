@@ -12,7 +12,10 @@ router.get("/tariffs", async (req, res) => {
           `SELECT id, group_code, plan_code, name, valid_from, valid_to,
                   hp_start_min, hp_end_min, hpt_start_min, hpt_end_min,
                   rate_hp, rate_hpt, fixed_monthly, prime_per_kw,
-                  vat_rate, tde_tdsaae_rate, meta
+                  vat_rate, tde_tdsaae_rate,
+                  COALESCE(alpha_a,0) AS alpha_a, COALESCE(beta_a,0) AS beta_a,
+                  COALESCE(alpha_r,0) AS alpha_r, COALESCE(beta_r,0) AS beta_r,
+                  meta
            FROM tariff_plans
            WHERE group_code = $1
            ORDER BY plan_code, valid_from DESC`,
@@ -22,7 +25,10 @@ router.get("/tariffs", async (req, res) => {
           `SELECT id, group_code, plan_code, name, valid_from, valid_to,
                   hp_start_min, hp_end_min, hpt_start_min, hpt_end_min,
                   rate_hp, rate_hpt, fixed_monthly, prime_per_kw,
-                  vat_rate, tde_tdsaae_rate, meta
+                  vat_rate, tde_tdsaae_rate,
+                  COALESCE(alpha_a,0) AS alpha_a, COALESCE(beta_a,0) AS beta_a,
+                  COALESCE(alpha_r,0) AS alpha_r, COALESCE(beta_r,0) AS beta_r,
+                  meta
            FROM tariff_plans
            ORDER BY group_code, plan_code, valid_from DESC`
         );
@@ -62,6 +68,7 @@ router.get("/terrains/:terrainId/contract", async (req, res) => {
     const r = await corePool.query(
       `SELECT tc.id, tc.terrain_id, tc.tariff_plan_id, tc.subscribed_power_kw,
               tc.meter_rental, tc.post_rental, tc.maintenance,
+              COALESCE(tc.capacitor_power_kw, 0) AS capacitor_power_kw,
               tp.plan_code, tp.name, tp.group_code, tp.valid_from
        FROM terrain_contracts tc
        JOIN tariff_plans tp ON tp.id = tc.tariff_plan_id
@@ -87,6 +94,7 @@ router.put("/terrains/:terrainId/contract", async (req, res) => {
       meter_rental = 0,
       post_rental = 0,
       maintenance = 0,
+      capacitor_power_kw = 0,
     } = req.body || {};
 
     if (!tariff_plan_id) return res.status(400).json({ ok: false, error: "tariff_plan_id is required" });
@@ -99,8 +107,8 @@ router.put("/terrains/:terrainId/contract", async (req, res) => {
     if (!t.rows.length) return res.status(404).json({ ok: false, error: "tariff_plan_id not found" });
 
     const up = await corePool.query(
-      `INSERT INTO terrain_contracts (terrain_id, tariff_plan_id, subscribed_power_kw, meter_rental, post_rental, maintenance)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO terrain_contracts (terrain_id, tariff_plan_id, subscribed_power_kw, meter_rental, post_rental, maintenance, capacitor_power_kw)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (terrain_id)
        DO UPDATE SET
          tariff_plan_id = EXCLUDED.tariff_plan_id,
@@ -108,9 +116,10 @@ router.put("/terrains/:terrainId/contract", async (req, res) => {
          meter_rental = EXCLUDED.meter_rental,
          post_rental = EXCLUDED.post_rental,
          maintenance = EXCLUDED.maintenance,
+         capacitor_power_kw = EXCLUDED.capacitor_power_kw,
          updated_at = now()
        RETURNING *`,
-      [terrainId, tariff_plan_id, subscribed_power_kw, meter_rental, post_rental, maintenance]
+      [terrainId, tariff_plan_id, subscribed_power_kw, meter_rental, post_rental, maintenance, capacitor_power_kw]
     );
 
     res.json({ ok: true, contract: up.rows[0] });

@@ -1,15 +1,15 @@
 import React, { useState } from 'react';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   AlertTriangle, Bell, BellOff, CheckCircle, CheckCircle2, ShieldAlert,
-  Activity, Brain, TrendingDown,
+  Activity, Brain, TrendingDown, Loader2, RefreshCw, Search,
 } from 'lucide-react';
-import { useTerrainOverview } from '@/hooks/useApi';
+import { useTerrainOverview, useAnomalies, useDetectAnomalies } from '@/hooks/useApi';
 import { AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
 import { useAlarmEngine } from '@/hooks/useAlarmEngine';
 import { cn } from '@/lib/utils';
@@ -20,8 +20,13 @@ export default function Anomalies() {
 
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
   const alarmEngine = useAlarmEngine(selectedTerrainId);
+  const { data: anomalyData, isLoading: loadAnom } = useAnomalies(selectedTerrainId);
+  const detectMutation = useDetectAnomalies();
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
+  const anomalies = (anomalyData?.anomalies ?? []) as Array<Record<string, any>>;
+  const activeAnoms = anomalies.filter(a => !a.resolved);
+  const resolvedAnoms = anomalies.filter(a => a.resolved);
 
   return (
     <div className="space-y-6">
@@ -100,42 +105,84 @@ export default function Anomalies() {
           {selectedTerrainId && <AlarmConfigPanel terrainId={selectedTerrainId} />}
         </>
       ) : (
-        /* ── AI Anomaly Detection (future) ── */
-        <Card>
-          <CardContent className="py-12 flex flex-col items-center text-center space-y-4">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-violet-100 to-blue-100 flex items-center justify-center">
-              <Brain className="w-8 h-8 text-violet-600" />
-            </div>
+        /* ── AI Anomaly Detection ── */
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
+            <KpiCard label="Détectées" value={anomalies.length} icon={<Brain className="w-4 h-4" />} />
+            <KpiCard label="Actives" value={activeAnoms.length} icon={<AlertTriangle className="w-4 h-4" />} variant={activeAnoms.length > 0 ? 'warning' : 'default'} />
+            <KpiCard label="Résolues" value={resolvedAnoms.length} icon={<CheckCircle className="w-4 h-4" />} variant="success" />
+            <KpiCard label="Critiques" value={activeAnoms.filter(a => a.severity === 'high').length} icon={<ShieldAlert className="w-4 h-4" />} variant={activeAnoms.some(a => a.severity === 'high') ? 'critical' : 'default'} />
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => selectedTerrainId && detectMutation.mutate(selectedTerrainId)}
+              disabled={detectMutation.isPending || !selectedTerrainId}
+            >
+              {detectMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
+              Lancer la détection
+            </Button>
+            {detectMutation.isSuccess && (
+              <Badge className="bg-green-100 text-green-700 text-[10px]">
+                Résiduel: {detectMutation.data?.residual?.found ?? 0} — Isolation Forest: {detectMutation.data?.isolation_forest?.found ?? 0}
+              </Badge>
+            )}
+            {detectMutation.isError && (
+              <Badge className="bg-red-100 text-red-700 text-[10px]">
+                Erreur: {(detectMutation.error as Error)?.message ?? 'Échec'}
+              </Badge>
+            )}
+          </div>
+
+          {loadAnom ? (
+            <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>
+          ) : anomalies.length === 0 ? (
+            <Card className="border-dashed">
+              <CardContent className="py-12 text-center text-muted-foreground flex flex-col items-center gap-3">
+                <Brain className="w-8 h-8 text-violet-400" />
+                <span>Aucune anomalie IA détectée.</span>
+                <span className="text-xs">Cliquez sur « Lancer la détection » pour analyser les données avec les algorithmes ML.</span>
+              </CardContent>
+            </Card>
+          ) : (
             <div className="space-y-2">
-              <h3 className="text-lg font-semibold">Détection d'anomalies par IA</h3>
-              <p className="text-sm text-muted-foreground max-w-md">
-                Ce module utilisera des algorithmes d'intelligence artificielle pour détecter
-                automatiquement les anomalies de consommation énergétique.
-              </p>
+              {[...activeAnoms, ...resolvedAnoms].map(a => {
+                const severityColor = a.severity === 'high' ? 'red' : a.severity === 'medium' ? 'amber' : 'blue';
+                const typeLabel = a.anomaly_type === 'residual' ? 'Résiduel' : a.anomaly_type === 'isolation_forest' ? 'Isolation Forest' : a.anomaly_type;
+                return (
+                  <Card key={a.id} className={cn('transition-all', !a.resolved && 'border-l-4', a.severity === 'high' && !a.resolved && 'border-l-red-500', a.severity === 'medium' && !a.resolved && 'border-l-amber-400', a.resolved && 'opacity-70')}>
+                    <CardContent className="p-4 flex items-start gap-3">
+                      <div className={cn('rounded-full p-1.5 mt-0.5', a.resolved ? 'bg-green-100' : `bg-${severityColor}-100`)}>
+                        {a.resolved ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <TrendingDown className={cn('w-4 h-4', a.severity === 'high' ? 'text-red-700' : 'text-amber-700')} />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="font-medium text-sm">
+                            {new Date(a.anomaly_date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
+                          </span>
+                          <Badge variant="outline" className="text-[9px]">{typeLabel}</Badge>
+                          <Badge className={cn('text-[9px]', a.resolved ? 'bg-green-100 text-green-700' : a.severity === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700')}>
+                            {a.resolved ? 'Résolu' : a.severity === 'high' ? 'Critique' : a.severity === 'medium' ? 'Attention' : 'Info'}
+                          </Badge>
+                          {a.deviation_pct != null && (
+                            <Badge variant="secondary" className="text-[9px]">Déviation: {Number(a.deviation_pct).toFixed(1)}%</Badge>
+                          )}
+                        </div>
+                        {a.description && <p className="text-xs text-muted-foreground mt-1">{a.description}</p>}
+                        <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-3">
+                          {a.expected_kwh != null && <span>Attendu: {Number(a.expected_kwh).toFixed(1)} kWh</span>}
+                          {a.actual_kwh != null && <span>Réel: {Number(a.actual_kwh).toFixed(1)} kWh</span>}
+                          {a.score != null && <span>Score: {Number(a.score).toFixed(2)}</span>}
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
-            <div className="pt-4 text-left w-full max-w-sm">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Fonctionnalités prévues</h4>
-              <ul className="space-y-2">
-                <li className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <TrendingDown className="w-4 h-4 text-violet-400" />
-                  Détection de déviations par Z-score
-                </li>
-                <li className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Brain className="w-4 h-4 text-violet-400" />
-                  Modèles ML de prédiction de consommation
-                </li>
-                <li className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <ShieldAlert className="w-4 h-4 text-violet-400" />
-                  Alertes automatiques sur anomalies détectées
-                </li>
-                <li className="flex items-center gap-2 text-sm text-muted-foreground">
-                  <Activity className="w-4 h-4 text-violet-400" />
-                  Suivi et historique des anomalies
-                </li>
-              </ul>
-            </div>
-          </CardContent>
-        </Card>
+          )}
+        </>
       )}
     </div>
   );

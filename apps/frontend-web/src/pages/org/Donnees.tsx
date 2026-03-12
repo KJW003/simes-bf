@@ -190,19 +190,25 @@ export default function History() {
   // ─── Daily energy bars
   const dailyEnergy = useMemo(() => {
     if (!readings.length) return [];
-    const byDay = new Map<string, { min: number; max: number }>();
+    // Group by (day, point_id) to avoid mixing cumulative counters from different meters
+    const byDayPoint = new Map<string, { min: number; max: number }>();
     for (const r of readings) {
       const day = new Date(String(r.time)).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
       const ei = r.energy_total != null ? Number(r.energy_total) : null;
       if (ei == null) continue;
-      const entry = byDay.get(day);
-      if (!entry) byDay.set(day, { min: ei, max: ei });
+      const pid = String(r.point_id ?? '_unknown');
+      const key = `${day}|${pid}`;
+      const entry = byDayPoint.get(key);
+      if (!entry) byDayPoint.set(key, { min: ei, max: ei });
       else { entry.min = Math.min(entry.min, ei); entry.max = Math.max(entry.max, ei); }
     }
-    return Array.from(byDay.entries()).map(([day, { min, max }]) => ({
-      day,
-      kwh: Math.max(0, max - min),
-    }));
+    // Sum per-point deltas per day
+    const dayTotals = new Map<string, number>();
+    for (const [key, { min, max }] of byDayPoint) {
+      const day = key.split('|')[0];
+      dayTotals.set(day, (dayTotals.get(day) ?? 0) + Math.max(0, max - min));
+    }
+    return Array.from(dayTotals.entries()).map(([day, kwh]) => ({ day, kwh }));
   }, [readings]);
 
   // ─── Heatmap (7 days × 24 hours)
@@ -246,9 +252,19 @@ export default function History() {
   }, [readings, metric]);
 
   const energyDelta = useMemo(() => {
-    const eis = readings.map(r => r.energy_total != null ? Number(r.energy_total) : NaN).filter(v => !isNaN(v));
-    if (eis.length < 2) return 0;
-    return Math.max(...eis) - Math.min(...eis);
+    // Group by point_id to avoid mixing cumulative counters from different meters
+    const byPoint = new Map<string, { min: number; max: number }>();
+    for (const r of readings) {
+      const val = r.energy_total != null ? Number(r.energy_total) : NaN;
+      if (isNaN(val)) continue;
+      const pid = String(r.point_id ?? '_unknown');
+      const entry = byPoint.get(pid);
+      if (!entry) byPoint.set(pid, { min: val, max: val });
+      else { entry.min = Math.min(entry.min, val); entry.max = Math.max(entry.max, val); }
+    }
+    let total = 0;
+    for (const { min, max } of byPoint.values()) total += Math.max(0, max - min);
+    return total;
   }, [readings]);
 
   const co2 = useMemo(() => energyDelta * prefs.co2Factor, [energyDelta, prefs.co2Factor]);

@@ -18,8 +18,6 @@ export default function Invoice() {
   const { selectedTerrain } = useAppContext();
   const prefs = usePreferences();
 
-  const peakHours = TARIFF_PRESETS[prefs.tariffGroup]?.hours.peak ?? '17:00-24:00';
-
   const [runId, setRunId] = useState<string | null>(null);
   const submitFacture = useSubmitFacture();
   const { data: apiFacture, isLoading: pollingFacture } = useFactureResult(runId);
@@ -41,11 +39,14 @@ export default function Invoice() {
     }
   };
 
-  const apiBreakdown = hasLiveResult ? (liveResult.breakdown as Array<{ key: string; label: string; kwh: number | null; rate: number | null; amount: number }>) : null;
+  const apiBreakdown = hasLiveResult ? (liveResult.breakdown as Array<{ key: string; label: string; kwh: number | null; rate: number | null; amount: number | null; detail?: string; kma?: number; ps_kw?: number; exceed_kw?: number; pmax_kw?: number }>) : null;
   const apiTotal = hasLiveResult ? Number(liveResult.totalAmount ?? 0) : 0;
   const apiTotalKwh = hasLiveResult ? Number(liveResult.totalKwh ?? 0) : 0;
   const apiMaxDemand = hasLiveResult ? Number(liveResult.maxDemandKw ?? 0) : 0;
   const apiPlanName = hasLiveResult ? String(liveResult.tariffVersionName ?? '') : '';
+  const apiCosPhi = hasLiveResult ? Number(liveResult.cosPhi ?? 0) : 0;
+  const apiKma = hasLiveResult ? Number(liveResult.Kma ?? 1) : 1;
+  const apiVersion = hasLiveResult ? String(liveResult.version ?? 'V1') : 'V1';
 
   const planLabel = TARIFF_PRESETS[prefs.tariffGroup]?.plans[prefs.tariffPlan]?.label ?? prefs.tariffPlan;
 
@@ -95,25 +96,28 @@ export default function Invoice() {
       )}
 
       {hasLiveResult && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
-          <KpiCard label="Total" value={(apiTotal / 1000000).toFixed(1) + 'M'} unit="XOF" icon={<Receipt className="w-4 h-4" />} />
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4 animate-stagger-children">
+          <KpiCard label="Total TTC" value={(apiTotal / 1000000).toFixed(1) + 'M'} unit="XOF" icon={<Receipt className="w-4 h-4" />} />
           <KpiCard label="Consommation" value={(apiTotalKwh / 1000).toFixed(1)} unit="MWh" icon={<Zap className="w-4 h-4" />} />
           <KpiCard label="Puissance max" value={apiMaxDemand.toFixed(1)} unit="kW" icon={<TrendingUp className="w-4 h-4" />} />
-          <KpiCard label="Heures de pointe" value={peakHours} icon={<Clock className="w-4 h-4" />} />
+          <KpiCard label="cos φ" value={apiCosPhi.toFixed(3)} icon={<Clock className="w-4 h-4" />} variant={apiCosPhi > 0 && apiCosPhi < 0.93 ? 'warning' : 'default'} />
+          <KpiCard label="Kma" value={apiKma.toFixed(3)} icon={<AlertTriangle className="w-4 h-4" />} variant={apiKma > 1 ? 'warning' : 'success'} />
         </div>
       )}
 
-      <div className="rounded-lg border border-severity-warning/30 bg-severity-warning-bg/40 px-4 py-3 text-sm text-severity-warning-foreground flex items-start gap-3">
-        <AlertTriangle className="w-4 h-4 mt-0.5" />
-        <div>PF (cos phi) &lt; 0.93 peut declencher des penalites (non calculees en V1).</div>
-      </div>
+      {hasLiveResult && apiCosPhi > 0 && apiCosPhi < 0.93 && (
+        <div className="rounded-lg border border-severity-warning/30 bg-severity-warning-bg/40 px-4 py-3 text-sm text-severity-warning-foreground flex items-start gap-3">
+          <AlertTriangle className="w-4 h-4 mt-0.5" />
+          <div>cos φ = {apiCosPhi.toFixed(3)} &lt; 0.93 — Penalite Kma = {apiKma.toFixed(3)} appliquee sur la prime de puissance.</div>
+        </div>
+      )}
 
       {apiBreakdown && (
         <Card className="border-primary/20">
           <CardHeader className="pb-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <CardTitle className="text-base font-medium">Facture SONABEL (donnees reelles)</CardTitle>
-              <Badge variant="outline" className="text-xs badge-ok">{apiPlanName}</Badge>
+              <Badge variant="outline" className="text-xs badge-ok">{apiPlanName} — {apiVersion}</Badge>
             </div>
           </CardHeader>
           <CardContent>
@@ -130,10 +134,10 @@ export default function Invoice() {
               <tbody>
                 {apiBreakdown.map((row) => (
                   <tr key={row.key}>
-                    <td className="font-medium">{row.label}</td>
+                    <td className="font-medium">{row.label}{row.detail ? <span className="text-xs text-muted-foreground ml-1">({row.detail})</span> : null}</td>
                     <td className="text-right mono">{row.kwh != null ? formatCurrency(Math.round(row.kwh)) : '-'}</td>
                     <td className="text-right mono">{row.rate != null ? formatCurrency(Number(row.rate)) : '-'}</td>
-                    <td className="text-right mono font-medium">{formatCurrency(Math.round(row.amount))}</td>
+                    <td className="text-right mono font-medium">{row.amount != null ? formatCurrency(Math.round(row.amount)) : '-'}</td>
                   </tr>
                 ))}
                 <tr className="bg-muted/30 font-semibold">

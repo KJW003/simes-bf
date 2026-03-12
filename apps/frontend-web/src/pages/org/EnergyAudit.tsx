@@ -175,9 +175,21 @@ export default function EnergyAudit() {
     }).filter(Boolean) as Array<{ name: string; pf: number | null; thdA: number | null; vUnbal: number | null; power: number; score: number }>;
   }, [points]);
 
-  // Energy cost estimation
-  const energyVals = readings.map(r => r.energy_total != null ? Number(r.energy_total) : (r.energy_import != null ? Number(r.energy_import) : NaN)).filter(v => !isNaN(v));
-  const energyDelta = energyVals.length >= 2 ? Math.max(...energyVals) - Math.min(...energyVals) : 0;
+  // Energy cost estimation — group by point to avoid mixing cumulative counters
+  const energyDelta = useMemo(() => {
+    const byPoint = new Map<string, { min: number; max: number }>();
+    for (const r of readings) {
+      const val = r.energy_total != null ? Number(r.energy_total) : (r.energy_import != null ? Number(r.energy_import) : NaN);
+      if (isNaN(val)) continue;
+      const pid = String(r.point_id ?? '_unknown');
+      const entry = byPoint.get(pid);
+      if (!entry) byPoint.set(pid, { min: val, max: val });
+      else { entry.min = Math.min(entry.min, val); entry.max = Math.max(entry.max, val); }
+    }
+    let total = 0;
+    for (const { min, max } of byPoint.values()) total += Math.max(0, max - min);
+    return total;
+  }, [readings]);
   const costEstimate = energyDelta * prefs.tariffRate;
   const co2Estimate = energyDelta * prefs.co2Factor;
 

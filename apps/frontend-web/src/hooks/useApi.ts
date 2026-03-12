@@ -247,6 +247,14 @@ export function useAnomalies(terrainId: string | null, days = 30) {
   });
 }
 
+export function useDetectAnomalies() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (terrainId: string) => api.detectAnomalies(terrainId),
+    onSuccess: (_d, terrainId) => { qc.invalidateQueries({ queryKey: ['anomalies', terrainId] }); },
+  });
+}
+
 // ─── Historical readings ───────────────────────────────────
 
 export interface ReadingsData {
