@@ -69,7 +69,7 @@ export default function PurgeReadings() {
   const [purging, setPurging] = useState(false);
   const [result, setResult] = useState<{
     points_purged: number;
-    details: Array<{ point_id: string; point_name: string; deleted: { readings: number; agg_15m: number; agg_daily: number } }>;
+    details?: Array<{ point_id: string; point_name: string; deleted: { readings: number; agg_15m: number; agg_daily: number } }>;
     totals: { readings: number; agg_15m: number; agg_daily: number };
     range: { from: string | null; to: string | null };
   } | null>(null);
@@ -530,11 +530,11 @@ export default function PurgeReadings() {
               </div>
             </div>
 
-            {result.details.length > 1 && (
+            {(result.details?.length ?? 0) > 1 && (
               <div className="pt-3 border-t">
                 <div className="text-xs font-semibold text-muted-foreground mb-2">Détail par point</div>
                 <div className="space-y-1 text-xs max-h-40 overflow-y-auto">
-                  {result.details.map(d => (
+                  {result.details!.map(d => (
                     <div key={d.point_id} className="flex justify-between text-muted-foreground">
                       <span className="truncate max-w-[60%]">{d.point_name}</span>
                       <span className="tabular-nums">
