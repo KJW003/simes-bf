@@ -61,7 +61,14 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
       body: JSON.stringify({ terrain_id: terrainId, days }),
     });
 
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      log.error({ status: resp.status, text }, 'ml-service /predict returned non-JSON');
+      return res.status(502).json({ error: 'ML service bad response', detail: text });
+    }
 
     if (resp.status === 422) {
       // Insufficient data for training
@@ -70,6 +77,7 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
 
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
+    log.error({ error: err.message }, 'ML predict failed');
     res.status(503).json({ error: 'ML service unavailable', detail: err.message });
   }
 });
@@ -116,34 +124,6 @@ router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => 
 // Hourly Forecast Endpoints (backend-computed, replaces frontend logic)
 // ──────────────────────────────────────────────────────────────────────────────
 
-// GET /ai/forecast/:terrainId — Main forecast endpoint
-router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
-  try {
-    const { terrainId } = req.params;
-    const days = Math.min(7, Math.max(1, parseInt(req.query.days, 10) || 1));
-    
-    const url = `${ML_SERVICE_URL}/predict?terrain_id=${terrainId}&days=${days}`;
-    const resp = await fetch(url);
-    const data = await resp.json();
-    res.status(resp.ok ? 200 : 502).json(data);
-  } catch (err) {
-    log.error({
-      endpoint: '/ai/forecast/:terrainId',
-      terrainId: req.params.terrainId,
-      ml_service_url: ML_SERVICE_URL,
-      error: err.message,
-      stack: err.stack,
-      code: err.code,
-      errno: err.errno
-    }, 'Forecast endpoint error');
-    res.status(503).json({ 
-      error: 'ML service unavailable', 
-      detail: err.message,
-      ml_service_url: ML_SERVICE_URL 
-    });
-  }
-});
-
 // GET /ai/forecast/hourly/:terrainId — 24-hour forecast curve (J+1 to J+7)
 router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
@@ -155,7 +135,10 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
 
     const url = `${ML_SERVICE_URL}/forecast/hourly/${terrainId}?${params.toString()}`;
     const resp = await fetch(url);
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } 
+    catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
     log.error({
@@ -184,7 +167,10 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
 
     const url = `${ML_SERVICE_URL}/forecast/profiles/${terrainId}?${params.toString()}`;
     const resp = await fetch(url);
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } 
+    catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
     log.error({
@@ -214,7 +200,10 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
 
     const url = `${ML_SERVICE_URL}/forecast/daily-chart/${terrainId}?${params.toString()}`;
     const resp = await fetch(url);
-    const data = await resp.json();
+    const text = await resp.text();
+    let data;
+    try { data = JSON.parse(text); } 
+    catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
     log.error({

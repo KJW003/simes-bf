@@ -987,7 +987,7 @@ def get_anomalies(terrain_id: str, days: int = 30):
                        expected_kwh, actual_kwh, deviation_pct, description,
                        resolved, created_at
                 FROM energy_anomalies
-                WHERE terrain_id = %s AND anomaly_date >= CURRENT_DATE - INTERVAL '%s days'
+                WHERE terrain_id = %s AND anomaly_date >= CURRENT_DATE - (%s * INTERVAL '1 day')
                 ORDER BY anomaly_date DESC
             """, conn, params=(terrain_id, days))
         return {"terrain_id": terrain_id, "anomalies": df.to_dict(orient="records")}
@@ -1005,7 +1005,7 @@ def fetch_raw_readings(terrain_id: str, point_id: str | None, history_days: int)
                 SELECT time, active_power_total
                 FROM acrel_readings
                 WHERE terrain_id = %s AND point_id = %s
-                  AND time >= NOW() - INTERVAL '%s days'
+                  AND time >= NOW() - (%s * INTERVAL '1 day')
                 ORDER BY time
             """, conn, params=(terrain_id, point_id, history_days))
         else:
@@ -1014,7 +1014,7 @@ def fetch_raw_readings(terrain_id: str, point_id: str | None, history_days: int)
                 SELECT DATE_TRUNC('minute', time) - (EXTRACT(MINUTE FROM time)::int %% 5) * INTERVAL '1 minute' AS time,
                        SUM(active_power_total) AS active_power_total
                 FROM acrel_readings
-                WHERE terrain_id = %s AND time >= NOW() - INTERVAL '%s days'
+                WHERE terrain_id = %s AND time >= NOW() - (%s * INTERVAL '1 day')
                 GROUP BY 1
                 ORDER BY 1
             """, conn, params=(terrain_id, history_days))
@@ -1363,7 +1363,7 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                        MAX(power_max) AS max_kw
                 FROM acrel_agg_daily
                 WHERE terrain_id = %s
-                  AND day >= CURRENT_DATE - INTERVAL '%s days'
+                  AND day >= CURRENT_DATE - (%s * INTERVAL '1 day')
                   AND day < CURRENT_DATE
                 GROUP BY day
                 ORDER BY day
