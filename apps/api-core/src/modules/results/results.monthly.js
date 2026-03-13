@@ -86,31 +86,32 @@ router.get("/results/facture/monthly",
             {
               jobId: runId,  // Use same ID for tracking
               attempts: 1,
-              removeOnComplete: true,
+              removeOnComplete: 60000,  // Keep job for 60s before removal
             }
           );
 
-          // Poll for result (with timeout)
+          // Poll for result (check database directly instead of job state)
           let result = null;
           let attempts = 0;
-          const maxAttempts = 30;  // 30 seconds max
+          const maxAttempts = 60;  // 60 seconds max (1s per attempt)
 
           while (attempts < maxAttempts && !result) {
-            await new Promise(r => setTimeout(r, 1000));  // Wait 1 second
-            const jobState = await job.getState();
+            // Check database FIRST (most reliable source)
+            const runRow = await corePool.query(
+              `SELECT result, status FROM runs WHERE id = $1`,
+              [runId]
+            );
             
-            if (jobState === "completed") {
-              // Fetch the actual result from the database (stored by worker via setRunStatus)
-              const runRow = await corePool.query(
-                `SELECT result FROM runs WHERE id = $1`,
-                [runId]
-              );
-              if (runRow.rows.length && runRow.rows[0].result) {
-                const dbResult = runRow.rows[0].result;
-                result = typeof dbResult === 'string' ? JSON.parse(dbResult) : dbResult;
-              }
-              break;
-            } else if (jobState === "failed") {
+            if (runRow.rows.length && runRow.rows[0].result && runRow.rows[0].status === 'success') {
+              const dbResult = runRow.rows[0].result;
+              result = typeof dbResult === 'string' ? JSON.parse(dbResult) : dbResult;
+              break;  // Found result, exit immediately
+            }
+            
+            // Then check job state as supplementary info
+            const jobState = await job.getState().catch(() => null);
+            
+            if (jobState === "failed") {
               await logAuditEvent(req.userId, 'view', 'facture_today', terrainId, { 
                 error: 'computation_failed',
                 reason: job.failedReason 
@@ -121,7 +122,22 @@ router.get("/results/facture/monthly",
                 details: job.failedReason
               });
             }
+            
+            // Wait before next check
+            await new Promise(r => setTimeout(r, 1000));
             attempts++;
+          }
+
+          if (!result) {
+            // Final check - fetch from DB one more time
+            const finalCheck = await corePool.query(
+              `SELECT result FROM runs WHERE id = $1`,
+              [runId]
+            );
+            if (finalCheck.rows.length && finalCheck.rows[0].result) {
+              const dbResult = finalCheck.rows[0].result;
+              result = typeof dbResult === 'string' ? JSON.parse(dbResult) : dbResult;
+            }
           }
 
           if (!result) {
@@ -204,6 +220,7 @@ router.get("/results/facture/monthly",
       }
 
       const invoice = invoiceQuery.rows[0];
+      const invoiceData = typeof invoice.data === 'string' ? JSON.parse(invoice.data) : invoice.data;
 
       // Log successful access for audit
       await logAuditEvent(req.userId, 'view', 'facture_monthly', invoice.id, { 
@@ -213,13 +230,12 @@ router.get("/results/facture/monthly",
         duration_ms: Date.now() - startTime
       }, clientIp);
 
+      // Return same format as mode=today: spread invoice data directly for consistency
       res.json({
         ok: true,
         mode: "month",
-        invoice: {
-          ...invoice,
-          data: typeof invoice.data === 'string' ? JSON.parse(invoice.data) : invoice.data,
-        },
+        ...invoiceData,  // Spread calculation results directly (totalAmount, totalKwh, breakdown, etc.)
+        computedAt: invoice.computed_at || invoice.updated_at,
         daysInMonth: getDaysInMonth(parseInt(year), parseInt(month)),
       });
 
