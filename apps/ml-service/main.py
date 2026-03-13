@@ -112,6 +112,21 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
         except Exception as e:
             logger.warning(f"acrel_agg_daily query failed for {terrain_id}, fallback to raw readings: {e}")
             df = pd.read_sql(raw_query, conn, params=(terrain_id,))
+
+    # Normalize dtypes to prevent pandas aggregation errors on object columns.
+    numeric_cols = [
+        "power_avg", "power_max", "energy_delta",
+        "day_of_week", "month", "week_of_year", "is_weekend",
+        "lag_1d", "lag_7d", "lag_14d",
+        "rolling_avg_7d", "rolling_avg_30d", "rolling_std_7d",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Keep only rows where target is numeric/usable.
+    if "energy_delta" in df.columns:
+        df = df[df["energy_delta"].notna()]
     return df
 
 
@@ -155,6 +170,19 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
         except Exception as e:
             logger.warning(f"Simple daily agg query failed for {terrain_id}, fallback to raw readings: {e}")
             df = pd.read_sql(raw_fallback, conn, params=(terrain_id,))
+
+    # Force numerics for robust statistics (mean/std) in simple_forecast.
+    for col in ("energy_delta", "power_avg", "day_of_week"):
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Drop rows that cannot be used for day-of-week averaging.
+    required = [c for c in ("energy_delta", "day_of_week") if c in df.columns]
+    if required:
+        df = df.dropna(subset=required)
+
+    if "day_of_week" in df.columns:
+        df["day_of_week"] = df["day_of_week"].astype(int)
     return df
 
 
