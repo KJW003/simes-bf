@@ -15,7 +15,6 @@ import pandas as pd
 import lightgbm as lgb
 import joblib
 import psycopg2
-from psycopg2.extras import RealDictCursor
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("ml-service")
@@ -38,7 +37,7 @@ model_cache: dict = {}
 
 # ─── DB helpers ───────────────────────────────────────────────
 def get_conn():
-    return psycopg2.connect(**TELEMETRY_DB, cursor_factory=RealDictCursor)
+    return psycopg2.connect(**TELEMETRY_DB)
 
 
 def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
