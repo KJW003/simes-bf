@@ -80,4 +80,12 @@ function verifyTerrainAccess(locationPath = "params.terrainId") {
   };
 }
 
-module.exports = { requireAuth, requireRole, verifyTerrainAccess };
+// Shorthand for requiring admin role
+function requireAdmin(req, res, next) {
+  if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+    return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
+  }
+  next();
+}
+
+module.exports = { requireAuth, requireRole, verifyTerrainAccess, requireAdmin };

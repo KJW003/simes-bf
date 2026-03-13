@@ -1567,4 +1567,272 @@ function formatBytes(bytes) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
 }
 
+// ─────────────────────────────────────────────────────────────
+// TARIFF PLANS CRUD (Admin)
+// ─────────────────────────────────────────────────────────────
+
+/**
+ * GET /admin/tariff-plans
+ * List all tariff plans with optional filtering
+ */
+router.get("/admin/tariff-plans",
+  requireAuth,
+  (req, res, next) => {
+    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
+    }
+    next();
+  },
+  async (req, res) => {
+    try {
+      const { group_code, active_only } = req.query;
+
+      let query = `SELECT * FROM tariff_plans WHERE 1=1`;
+      const params = [];
+
+      if (group_code) {
+        query += ` AND group_code = $${params.length + 1}`;
+        params.push(group_code);
+      }
+
+      if (active_only === 'true') {
+        query += ` AND (valid_from IS NULL OR valid_from <= NOW()::date)
+                  AND (valid_to IS NULL OR valid_to >= NOW()::date)`;
+      }
+
+      query += ` ORDER BY name ASC`;
+
+      const result = await corePool.query(query, params);
+
+      res.json({
+        ok: true,
+        plans: result.rows,
+      });
+    } catch (e) {
+      console.error("GET /admin/tariff-plans error:", e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/**
+ * GET /admin/tariff-plans/:id
+ * Get a specific tariff plan
+ */
+router.get("/admin/tariff-plans/:id",
+  requireAuth,
+  (req, res, next) => {
+    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
+    }
+    next();
+  },
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      const result = await corePool.query(
+        `SELECT * FROM tariff_plans WHERE id = $1`,
+        [id]
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({ ok: false, error: "Plan not found" });
+      }
+
+      res.json({
+        ok: true,
+        plan: result.rows[0],
+      });
+    } catch (e) {
+      console.error("GET /admin/tariff-plans/:id error:", e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/**
+ * POST /admin/tariff-plans
+ * Create a new tariff plan
+ */
+router.post("/admin/tariff-plans",
+  requireAuth,
+  (req, res, next) => {
+    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
+    }
+    next();
+  },
+  async (req, res) => {
+    try {
+      const {
+        group_code, plan_code, name,
+        hp_start_min, hp_end_min, hpt_start_min, hpt_end_min,
+        rate_hp, rate_hpt, fixed_monthly, prime_per_kw,
+        vat_rate = 0.18, tde_tdsaae_rate = 2,
+        alpha_a = 0, beta_a = 0, alpha_r = 0, beta_r = 0,
+        valid_from, valid_to,
+        penalty_enabled = true,
+      } = req.body;
+
+      // Validate required fields
+      if (!group_code || !plan_code || !name) {
+        return res.status(400).json({
+          ok: false,
+          error: "group_code, plan_code, and name are required",
+        });
+      }
+
+      const result = await corePool.query(
+        `INSERT INTO tariff_plans (
+          group_code, plan_code, name,
+          hp_start_min, hp_end_min, hpt_start_min, hpt_end_min,
+          rate_hp, rate_hpt, fixed_monthly, prime_per_kw,
+          vat_rate, tde_tdsaae_rate,
+          alpha_a, beta_a, alpha_r, beta_r,
+          valid_from, valid_to, penalty_enabled
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+          $12, $13, $14, $15, $16, $17, $18, $19, $20
+        ) RETURNING *`,
+        [
+          group_code, plan_code, name,
+          hp_start_min, hp_end_min, hpt_start_min, hpt_end_min,
+          rate_hp, rate_hpt, fixed_monthly, prime_per_kw,
+          vat_rate, tde_tdsaae_rate,
+          alpha_a, beta_a, alpha_r, beta_r,
+          valid_from, valid_to, penalty_enabled,
+        ]
+      );
+
+      res.status(201).json({
+        ok: true,
+        plan: result.rows[0],
+      });
+    } catch (e) {
+      console.error("POST /admin/tariff-plans error:", e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/**
+ * PUT /admin/tariff-plans/:id
+ * Update a tariff plan
+ */
+router.put("/admin/tariff-plans/:id",
+  requireAuth,
+  (req, res, next) => {
+    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
+    }
+    next();
+  },
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+      const updates = req.body;
+
+      // Build dynamic UPDATE query
+      const allowedFields = [
+        'group_code', 'plan_code', 'name',
+        'hp_start_min', 'hp_end_min', 'hpt_start_min', 'hpt_end_min',
+        'rate_hp', 'rate_hpt', 'fixed_monthly', 'prime_per_kw',
+        'vat_rate', 'tde_tdsaae_rate',
+        'alpha_a', 'beta_a', 'alpha_r', 'beta_r',
+        'valid_from', 'valid_to', 'penalty_enabled',
+      ];
+
+      const setClause = [];
+      const params = [];
+      let paramCount = 1;
+
+      for (const field of allowedFields) {
+        if (field in updates) {
+          setClause.push(`${field} = $${paramCount}`);
+          params.push(updates[field]);
+          paramCount++;
+        }
+      }
+
+      if (setClause.length === 0) {
+        return res.status(400).json({
+          ok: false,
+          error: "No valid fields to update",
+        });
+      }
+
+      params.push(id);
+      const result = await corePool.query(
+        `UPDATE tariff_plans SET ${setClause.join(', ')}
+         WHERE id = $${paramCount}
+         RETURNING *`,
+        params
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({ ok: false, error: "Plan not found" });
+      }
+
+      res.json({
+        ok: true,
+        plan: result.rows[0],
+      });
+    } catch (e) {
+      console.error("PUT /admin/tariff-plans/:id error:", e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
+/**
+ * DELETE /admin/tariff-plans/:id
+ * Delete a tariff plan
+ */
+router.delete("/admin/tariff-plans/:id",
+  requireAuth,
+  (req, res, next) => {
+    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
+    }
+    next();
+  },
+  async (req, res) => {
+    try {
+      const { id } = req.params;
+
+      // Check if plan is in use by any contracts
+      const inUse = await corePool.query(
+        `SELECT COUNT(*) as count FROM terrain_contracts
+         WHERE tariff_plan_id = $1`,
+        [id]
+      );
+
+      if (inUse.rows[0].count > 0) {
+        return res.status(409).json({
+          ok: false,
+          error: `Cannot delete plan: ${inUse.rows[0].count} contract(s) still use it`,
+        });
+      }
+
+      const result = await corePool.query(
+        `DELETE FROM tariff_plans WHERE id = $1 RETURNING id`,
+        [id]
+      );
+
+      if (!result.rows.length) {
+        return res.status(404).json({ ok: false, error: "Plan not found" });
+      }
+
+      res.json({
+        ok: true,
+        message: "Plan deleted successfully",
+      });
+    } catch (e) {
+      console.error("DELETE /admin/tariff-plans/:id error:", e);
+      res.status(500).json({ ok: false, error: e.message });
+    }
+  }
+);
+
 module.exports = router;

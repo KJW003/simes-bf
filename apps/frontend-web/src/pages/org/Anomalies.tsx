@@ -5,18 +5,54 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   AlertTriangle, Bell, BellOff, CheckCircle, CheckCircle2, ShieldAlert,
-  Activity, Brain, TrendingDown, Loader2, RefreshCw, Search,
+  Activity, Brain, TrendingDown, Loader2, RefreshCw, Search, Info,
 } from 'lucide-react';
 import { useTerrainOverview, useAnomalies, useDetectAnomalies } from '@/hooks/useApi';
 import { AlarmConfigPanel } from '@/components/widgets/dashboard-sections';
 import { useAlarmEngine } from '@/hooks/useAlarmEngine';
 import { cn } from '@/lib/utils';
 
+// ── Anomaly Type Explanations ──
+const anomalyExplanations: Record<string, { label: string; meaning: string; action: string }> = {
+  'residual': {
+    label: 'Écart prévu/réel',
+    meaning: 'Votre site consomme plus ou moins que ce qui est prévu. Cela peut indiquer un équipement défaillant ou une utilisation anormale.',
+    action: 'Vérifier l\'utilisation de la journée. Chercher les équipements qui fonctionnent anormalement.'
+  },
+  'isolation_forest': {
+    label: 'Anomalie multivariée',
+    meaning: 'Plusieurs mesures électriques (courant, tension, etc.) sont inhabituelles ensemble. C\'est un signal que quelque chose ne va pas.',
+    action: 'Inspecter les équipements pour trouver celui qui fonctionne mal.'
+  },
+  'change_point': {
+    label: 'Changement de consommation',
+    meaning: 'La consommation a soudainement augmenté ou diminué. Cela peut être un équipement qui s\'est arrêté ou un nouveau service activé.',
+    action: 'Vérifier quel équipement a changé son fonctionnement.'
+  },
+  'volatility_spike': {
+    label: 'Instabilité équipement',
+    meaning: 'Un équipement oscille rapidement (démarre/s\'arrête). Cela use le matériel plus vite.',
+    action: 'Planifier une maintenance pour cet équipement avant qu\'il ne casse.'
+  },
+  'seasonality_break': {
+    label: 'Pattern modifié',
+    meaning: 'Votre consommation hebdomadaire a changé. Lundi/mercredi/vendredi ne ressemblent plus à avant.',
+    action: 'Vérifier si les horaires ou les activités ont changé.'
+  },
+  'anomaly_cluster': {
+    label: 'Problème systémique',
+    meaning: 'Plusieurs anomalies se produisent pendant la même période. Cela peut indiquer un problème au niveau du site.',
+    action: 'Contacter un électricien pour un diagnostic complet.'
+  }
+};
+
 export default function Anomalies() {
   const { selectedTerrainId } = useAppContext();
   const [tab, setTab] = useState<'local' | 'ai'>('local');
+  const [showResolved, setShowResolved] = useState(false);
 
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
   const alarmEngine = useAlarmEngine(selectedTerrainId);
@@ -27,6 +63,8 @@ export default function Anomalies() {
   const anomalies = (anomalyData?.anomalies ?? []) as Array<Record<string, any>>;
   const activeAnoms = anomalies.filter(a => !a.resolved);
   const resolvedAnoms = anomalies.filter(a => a.resolved);
+  
+  const displayedAnoms = showResolved ? [...activeAnoms, ...resolvedAnoms] : activeAnoms;
 
   return (
     <div className="space-y-6">
@@ -114,18 +152,18 @@ export default function Anomalies() {
             <KpiCard label="Critiques" value={activeAnoms.filter(a => a.severity === 'high').length} icon={<ShieldAlert className="w-4 h-4" />} variant={activeAnoms.some(a => a.severity === 'high') ? 'critical' : 'default'} />
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-3 justify-between">
             <Button
               size="sm"
               onClick={() => selectedTerrainId && detectMutation.mutate(selectedTerrainId)}
               disabled={detectMutation.isPending || !selectedTerrainId}
             >
               {detectMutation.isPending ? <Loader2 className="w-4 h-4 mr-1 animate-spin" /> : <Search className="w-4 h-4 mr-1" />}
-              Lancer la détection
+              Lancer la détection IA
             </Button>
             {detectMutation.isSuccess && (
               <Badge className="bg-green-100 text-green-700 text-[10px]">
-                Résiduel: {detectMutation.data?.residual?.found ?? 0} — Isolation Forest: {detectMutation.data?.isolation_forest?.found ?? 0}
+                ✓ Analyse complète: {detectMutation.data?.anomalies_found ?? 0} problèmes trouvés
               </Badge>
             )}
             {detectMutation.isError && (
@@ -135,47 +173,108 @@ export default function Anomalies() {
             )}
           </div>
 
+          {/* Show Resolved Toggle */}
+          {resolvedAnoms.length > 0 && (
+            <div className="flex items-center gap-2 p-3 bg-muted/50 rounded-lg w-fit">
+              <Checkbox 
+                checked={showResolved}
+                onCheckedChange={(checked) => setShowResolved(checked as boolean)}
+                id="show-resolved"
+              />
+              <label htmlFor="show-resolved" className="text-sm cursor-pointer">
+                Afficher {resolvedAnoms.length} anomalie{resolvedAnoms.length > 1 ? 's' : ''} résolue{resolvedAnoms.length > 1 ? 's' : ''}
+              </label>
+            </div>
+          )}
+
           {loadAnom ? (
             <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>
-          ) : anomalies.length === 0 ? (
+          ) : displayedAnoms.length === 0 ? (
             <Card className="border-dashed">
               <CardContent className="py-12 text-center text-muted-foreground flex flex-col items-center gap-3">
                 <Brain className="w-8 h-8 text-violet-400" />
-                <span>Aucune anomalie IA détectée.</span>
-                <span className="text-xs">Cliquez sur « Lancer la détection » pour analyser les données avec les algorithmes ML.</span>
+                <span>Aucune anomalie {showResolved ? '' : 'active'}.</span>
+                <span className="text-xs">Cliquez sur « Lancer la détection IA » pour analyser vos données.</span>
               </CardContent>
             </Card>
           ) : (
-            <div className="space-y-2">
-              {[...activeAnoms, ...resolvedAnoms].map(a => {
+            <div className="space-y-3">
+              {displayedAnoms.map(a => {
+                const isResolved = a.resolved;
+                const explanation = anomalyExplanations[a.anomaly_type] || { 
+                  label: a.anomaly_type, 
+                  meaning: 'Anomalie détectée', 
+                  action: 'Contacter support technique'
+                };
                 const severityColor = a.severity === 'high' ? 'red' : a.severity === 'medium' ? 'amber' : 'blue';
-                const typeLabel = a.anomaly_type === 'residual' ? 'Résiduel' : a.anomaly_type === 'isolation_forest' ? 'Isolation Forest' : a.anomaly_type;
+                
                 return (
-                  <Card key={a.id} className={cn('transition-all', !a.resolved && 'border-l-4', a.severity === 'high' && !a.resolved && 'border-l-red-500', a.severity === 'medium' && !a.resolved && 'border-l-amber-400', a.resolved && 'opacity-70')}>
-                    <CardContent className="p-4 flex items-start gap-3">
-                      <div className={cn('rounded-full p-1.5 mt-0.5', a.resolved ? 'bg-green-100' : `bg-${severityColor}-100`)}>
-                        {a.resolved ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <TrendingDown className={cn('w-4 h-4', a.severity === 'high' ? 'text-red-700' : 'text-amber-700')} />}
+                  <Card key={a.id} className={cn('transition-all', !isResolved && 'border-l-4', a.severity === 'high' && !isResolved && 'border-l-red-500', a.severity === 'medium' && !isResolved && 'border-l-amber-400', isResolved && 'opacity-60')}>
+                    <CardContent className="p-4 space-y-3">
+                      {/* Header Row */}
+                      <div className="flex items-start gap-3">
+                        <div className={cn('rounded-full p-1.5 flex-shrink-0', isResolved ? 'bg-green-100' : `bg-${severityColor}-100`)}>
+                          {isResolved ? <CheckCircle2 className="w-4 h-4 text-green-600" /> : <TrendingDown className={cn('w-4 h-4', a.severity === 'high' ? 'text-red-700' : 'text-amber-700')} />}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap mb-1">
+                            <span className="font-semibold text-sm">{explanation.label}</span>
+                            <Badge className={cn('text-[9px]', isResolved ? 'bg-green-100 text-green-700' : a.severity === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700')}>
+                              {isResolved ? 'Résolu' : a.severity === 'high' ? 'Critique' : a.severity === 'medium' ? 'Attention' : 'Info'}
+                            </Badge>
+                            <span className="text-xs text-muted-foreground">
+                              {new Date(a.anomaly_date).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric' })}
+                            </span>
+                          </div>
+                          
+                          {/* Data Summary Row */}
+                          <div className="text-xs text-muted-foreground flex flex-wrap items-center gap-3">
+                            {a.expected_kwh != null && a.actual_kwh != null && (
+                              <>
+                                <span>Prévu: {Number(a.expected_kwh).toFixed(1)} kWh</span>
+                                <span>•</span>
+                                <span>Réel: {Number(a.actual_kwh).toFixed(1)} kWh</span>
+                                {a.deviation_pct != null && (
+                                  <>
+                                    <span>•</span>
+                                    <span className={a.deviation_pct > 0 ? 'text-red-600' : 'text-blue-600'}>
+                                      {a.deviation_pct > 0 ? '+' : ''}{Number(a.deviation_pct).toFixed(1)}%
+                                    </span>
+                                  </>
+                                )}
+                              </>
+                            )}
+                            {a.score != null && <span>Score confiance: {Number(a.score).toFixed(2)}</span>}
+                          </div>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-sm">
-                            {new Date(a.anomaly_date).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                          </span>
-                          <Badge variant="outline" className="text-[9px]">{typeLabel}</Badge>
-                          <Badge className={cn('text-[9px]', a.resolved ? 'bg-green-100 text-green-700' : a.severity === 'high' ? 'bg-red-100 text-red-700' : 'bg-amber-100 text-amber-700')}>
-                            {a.resolved ? 'Résolu' : a.severity === 'high' ? 'Critique' : a.severity === 'medium' ? 'Attention' : 'Info'}
-                          </Badge>
-                          {a.deviation_pct != null && (
-                            <Badge variant="secondary" className="text-[9px]">Déviation: {Number(a.deviation_pct).toFixed(1)}%</Badge>
+                      
+                      {/* Explanation & Description */}
+                      {!isResolved && (
+                        <div className="space-y-2 pt-2 border-t">
+                          <div>
+                            <div className="flex items-start gap-2">
+                              <Info className="w-4 h-4 text-blue-500 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-xs font-medium text-blue-900 mb-0.5">Qu'est-ce que c'est?</p>
+                                <p className="text-xs text-muted-foreground">{explanation.meaning}</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-start gap-2">
+                              <CheckCircle className="w-4 h-4 text-green-600 flex-shrink-0 mt-0.5" />
+                              <div>
+                                <p className="text-xs font-medium text-green-900 mb-0.5">Que faire?</p>
+                                <p className="text-xs text-muted-foreground">{explanation.action}</p>
+                              </div>
+                            </div>
+                          </div>
+                          {a.description && (
+                            <p className="text-xs bg-muted/50 p-2 rounded mt-2">{a.description}</p>
                           )}
                         </div>
-                        {a.description && <p className="text-xs text-muted-foreground mt-1">{a.description}</p>}
-                        <div className="text-[10px] text-muted-foreground mt-1 flex items-center gap-3">
-                          {a.expected_kwh != null && <span>Attendu: {Number(a.expected_kwh).toFixed(1)} kWh</span>}
-                          {a.actual_kwh != null && <span>Réel: {Number(a.actual_kwh).toFixed(1)} kWh</span>}
-                          {a.score != null && <span>Score: {Number(a.score).toFixed(2)}</span>}
-                        </div>
-                      </div>
+                      )}
                     </CardContent>
                   </Card>
                 );
