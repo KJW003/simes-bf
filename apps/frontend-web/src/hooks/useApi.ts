@@ -285,6 +285,57 @@ export function useDetectAnomalies() {
   });
 }
 
+export function useMLForecast(terrainId: string | null, days = 30) {
+  return useQuery({
+    queryKey: ['mlForecast', terrainId, days],
+    queryFn: () => api.getMLForecast(terrainId!, days),
+    enabled: !!terrainId,
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
+}
+
+/** Backend-computed hourly forecast (replaces client-side computation) */
+export function useHourlyForecast(
+  terrainId: string | null,
+  opts?: { days?: number; point_id?: string; history_days?: number },
+) {
+  return useQuery({
+    queryKey: ['hourlyForecast', terrainId, opts],
+    queryFn: () => api.getHourlyForecast(terrainId!, opts),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: 1,
+  });
+}
+
+/** Comparison profiles (today/yesterday actuals) for chart overlays */
+export function useComparisonProfiles(terrainId: string | null, point_id?: string) {
+  return useQuery({
+    queryKey: ['comparisonProfiles', terrainId, point_id],
+    queryFn: () => api.getComparisonProfiles(terrainId!, point_id),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    retry: 1,
+  });
+}
+
+/** Daily chart data (history + forecast combined) */
+export function useDailyChartData(
+  terrainId: string | null,
+  opts?: { history_days?: number; forecast_days?: number },
+) {
+  return useQuery({
+    queryKey: ['dailyChartData', terrainId, opts],
+    queryFn: () => api.getDailyChartData(terrainId!, opts),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    retry: 1,
+  });
+}
+
 // ─── Historical readings ───────────────────────────────────
 
 export interface ReadingsData {

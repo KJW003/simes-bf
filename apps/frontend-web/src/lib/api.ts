@@ -560,6 +560,58 @@ export const api = {
   getMLModelStatus: (terrainId: string | number) =>
     request<{ terrain_id: number; status: string; mape: number | null; rmse: number | null; samples: number | null }>(`/ai/model/${terrainId}`),
 
+  // ── Hourly Forecasts (backend-computed) ──
+  getHourlyForecast: (terrainId: string | number, opts?: { days?: number; point_id?: string; history_days?: number }) =>
+    request<{
+      terrain_id: string;
+      point_id: string | null;
+      model_type: string;
+      confidence_level: number;
+      data_days: number;
+      daily_avg_kw: number;
+      trend_per_day: number;
+      warnings: string[] | null;
+      hourly_forecast: Array<{
+        day: string;
+        day_iso: string;
+        hours: Array<{ hour: number; predicted_kw: number; lower: number; upper: number }>;
+      }>;
+      daily_forecast: Array<{ day: string; day_iso: string; predicted_kwh: number; lower: number; upper: number }>;
+      history_summary: { n_days: number; daily_avg: number; std_dev: number; slope: number };
+    }>(`/ai/forecast/hourly/${terrainId}?${new URLSearchParams({
+      ...(opts?.days ? { days: String(opts.days) } : {}),
+      ...(opts?.point_id ? { point_id: opts.point_id } : {}),
+      ...(opts?.history_days ? { history_days: String(opts.history_days) } : {}),
+    }).toString()}`),
+
+  getComparisonProfiles: (terrainId: string | number, point_id?: string) =>
+    request<{
+      terrain_id: string;
+      point_id: string | null;
+      today: Array<{ hour: number; kw: number | null }>;
+      yesterday: Array<{ hour: number; kw: number | null }>;
+    }>(`/ai/forecast/profiles/${terrainId}${point_id ? `?point_id=${point_id}` : ''}`),
+
+  getDailyChartData: (terrainId: string | number, opts?: { history_days?: number; forecast_days?: number }) =>
+    request<{
+      terrain_id: string;
+      history_days: number;
+      forecast_days: number;
+      chart_data: Array<{
+        day: string;
+        day_iso: string | null;
+        actual_kwh: number | null;
+        actual_max: number | null;
+        predicted_kwh: number | null;
+        upper: number | null;
+        lower: number | null;
+        type: 'history' | 'forecast';
+      }>;
+    }>(`/ai/forecast/daily-chart/${terrainId}?${new URLSearchParams({
+      ...(opts?.history_days ? { history_days: String(opts.history_days) } : {}),
+      ...(opts?.forecast_days ? { forecast_days: String(opts.forecast_days) } : {}),
+    }).toString()}`),
+
   // ── AI Anomaly Detection ──
   getAnomalies: (terrainId: string | number, days = 30) =>
     request<{ anomalies: Array<{ id: number; terrain_id: number; point_id: string | null; anomaly_date: string; anomaly_type: string; severity: string; score: number; expected_kwh: number | null; actual_kwh: number | null; deviation_pct: number | null; description: string | null; resolved: boolean }> }>(`/ai/anomalies/${terrainId}?days=${days}`),

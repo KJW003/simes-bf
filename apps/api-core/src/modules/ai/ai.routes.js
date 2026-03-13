@@ -111,4 +111,59 @@ router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => 
   }
 });
 
+// ──────────────────────────────────────────────────────────────────────────────
+// Hourly Forecast Endpoints (backend-computed, replaces frontend logic)
+// ──────────────────────────────────────────────────────────────────────────────
+
+// GET /ai/forecast/hourly/:terrainId — 24-hour forecast curve (J+1 to J+7)
+router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const params = new URLSearchParams();
+    if (req.query.days) params.set('days', Math.min(7, Math.max(1, parseInt(req.query.days, 10) || 1)).toString());
+    if (req.query.point_id) params.set('point_id', req.query.point_id);
+    if (req.query.history_days) params.set('history_days', Math.min(90, Math.max(7, parseInt(req.query.history_days, 10) || 14)).toString());
+
+    const url = `${ML_SERVICE_URL}/forecast/hourly/${terrainId}?${params.toString()}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 502).json(data);
+  } catch (err) {
+    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+  }
+});
+
+// GET /ai/forecast/profiles/:terrainId — today/yesterday hourly actuals for comparison
+router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const params = new URLSearchParams();
+    if (req.query.point_id) params.set('point_id', req.query.point_id);
+
+    const url = `${ML_SERVICE_URL}/forecast/profiles/${terrainId}?${params.toString()}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 502).json(data);
+  } catch (err) {
+    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+  }
+});
+
+// GET /ai/forecast/daily-chart/:terrainId — combined history + forecast for chart
+router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const params = new URLSearchParams();
+    if (req.query.history_days) params.set('history_days', Math.min(90, Math.max(7, parseInt(req.query.history_days, 10) || 14)).toString());
+    if (req.query.forecast_days) params.set('forecast_days', Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3)).toString());
+
+    const url = `${ML_SERVICE_URL}/forecast/daily-chart/${terrainId}?${params.toString()}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 502).json(data);
+  } catch (err) {
+    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+  }
+});
+
 module.exports = router;

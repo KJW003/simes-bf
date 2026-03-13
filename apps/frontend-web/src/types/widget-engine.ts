@@ -149,6 +149,23 @@ export interface WidgetResolverContext {
   zones?: Array<Record<string, unknown>>;
   /** Historical readings from /readings API (time series) */
   readings?: Array<Record<string, unknown>>;
+  /** Anomalies detected by IA service (from /ai/anomalies API) */
+  anomalies?: Array<{
+    anomaly_type: string;
+    severity: 'critical' | 'warning' | 'info';
+    score: number;
+    expected_kwh?: number;
+    actual_kwh?: number;
+    deviation_pct?: number;
+    description?: string;
+  }>;
+  /** ML forecast data (from /ai/forecast API) */
+  forecast?: Array<{
+    day: string;
+    predicted_kwh: number;
+    lower: number;
+    upper: number;
+  }>;
 }
 
 export type WidgetRenderer = (props: {

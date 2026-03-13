@@ -306,7 +306,101 @@ function alertsResolver(
   };
 }
 
-function forecastResolver(
+/** Anomalies resolver – uses data from ctx.anomalies (fetched via useAnomalies hook in WidgetBoard) */
+function anomaliesResolver(
+  config: WidgetConfig,
+  ctx: WidgetResolverContext
+): ResolvedWidgetData {
+  const anomalies = (ctx.anomalies ?? []) as Array<{
+    anomaly_type: string;
+    severity: string;
+    score: number;
+    expected_kwh?: number;
+    actual_kwh?: number;
+    deviation_pct?: number;
+    description?: string;
+  }>;
+
+  const criticalCount = anomalies.filter(a => a.severity === 'critical').length;
+  const warningCount = anomalies.filter(a => a.severity === 'warning').length;
+  const infoCount = anomalies.filter(a => a.severity === 'info').length;
+
+  return {
+    kpis: {
+      anomalyCount: anomalies.length,
+      criticalCount,
+      warningCount,
+      infoCount,
+    },
+    series: {},
+    availableMetrics: [],
+    meta: {
+      anomalies,
+      sourceInfo: `${anomalies.length} anomalies détectées (via IA)`,
+    },
+  };
+}
+
+/** ML Forecast resolver – uses data from ctx.forecast (fetched via useMLForecast hook in WidgetBoard) */
+function mlForecastResolver(
+  config: WidgetConfig,
+  ctx: WidgetResolverContext
+): ResolvedWidgetData {
+  const forecastData = (ctx.forecast ?? []) as Array<{
+    day: string;
+    predicted_kwh: number;
+    lower: number;
+    upper: number;
+  }>;
+
+  if (!forecastData.length) {
+    return {
+      kpis: { avgForecasted: 0, confidence: 0 },
+      series: {},
+      availableMetrics: ['Energy'],
+      meta: { sourceInfo: 'Aucune prévision disponible' },
+    };
+  }
+
+  const avgPredicted = forecastData.reduce((s, d) => s + d.predicted_kwh, 0) / forecastData.length;
+
+  // Build series for P50 (median) and confidence band
+  const p50Series: Array<{ ts: number; value: number }> = forecastData.map(d => ({
+    ts: new Date(d.day).getTime(),
+    value: Number(d.predicted_kwh),
+  }));
+
+  const lowerSeries: Array<{ ts: number; value: number }> = forecastData.map(d => ({
+    ts: new Date(d.day).getTime(),
+    value: Number(d.lower),
+  }));
+
+  const upperSeries: Array<{ ts: number; value: number }> = forecastData.map(d => ({
+    ts: new Date(d.day).getTime(),
+    value: Number(d.upper),
+  }));
+
+  return {
+    kpis: {
+      avgForecasted: Number(avgPredicted.toFixed(2)),
+      confidence: 0.87, // À extraire du modèle si disponible (model_mape/rmse)
+      forecastDays: forecastData.length,
+    },
+    series: {
+      p50: p50Series,
+      lower: lowerSeries,
+      upper: upperSeries,
+    },
+    availableMetrics: ['Energy'],
+    meta: {
+      sourceInfo: `Prévision ${forecastData.length} jours via ML`,
+      unitByMetric: { Energy: 'kWh' },
+    },
+  };
+}
+
+// ─── DEPRECATED: Old forecast resolver (kept for reference, not used) ───
+function _deprecatedForecastResolver(
   config: WidgetConfig,
   ctx: WidgetResolverContext
 ): ResolvedWidgetData {
@@ -625,54 +719,7 @@ export const widgetDefinitions: WidgetDefinition[] = [
     standalone: true,
   },
   // ── Core metric widgets ──
-  {
-    id: 'energy-quality-summary',
-    title: 'Qualité énergie (Charges)',
-    description: 'Puissance, énergie, PF min, THD max, déséquilibres — par défaut sur les charges (LOAD).',
-    category: 'core',
-    supportedSizes: ['sm', 'md', 'lg'],
-    icon: Gauge,
-    configSchema: {
-      allowedScopes: ['POINT', 'CATEGORY'],
-      allowedDataSources: ['POINT', 'CATEGORY_AGG'],
-      supportedMetrics: ['P', 'Energy', 'PF', 'THD', 'VUnbal', 'IUnbal'],
-      supportsMultiMetric: true,
-      hasTimeRange: true,
-      defaultConfig: {
-        scopeType: 'CATEGORY',
-        dataSource: { type: 'CATEGORY_AGG', refId: '', categoryFilter: 'LOAD' },
-        metrics: ['P', 'Energy', 'PF', 'THD'],
-        timeRange: { mode: 'WIDGET_MANAGED', value: '1M' },
-        display: { viewMode: 'MIXED', multiMetricMode: 'TABS', primaryMetric: 'P' },
-      },
-    },
-    resolver: energyQualityResolver,
-    renderer: () => null, // rendered inline in WidgetBoard
-  },
-  {
-    id: 'live-load',
-    title: 'Courbe de charge live (Charges)',
-    description: 'Évolution temps réel de la puissance — par défaut sur les charges (LOAD).',
-    category: 'core',
-    supportedSizes: ['sm', 'md', 'lg'],
-    icon: Activity,
-    configSchema: {
-      allowedScopes: ['POINT', 'CATEGORY'],
-      allowedDataSources: ['POINT', 'CATEGORY_AGG'],
-      supportedMetrics: ['P', 'Q', 'S', 'V', 'I', 'PF', 'THD'],
-      supportsMultiMetric: true,
-      hasTimeRange: false,
-      defaultConfig: {
-        scopeType: 'CATEGORY',
-        dataSource: { type: 'CATEGORY_AGG', refId: '', categoryFilter: 'LOAD' },
-        metrics: ['P', 'Q', 'S', 'V', 'I', 'PF', 'THD'],
-        timeRange: { mode: 'FOLLOW_PAGE', value: '1D' },
-        display: { viewMode: 'CHART', multiMetricMode: 'TABS' },
-      },
-    },
-    resolver: liveLoadResolver,
-    renderer: () => null,
-  },
+  // NOTE: energy-quality-summary and live-load removed (replaced by generic-chart)
   {
     id: 'cost-energy',
     title: 'Coût estimé (Charges)',
@@ -698,75 +745,52 @@ export const widgetDefinitions: WidgetDefinition[] = [
     renderer: () => null,
   },
   {
-    id: 'diagnostics',
-    title: 'Diagnostics & recommandations',
-    description: "Synthèse des points d'attention détectés.",
-    category: 'insight',
-    supportedSizes: ['sm', 'md', 'lg'],
-    icon: Brain,
-    configSchema: {
-      allowedScopes: ['POINT'],
-      allowedDataSources: ['POINT'],
-      supportedMetrics: ['PF', 'THD'],
-      supportsMultiMetric: false,
-      hasTimeRange: false,
-      defaultConfig: {
-        scopeType: 'POINT',
-        dataSource: { type: 'POINT', refId: '' },
-        metrics: ['PF', 'THD'],
-        timeRange: { mode: 'FOLLOW_PAGE', value: '1M' },
-        display: { viewMode: 'TABLE', multiMetricMode: 'TABS' },
-      },
-    },
-    resolver: diagnosticsResolver,
-    renderer: () => null,
-  },
-  {
-    id: 'active-alerts',
-    title: 'Alertes actives',
-    description: 'Liste des alertes prioritaires en cours.',
+    id: 'anomalies',
+    title: 'Anomalies détectées (IA)',
+    description: 'Anomalies détectées par le service ML — déviation, consommation inattendue, etc.',
     category: 'risk',
     supportedSizes: ['sm', 'md', 'lg'],
     icon: ShieldAlert,
     configSchema: {
-      allowedScopes: ['POINT'],
-      allowedDataSources: ['POINT'],
-      supportedMetrics: [],
-      supportsMultiMetric: false,
-      hasTimeRange: false,
-      defaultConfig: {
-        scopeType: 'POINT',
-        dataSource: { type: 'POINT', refId: '' },
-        metrics: [],
-        timeRange: { mode: 'FOLLOW_PAGE', value: '1M' },
-        display: { viewMode: 'TABLE', multiMetricMode: 'TABS' },
-      },
-    },
-    resolver: alertsResolver,
-    renderer: () => null,
-  },
-  {
-    id: 'forecast',
-    title: 'Prévision consommation',
-    description: 'Projection de consommation et bande de confiance.',
-    category: 'core',
-    supportedSizes: ['sm', 'md', 'lg'],
-    icon: LineChartIcon,
-    configSchema: {
-      allowedScopes: ['POINT'],
-      allowedDataSources: ['POINT'],
+      allowedScopes: ['TERRAIN', 'POINT'],
+      allowedDataSources: ['TERRAIN_AGG', 'POINT'],
       supportedMetrics: ['Energy'],
       supportsMultiMetric: false,
       hasTimeRange: true,
       defaultConfig: {
-        scopeType: 'POINT',
-        dataSource: { type: 'POINT', refId: '' },
+        scopeType: 'TERRAIN',
+        dataSource: { type: 'TERRAIN_AGG', refId: '' },
+        metrics: ['Energy'],
+        timeRange: { mode: 'WIDGET_MANAGED', value: '1M' },
+        display: { viewMode: 'TABLE', multiMetricMode: 'TABS' },
+      },
+    },
+    resolver: anomaliesResolver,
+    renderer: () => null,
+  }
+  // NOTE: active-alerts removed (replaced by anomalies using AI service)
+  {
+    id: 'forecast',
+    title: 'Prévision ML (IA)',
+    description: 'Projection de consommation par ML avec intervalle de confiance (P50/P90).',
+    category: 'core',
+    supportedSizes: ['sm', 'md', 'lg'],
+    icon: TrendingUp,
+    configSchema: {
+      allowedScopes: ['TERRAIN'],
+      allowedDataSources: ['TERRAIN_AGG'],
+      supportedMetrics: ['Energy'],
+      supportsMultiMetric: false,
+      hasTimeRange: true,
+      defaultConfig: {
+        scopeType: 'TERRAIN',
+        dataSource: { type: 'TERRAIN_AGG', refId: '' },
         metrics: ['Energy'],
         timeRange: { mode: 'WIDGET_MANAGED', value: '1M' },
         display: { viewMode: 'CHART', multiMetricMode: 'TABS' },
       },
     },
-    resolver: forecastResolver,
+    resolver: mlForecastResolver,
     renderer: () => null,
   },
   // -------------------------

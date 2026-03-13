@@ -18,7 +18,7 @@ import {
   ContextMenuTrigger,
 } from '@/components/ui/context-menu';
 import { useAppContext } from '@/contexts/AppContext';
-import { useTerrainOverview, useReadings, stableFrom, stableNow } from '@/hooks/useApi';
+import { useTerrainOverview, useReadings, useAnomalies, useMLForecast, stableFrom, stableNow } from '@/hooks/useApi';
 import { ConfigureWidgetModal } from '@/components/widgets/ConfigureWidgetModal';
 import { getWidgetDefinition, getWidgetDefinitions } from '@/lib/widget-registry';
 import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWidget, AlarmWidget, AlarmConfigPanel, AnomalyWidget } from '@/components/widgets/dashboard-sections';
@@ -945,6 +945,10 @@ export function WidgetBoard() {
   const readingsTo = useMemo(() => stableNow(), [readingsFrom]);
   const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom });
 
+  // Fetch anomalies and ML forecast data for IA widgets
+  const { data: anomaliesData } = useAnomalies(selectedTerrainId, 30);
+  const { data: forecastData } = useMLForecast(selectedTerrainId, 30);
+
   const [layout, setLayout] = useState<WidgetLayoutItem[]>(() => loadLayout(storageKey, selectedTerrainId));
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [fullscreenId, setFullscreenId] = useState<string | null>(null);
@@ -977,15 +981,17 @@ export function WidgetBoard() {
     return map;
   }, []);
 
-  // Resolver context — includes pre-fetched overview data + historical readings
+  // Resolver context — includes pre-fetched overview data + historical readings + IA data
   const resolverCtx: WidgetResolverContext = useMemo(
     () => ({
       terrainId: selectedTerrainId,
       points: overviewPoints,
       zones: overviewZones,
       readings: (readingsData?.readings ?? []) as Array<Record<string, unknown>>,
+      anomalies: (anomaliesData?.anomalies ?? []) as Array<Record<string, unknown>>,
+      forecast: (forecastData?.forecast ?? []) as Array<Record<string, unknown>>,
     }),
-    [selectedTerrainId, overviewPoints, overviewZones, readingsData]
+    [selectedTerrainId, overviewPoints, overviewZones, readingsData, anomaliesData, forecastData]
   );
 
 

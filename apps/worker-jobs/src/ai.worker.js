@@ -67,7 +67,84 @@ async function computeFacture(payload = {}) {
   if (!t.rows.length) throw new Error("tariff_plan_id in contract not found");
   const tariff = t.rows[0];
 
-  // 3) fetch 15m aggs for terrain within window
+  // 3a) Ensure 15m + daily aggregations are up-to-date for the billing period
+  log.info({ terrainId, from: from.toISOString(), to: to.toISOString() }, "Pre-aggregating data for facture period");
+  const aggParams = [from.toISOString(), to.toISOString(), terrainId];
+
+  await telemetryDb.query(`
+    INSERT INTO acrel_agg_15m (
+      bucket_start, org_id, site_id, terrain_id, point_id,
+      samples_count,
+      active_power_avg, active_power_max,
+      voltage_a_avg,
+      energy_import_delta, energy_export_delta, energy_total_delta,
+      reactive_energy_import_delta, power_factor_avg
+    )
+    SELECT
+      time_bucket('15 minutes', time) AS bucket_start,
+      org_id, site_id, terrain_id, point_id,
+      COUNT(*)::int AS samples_count,
+      AVG(active_power_total) AS active_power_avg,
+      MAX(active_power_total) AS active_power_max,
+      AVG(voltage_a) AS voltage_a_avg,
+      (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
+      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
+      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta,
+      (MAX(reactive_energy_import) - MIN(reactive_energy_import)) AS reactive_energy_import_delta,
+      AVG(power_factor_total) AS power_factor_avg
+    FROM acrel_readings
+    WHERE time >= $1 AND time < $2 AND terrain_id = $3
+    GROUP BY bucket_start, org_id, site_id, terrain_id, point_id
+    ON CONFLICT (point_id, bucket_start)
+    DO UPDATE SET
+      samples_count = EXCLUDED.samples_count,
+      active_power_avg = EXCLUDED.active_power_avg,
+      active_power_max = EXCLUDED.active_power_max,
+      voltage_a_avg = EXCLUDED.voltage_a_avg,
+      energy_import_delta = EXCLUDED.energy_import_delta,
+      energy_export_delta = EXCLUDED.energy_export_delta,
+      energy_total_delta = EXCLUDED.energy_total_delta,
+      reactive_energy_import_delta = EXCLUDED.reactive_energy_import_delta,
+      power_factor_avg = EXCLUDED.power_factor_avg
+  `, aggParams);
+
+  await telemetryDb.query(`
+    INSERT INTO acrel_agg_daily (
+      day, org_id, site_id, terrain_id, point_id,
+      samples_count,
+      active_power_avg, active_power_max,
+      energy_import_delta, energy_export_delta, energy_total_delta,
+      reactive_energy_import_delta, power_factor_avg
+    )
+    SELECT
+      (time_bucket('1 day', time))::date AS day,
+      org_id, site_id, terrain_id, point_id,
+      COUNT(*)::int AS samples_count,
+      AVG(active_power_total) AS active_power_avg,
+      MAX(active_power_total) AS active_power_max,
+      (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
+      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
+      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta,
+      (MAX(reactive_energy_import) - MIN(reactive_energy_import)) AS reactive_energy_import_delta,
+      AVG(power_factor_total) AS power_factor_avg
+    FROM acrel_readings
+    WHERE time >= $1 AND time < $2 AND terrain_id = $3
+    GROUP BY day, org_id, site_id, terrain_id, point_id
+    ON CONFLICT (point_id, day)
+    DO UPDATE SET
+      samples_count = EXCLUDED.samples_count,
+      active_power_avg = EXCLUDED.active_power_avg,
+      active_power_max = EXCLUDED.active_power_max,
+      energy_import_delta = EXCLUDED.energy_import_delta,
+      energy_export_delta = EXCLUDED.energy_export_delta,
+      energy_total_delta = EXCLUDED.energy_total_delta,
+      reactive_energy_import_delta = EXCLUDED.reactive_energy_import_delta,
+      power_factor_avg = EXCLUDED.power_factor_avg
+  `, aggParams);
+
+  log.info("Pre-aggregation complete for facture period");
+
+  // 3b) fetch 15m aggs for terrain within window
   const rows = await telemetryDb.query(
     `SELECT bucket_start, point_id, samples_count,
             active_power_max,
@@ -135,17 +212,18 @@ async function computeFacture(payload = {}) {
   // Mr = Reactive losses : αr × Wr + βr × h
   const Mr = alphaR * Wr + betaR * periodHours;
 
-  // K1, K2 = proportion of HP vs HPT in total active consumption
-  const K1 = Wa > 0 ? hpKwh / Wa : 0.7;
-  const K2 = Wa > 0 ? hptKwh / Wa : 0.3;
+  // K1 = Consommation Heure Pleine (kWh), K2 = Consommation Heure Pointe (kWh)
+  // Wa = K1 + K2
+  const K1 = hpKwh;   // HPL
+  const K2 = hptKwh;  // HPT
 
-  // Active loss allocation per period
-  const Ma_HPL = Ma * K1;  // losses attributed to HP
-  const Ma_HPT = Ma * K2;  // losses attributed to HPT
+  // Ma_HPL = Ma × (K1 / Wa), Ma_HPT = Ma × (K2 / Wa)
+  const Ma_HPL = Wa > 0 ? Ma * (K1 / Wa) : 0;
+  const Ma_HPT = Wa > 0 ? Ma * (K2 / Wa) : 0;
 
-  // Billed active energy per period (metered + losses)
-  const billedHpKwh = hpKwh + Ma_HPL;
-  const billedHptKwh = hptKwh + Ma_HPT;
+  // Conso_HPL = K1 + Ma_HPL, Conso_HPT = K2 + Ma_HPT
+  const billedHpKwh = K1 + Ma_HPL;
+  const billedHptKwh = K2 + Ma_HPT;
 
   // ── Reactive energy and power factor penalty (Kma) ──
   // Cr = total reactive consumption + losses
@@ -166,9 +244,9 @@ async function computeFacture(payload = {}) {
   const cosPhi = 1 / Math.sqrt(1 + tanPhi * tanPhi);
 
   // Kma coefficient (power factor penalty)
-  // If cos(φ) >= 0.93 → Kma = 1 (no penalty)
-  // If cos(φ) < 0.93 → Kma = 1 + (tg(φ) - 0.75) / 3
-  const Kma = cosPhi >= 0.93 ? 1 : Math.max(1, 1 + (tanPhi - 0.75) / 3);
+  // Si cosφ > 0.93 → Kma = 1 (pas de pénalité)
+  // Si cosφ ≤ 0.93 → Kma = 1 + (P - 0.75) / 3
+  const Kma = cosPhi > 0.93 ? 1 : Math.max(1, 1 + (tanPhi - 0.75) / 3);
 
   // ── 6) Cost calculations ──
   const rateHp = Number(tariff.rate_hp);
@@ -182,10 +260,10 @@ async function computeFacture(payload = {}) {
   const energyHptAmount = billedHptKwh * rateHpt;
   const energyAmount = energyHpAmount + energyHptAmount;
 
-  // Prime fixe (PF) = PS × tarif_PF × Kma / 12
-  // (prime_per_kw = tarif_PF, divided by 12 for monthly)
+  // Prime fixe (PF) = (PS × Tarif_PF × Kma) / 12
+  // prime_per_kw = tarif_PF annuel, diviser par 12 pour mensualiser
   const months = periodHours / (30 * 24) || 1;
-  const demandAmount = subscribedPowerKw * primePerKw * Kma * months;
+  const demandAmount = (subscribedPowerKw * primePerKw * Kma / 12) * months;
 
   // Dépassement (30 * (Pmax-PS) * tarifHPT)
   const exceedKw = Math.max(maxDemandKw - subscribedPowerKw, 0);
@@ -206,18 +284,19 @@ async function computeFacture(payload = {}) {
   const totalAmount = beforeVat + vat;
 
   const breakdown = [
-    { key: "HP", label: "Heures pleines (compteur)", kwh: hpKwh, rate: rateHp, amount: hpKwh * rateHp },
-    { key: "HPT", label: "Heures de pointe (compteur)", kwh: hptKwh, rate: rateHpt, amount: hptKwh * rateHpt },
-    { key: "MA", label: "Pertes actives (Ma)", kwh: Ma, rate: null, amount: null, detail: `αa=${alphaA}, βa=${betaA}` },
-    { key: "MA_HP", label: "Ma attribué HP", kwh: Ma_HPL, rate: rateHp, amount: Ma_HPL * rateHp },
+    { key: "K1", label: "K1 — Conso. Heure Pleine (HPL)", kwh: K1, rate: rateHp, amount: null },
+    { key: "K2", label: "K2 — Conso. Heure Pointe (HPT)", kwh: K2, rate: rateHpt, amount: null },
+    { key: "MA", label: "Pertes actives Ma", kwh: Ma, rate: null, amount: null, detail: `αa=${alphaA}, βa=${betaA}, h=${periodHours.toFixed(0)}` },
+    { key: "MA_HPL", label: "Ma attribué HPL", kwh: Ma_HPL, rate: rateHp, amount: Ma_HPL * rateHp },
     { key: "MA_HPT", label: "Ma attribué HPT", kwh: Ma_HPT, rate: rateHpt, amount: Ma_HPT * rateHpt },
-    { key: "ENERGY", label: "Total énergie (avec pertes)", kwh: billedHpKwh + billedHptKwh, rate: null, amount: energyAmount },
-    { key: "PF", label: "Prime fixe × Kma", kwh: null, rate: primePerKw, amount: demandAmount, ps_kw: subscribedPowerKw, kma: Kma },
-    { key: "EXCEED", label: "Dépassement puissance", kwh: null, rate: rateHpt, amount: exceedAmount, exceed_kw: exceedKw, pmax_kw: maxDemandKw },
+    { key: "CONSO_HPL", label: "Conso. facturée HPL (K1+Ma_HPL)", kwh: billedHpKwh, rate: rateHp, amount: energyHpAmount },
+    { key: "CONSO_HPT", label: "Conso. facturée HPT (K2+Ma_HPT)", kwh: billedHptKwh, rate: rateHpt, amount: energyHptAmount },
+    { key: "PF", label: "Prime fixe (PS×Tarif_PF×Kma/12)", kwh: null, rate: primePerKw, amount: demandAmount, ps_kw: subscribedPowerKw, kma: Kma },
+    { key: "EXCEED", label: "Dépassement puissance (30×ΔP×HPT)", kwh: null, rate: rateHpt, amount: exceedAmount, exceed_kw: exceedKw, pmax_kw: maxDemandKw },
     { key: "FIXED", label: "Prime fixe mensuelle", kwh: null, rate: null, amount: fixedMonthly * months },
-    { key: "FEES", label: "Frais contrat (location/maintenance)", kwh: null, rate: null, amount: contractFees },
+    { key: "FEES", label: "Location compteur / poste / entretien", kwh: null, rate: null, amount: contractFees },
     { key: "TDE_TDSAAE", label: "TDE + TDSAAE", kwh: Wa + Ma, rate: tdeTdsaaeRate, amount: tde_tdsaae },
-    { key: "TVA", label: "TVA", kwh: null, rate: vatRate, amount: vat },
+    { key: "TVA", label: "TVA (18%)", kwh: null, rate: vatRate, amount: vat },
   ];
 
   return {
@@ -227,10 +306,12 @@ async function computeFacture(payload = {}) {
     tariffVersionId: tariff.id,
     tariffVersionName: tariff.name,
     plan_code: tariff.plan_code,
-    // Energy
+    // Energy (spec naming)
     totalKwh: Wa,
-    peakKwh: hptKwh,
-    offPeakKwh: hpKwh,
+    K1: K1,        // HPL kWh
+    K2: K2,        // HPT kWh
+    peakKwh: K2,
+    offPeakKwh: K1,
     reactiveKwh: Wr,
     // Losses
     activeLosses_Ma: Ma,
@@ -251,6 +332,8 @@ async function computeFacture(payload = {}) {
     // Financials
     breakdown,
     totalAmount,
+    beforeVat,
+    vat,
   };
 }
 

@@ -5,16 +5,17 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
   TrendingUp, Loader2, Calendar, Activity, Zap, Target, BarChart3, Brain, RefreshCw,
-  ArrowRight, Clock, Eye,
+  ArrowRight, Clock, Eye, AlertTriangle,
 } from 'lucide-react';
-import { useReadings, useTerrainOverview, stableFrom, stableNow } from '@/hooks/useApi';
+import { useTerrainOverview, useHourlyForecast, useComparisonProfiles, useDailyChartData, useMLForecast } from '@/hooks/useApi';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import {
   LineChart, Line, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -28,130 +29,6 @@ const FORECAST_HORIZONS = [
   { key: '3D', label: 'J+3', days: 3, historyDays: 14 },
   { key: '7D', label: 'J+7', days: 7, historyDays: 30 },
 ] as const;
-
-// ──────────────────────────────────────── helpers ────────────────────────────────────────
-
-/** Build hourly profile for a given date from raw readings */
-function buildHourlyProfile(readings: Array<Record<string, unknown>>, targetDate: Date) {
-  const targetDay = targetDate.toLocaleDateString('fr-FR');
-  const hourlyMap = new Map<number, number[]>();
-  for (const r of readings) {
-    const t = new Date(String(r.time));
-    if (t.toLocaleDateString('fr-FR') !== targetDay) continue;
-    const pw = r.active_power_total != null ? Number(r.active_power_total) : null;
-    if (pw == null) continue;
-    const h = t.getHours();
-    if (!hourlyMap.has(h)) hourlyMap.set(h, []);
-    hourlyMap.get(h)!.push(pw);
-  }
-  return Array.from({ length: 24 }, (_, h) => {
-    const vals = hourlyMap.get(h) ?? [];
-    return vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
-  });
-}
-
-/** Build historical daily averages from readings */
-function buildDailyHistory(readings: Array<Record<string, unknown>>) {
-  const dailyMap = new Map<string, { sum: number; count: number; max: number; date: Date }>();
-  for (const r of readings) {
-    const t = new Date(String(r.time));
-    const dayKey = t.toISOString().slice(0, 10);
-    const pw = r.active_power_total != null ? Number(r.active_power_total) : null;
-    if (pw == null) continue;
-    if (!dailyMap.has(dayKey)) dailyMap.set(dayKey, { sum: 0, count: 0, max: -Infinity, date: t });
-    const e = dailyMap.get(dayKey)!;
-    e.sum += pw; e.count++; e.max = Math.max(e.max, pw);
-  }
-  return Array.from(dailyMap.entries())
-    .map(([key, v]) => ({
-      dateKey: key,
-      date: v.date,
-      label: v.date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
-      avg: Math.round((v.sum / v.count) * 100) / 100,
-      max: Math.round(v.max * 100) / 100,
-    }))
-    .sort((a, b) => a.dateKey.localeCompare(b.dateKey));
-}
-
-/** Build predicted hourly profile for a future day based on historical hourly patterns */
-function buildPredictedHourly(
-  readings: Array<Record<string, unknown>>,
-  dailyAvg: number,
-  forecastDayIndex: number,
-  slope: number,
-  n: number,
-) {
-  // Compute hourly shape from history (avg profile)
-  const hourlyShape = new Map<number, number[]>();
-  for (const r of readings) {
-    const hh = new Date(String(r.time)).getHours();
-    const pw = r.active_power_total != null ? Number(r.active_power_total) : null;
-    if (pw == null) continue;
-    if (!hourlyShape.has(hh)) hourlyShape.set(hh, []);
-    hourlyShape.get(hh)!.push(pw);
-  }
-
-  const profileAvgs: number[] = [];
-  for (let hh = 0; hh < 24; hh++) {
-    const vals = hourlyShape.get(hh) ?? [];
-    profileAvgs.push(vals.length ? vals.reduce((s, v) => s + v, 0) / vals.length : 0);
-  }
-  const profileTotal = profileAvgs.reduce((s, v) => s + v, 0);
-
-  // Predicted daily average with trend
-  const predictedDailyAvg = Math.max(0, dailyAvg + slope * (n >= 2 ? forecastDayIndex : 0));
-
-  // Scale hourly shape to predicted daily level
-  const scale = profileTotal > 0 ? predictedDailyAvg / (profileTotal / 24) : 1;
-  return profileAvgs.map(v => Math.max(0, Math.round(v * scale * 100) / 100));
-}
-
-/** Compute daily forecast stats */
-function computeForecast(
-  readings: Array<Record<string, unknown>>,
-  forecastDays: number,
-) {
-  if (!readings.length) return { history: [] as ReturnType<typeof buildDailyHistory>, forecast: [] as Array<{ day: string; predicted: number; upper: number; lower: number; dateKey: string }>, dailyAvg: 0, trend: 0 };
-
-  const history = buildDailyHistory(readings);
-  if (!history.length) return { history, forecast: [], dailyAvg: 0, trend: 0 };
-
-  const n = history.length;
-  const avgPower = history.reduce((s, d) => s + d.avg, 0) / n;
-
-  let slope = 0;
-  if (n >= 2) {
-    const xMean = (n - 1) / 2;
-    let num = 0, den = 0;
-    for (let i = 0; i < n; i++) {
-      num += (i - xMean) * (history[i].avg - avgPower);
-      den += (i - xMean) ** 2;
-    }
-    slope = den !== 0 ? num / den : 0;
-  }
-
-  const stdDev = n >= 2
-    ? Math.sqrt(history.reduce((s, d) => s + (d.avg - avgPower) ** 2, 0) / n)
-    : avgPower * 0.3;
-
-  const forecast: Array<{ day: string; predicted: number; upper: number; lower: number; dateKey: string }> = [];
-  const today = new Date();
-  for (let i = 1; i <= forecastDays; i++) {
-    const futureDate = new Date(today.getTime() + i * 86400_000);
-    const dayLabel = futureDate.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-    const predicted = Math.max(0, avgPower + slope * (n >= 2 ? (n - 1 + i - (n - 1) / 2) : 0));
-    const confidence = stdDev * 1.5 * Math.sqrt(1 + i / n);
-    forecast.push({
-      day: dayLabel,
-      dateKey: futureDate.toISOString().slice(0, 10),
-      predicted: Math.round(predicted * 100) / 100,
-      upper: Math.round((predicted + confidence) * 100) / 100,
-      lower: Math.max(0, Math.round((predicted - confidence) * 100) / 100),
-    });
-  }
-
-  return { history, forecast, dailyAvg: avgPower, trend: slope };
-}
 
 // ──────────────────────────── theme-safe chart colors ────────────────────────────
 // Using CSS variables via hsl() so they adapt to dark/light
@@ -176,82 +53,59 @@ export default function Forecasts() {
   const queryClient = useQueryClient();
 
   const h = FORECAST_HORIZONS.find(f => f.key === horizon) ?? FORECAST_HORIZONS[0];
-  const from = useMemo(() => stableFrom(h.historyDays * 86400_000), [h]);
-  const to = useMemo(() => stableNow(), []);
+  const pointId = selectedPoint === '_all' ? undefined : selectedPoint;
 
   const { data: overviewData } = useTerrainOverview(selectedTerrainId);
-  const { data, isLoading } = useReadings(selectedTerrainId, {
-    from,
-    to,
-    point_id: selectedPoint === '_all' ? undefined : selectedPoint,
-    cols: 'active_power_total',
+
+  // ── Backend-computed forecasts (replaces client-side logic) ──
+  const { data: hourlyData, isLoading: hourlyLoading } = useHourlyForecast(selectedTerrainId, {
+    days: h.days,
+    point_id: pointId,
+    history_days: h.historyDays,
   });
 
-  // LightGBM ML forecast API (auto-trains if no model exists)
-  const { data: mlForecast, isLoading: mlLoading, isError: mlError } = useQuery({
-    queryKey: ['ml-forecast', selectedTerrainId, h.days],
-    queryFn: async () => {
-      try { return await api.getMLForecast(selectedTerrainId!, h.days); }
-      catch (e: any) {
-        if (e.status === 404 || e.status === 422 || e.status === 503) return null;
-        throw e;
-      }
-    },
-    enabled: !!selectedTerrainId,
-    staleTime: 5 * 60_000,
-    retry: false,
-    placeholderData: (prev: unknown) => prev,
+  const { data: profilesData } = useComparisonProfiles(selectedTerrainId, pointId);
+
+  const { data: dailyChartData, isLoading: dailyLoading } = useDailyChartData(selectedTerrainId, {
+    history_days: h.historyDays,
+    forecast_days: h.days,
   });
+
+  // LightGBM ML forecast (for multi-day predictions)
+  const { data: mlForecast, isError: mlError } = useMLForecast(selectedTerrainId, h.days);
 
   const trainMutation = useMutation({
     mutationFn: () => api.trainMLModel(selectedTerrainId!),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: ['ml-forecast', selectedTerrainId] }); },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['mlForecast', selectedTerrainId] });
+      queryClient.invalidateQueries({ queryKey: ['hourlyForecast', selectedTerrainId] });
+      queryClient.invalidateQueries({ queryKey: ['dailyChartData', selectedTerrainId] });
+    },
   });
 
-  const mlType = (mlForecast as any)?.model_type as string | undefined;
+  const isLoading = hourlyLoading || dailyLoading;
   const useML = !!mlForecast && !mlError;
+  const mlType = (mlForecast as any)?.model_type as string | undefined;
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
-  const rawReadings = (data?.readings ?? []) as Array<Record<string, unknown>>;
 
-  // When "all points", aggregate readings by summing active_power_total across points per time bucket
-  const readings = useMemo(() => {
-    if (selectedPoint !== '_all' || !rawReadings.length) return rawReadings;
-    const buckets = new Map<string, { sum: number; time: string }>();
-    for (const r of rawReadings) {
-      const t = String(r.time);
-      // 5-min buckets for aggregation
-      const bucketKey = new Date(t).toISOString().slice(0, 15);
-      const pw = r.active_power_total != null ? Number(r.active_power_total) : null;
-      if (pw == null) continue;
-      const e = buckets.get(bucketKey);
-      if (e) { e.sum += pw; } else { buckets.set(bucketKey, { sum: pw, time: t }); }
-    }
-    return Array.from(buckets.values()).map(b => ({ time: b.time, active_power_total: b.sum }));
-  }, [rawReadings, selectedPoint]);
+  // ── Extract data from backend responses ──
+  const dailyAvg = hourlyData?.daily_avg_kw ?? 0;
+  const trend = hourlyData?.trend_per_day ?? 0;
+  const confidenceLevel = hourlyData?.confidence_level ?? 0;
+  const warnings = hourlyData?.warnings ?? [];
+  const dataDays = hourlyData?.data_days ?? 0;
 
-  const clientForecast = useMemo(() => computeForecast(readings, h.days), [readings, h.days]);
+  // Predicted hourly curve (J+1)
+  const predictedHourly: number[] = useMemo(() => {
+    if (!hourlyData?.hourly_forecast?.length) return [];
+    const firstDay = hourlyData.hourly_forecast[0];
+    return firstDay?.hours?.map(h => h.predicted_kw) ?? [];
+  }, [hourlyData]);
 
-  const history = clientForecast.history;
-  const forecast = useML
-    ? (mlForecast as any).forecast.map((d: any) => ({ day: d.day, predicted: d.predicted_kwh, upper: d.upper, lower: d.lower, dateKey: '' }))
-    : clientForecast.forecast;
-  const dailyAvg = clientForecast.dailyAvg;
-  const trend = clientForecast.trend;
-
-  // ── Hourly J+1 predicted curve (main feature) ──
-  const predictedHourly = useMemo(
-    () => buildPredictedHourly(readings, dailyAvg, 1, trend, history.length),
-    [readings, dailyAvg, trend, history.length],
-  );
-
-  // ── Comparison profiles: today & yesterday ──
-  const now = new Date();
-  const todayProfile = useMemo(() => buildHourlyProfile(readings, now), [readings]);
-  const yesterdayProfile = useMemo(() => {
-    const y = new Date(now.getTime() - 86400_000);
-    return buildHourlyProfile(readings, y);
-  }, [readings]);
+  // Comparison profiles from backend
+  const todayProfile = useMemo(() => profilesData?.today?.map(h => h.kw) ?? Array(24).fill(null), [profilesData]);
+  const yesterdayProfile = useMemo(() => profilesData?.yesterday?.map(h => h.kw) ?? Array(24).fill(null), [profilesData]);
 
   const compareProfile = compareDay === 'today' ? todayProfile : yesterdayProfile;
   const compareLabel = compareDay === 'today' ? "Aujourd'hui" : 'Hier';
@@ -260,50 +114,45 @@ export default function Forecasts() {
   const hourlyChartData = useMemo(() => {
     return Array.from({ length: 24 }, (_, hh) => ({
       hour: `${String(hh).padStart(2, '0')}h`,
-      prévision: predictedHourly[hh],
+      prévision: predictedHourly[hh] ?? null,
       [compareLabel]: compareProfile[hh],
       max_prévu: predictedHourly[hh] != null ? Math.round(predictedHourly[hh] * 1.25 * 100) / 100 : null,
     }));
   }, [predictedHourly, compareProfile, compareLabel]);
 
-  // ── Multi-day historical chart with forecast overlay ──
+  // ── Multi-day daily chart from backend ──
   const dailyChart = useMemo(() => {
-    const hist = history.map(d => ({
-      day: d.label,
-      réel: d.avg,
-      max_réel: d.max,
-      prévision: null as number | null,
-      bande_haute: null as number | null,
-      bande_basse: null as number | null,
-    }));
-    const fc = forecast.map(d => ({
+    if (!dailyChartData?.chart_data) return [];
+    return dailyChartData.chart_data.map(d => ({
       day: d.day,
-      réel: null as number | null,
-      max_réel: null as number | null,
-      prévision: d.predicted,
+      réel: d.actual_kwh,
+      max_réel: d.actual_max,
+      prévision: d.predicted_kwh,
       bande_haute: d.upper,
       bande_basse: d.lower,
     }));
-    // Bridge last history point to first forecast
-    if (hist.length && fc.length) {
-      fc[0].réel = hist[hist.length - 1].réel;
-    }
-    return [...hist, ...fc];
-  }, [history, forecast]);
+  }, [dailyChartData]);
 
-  // ── Prediction vs actual comparison (for past forecast days that now have real data) ──
-  const predVsActual = useMemo(() => {
-    if (!forecast.length || !history.length) return [];
-    // For each forecast point, see if we have actual data for that day
-    return forecast
-      .map(fc => {
-        const match = history.find(h => h.label === fc.day);
-        if (!match) return null;
-        const error = match.avg > 0 ? Math.round(Math.abs(fc.predicted - match.avg) / match.avg * 100) : null;
-        return { day: fc.day, prévu: fc.predicted, réel: match.avg, erreur: error };
-      })
-      .filter(Boolean) as Array<{ day: string; prévu: number; réel: number; erreur: number | null }>;
-  }, [forecast, history]);
+  // Forecast array for KPIs (use ML if available, otherwise backend hourly)
+  const forecast = useMemo(() => {
+    if (useML && mlForecast?.forecast) {
+      return mlForecast.forecast.map((d: any) => ({
+        day: d.day,
+        predicted: d.predicted_kwh,
+        upper: d.upper,
+        lower: d.lower,
+      }));
+    }
+    if (hourlyData?.daily_forecast) {
+      return hourlyData.daily_forecast.map(d => ({
+        day: d.day,
+        predicted: d.predicted_kwh,
+        upper: d.upper,
+        lower: d.lower,
+      }));
+    }
+    return [];
+  }, [useML, mlForecast, hourlyData]);
 
   // KPIs
   const forecastEnergy = forecast.reduce((s, d) => s + d.predicted * 24, 0);
@@ -317,7 +166,9 @@ export default function Forecasts() {
     ? mlType === 'simple'
       ? 'Moyenne par jour de semaine'
       : `LightGBM (MAPE: ${(mlForecast as any)?.model_mape?.toFixed(1) ?? '?'}%)`
-    : 'Régression linéaire (local)';
+    : hourlyData?.model_type
+      ? `Profil horaire (${dataDays}j historique)`
+      : 'Régression linéaire';
 
   if (!selectedTerrainId) {
     return (
@@ -374,7 +225,24 @@ export default function Forecasts() {
             </SelectContent>
           </Select>
         </div>
+        {/* Confidence & data quality indicator */}
+        {confidenceLevel > 0 && confidenceLevel < 0.7 && (
+          <Badge variant="outline" className="text-xs text-yellow-600 dark:text-yellow-400">
+            <AlertTriangle className="w-3 h-3 mr-1" />
+            Confiance: {Math.round(confidenceLevel * 100)}%
+          </Badge>
+        )}
       </div>
+
+      {/* ── Data quality warnings ── */}
+      {warnings.length > 0 && (
+        <Alert variant="default" className="border-yellow-500/50 bg-yellow-50/50 dark:bg-yellow-950/20">
+          <AlertTriangle className="h-4 w-4 text-yellow-600" />
+          <AlertDescription className="text-sm text-yellow-700 dark:text-yellow-400">
+            {warnings.join(' • ')}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {isLoading && (
         <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" />Calcul des prévisions…</CardContent></Card>
@@ -473,7 +341,7 @@ export default function Forecasts() {
                 <CardTitle className="text-base font-medium flex items-center gap-2">
                   <TrendingUp className="w-4 h-4 text-primary" />
                   Historique + Prévision — Puissance active moyenne par jour
-                  <Badge variant="outline" className="text-[10px] ml-auto">{history.length} j historiques <ArrowRight className="w-3 h-3 inline" /> {forecast.length} j prévus</Badge>
+                  <Badge variant="outline" className="text-[10px] ml-auto">{dailyChartData?.history_days ?? 0} j historiques <ArrowRight className="w-3 h-3 inline" /> {forecast.length} j prévus</Badge>
                 </CardTitle>
               </CardHeader>
               <CardContent>
@@ -521,52 +389,45 @@ export default function Forecasts() {
             </Card>
           )}
 
-          {/* ══════════════════════ CHART 3: Prévu vs Réel (si données disponibles) ══════════════════════ */}
-          {predVsActual.length > 0 && (
+          {/* ══════════════════════ Model Quality Card (if ML available) ══════════════════════ */}
+          {useML && mlForecast && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-medium flex items-center gap-2">
                   <Eye className="w-4 h-4 text-primary" />
-                  Prévu vs Réel — Vérification des prédictions passées
+                  Qualité du modèle prédictif
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <ResponsiveContainer width="100%" height={260}>
-                  <ComposedChart data={predVsActual}>
-                    <CartesianGrid strokeDasharray="3 3" stroke={COLORS.grid} opacity={0.5} />
-                    <XAxis dataKey="day" tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} />
-                    <YAxis tick={{ fontSize: 10, fill: 'hsl(var(--muted-foreground))' }} unit=" kW" />
-                    <Tooltip
-                      contentStyle={{
-                        backgroundColor: 'hsl(var(--card))',
-                        borderColor: 'hsl(var(--border))',
-                        color: 'hsl(var(--card-foreground))',
-                        borderRadius: 8,
-                        fontSize: 12,
-                      }}
-                      formatter={(v: number | null, name: string) => {
-                        if (name === 'erreur') return [v != null ? `${v}%` : '—', 'Erreur'];
-                        return [v != null ? `${v.toFixed(1)} kW` : '—', name === 'prévu' ? 'Prévu' : 'Réel'];
-                      }}
-                    />
-                    <Legend wrapperStyle={{ fontSize: 11 }} formatter={(v: string) => {
-                      const labels: Record<string, string> = { prévu: 'Prévu', réel: 'Réel', erreur: 'Erreur (%)' };
-                      return labels[v] ?? v;
-                    }} />
-                    <Bar dataKey="prévu" fill={COLORS.predicted} opacity={0.7} radius={[4, 4, 0, 0]} barSize={24} />
-                    <Bar dataKey="réel" fill={COLORS.actual} opacity={0.8} radius={[4, 4, 0, 0]} barSize={24} />
-                  </ComposedChart>
-                </ResponsiveContainer>
-                <div className="flex flex-wrap gap-3 mt-3 justify-center">
-                  {predVsActual.map(d => (
-                    <div key={d.day} className="text-center">
-                      <span className="text-xs text-muted-foreground">{d.day}</span>
-                      <div className={`text-sm font-semibold ${d.erreur != null && d.erreur > 15 ? 'text-destructive' : d.erreur != null && d.erreur < 5 ? 'text-green-600 dark:text-green-400' : 'text-foreground'}`}>
-                        {d.erreur != null ? `${d.erreur}% erreur` : '—'}
-                      </div>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+                  <div>
+                    <div className="text-2xl font-bold text-primary">
+                      {(mlForecast as any)?.model_mape?.toFixed(1) ?? '—'}%
                     </div>
-                  ))}
+                    <div className="text-xs text-muted-foreground">MAPE (erreur moyenne)</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-primary">
+                      {(mlForecast as any)?.model_rmse?.toFixed(1) ?? '—'}
+                    </div>
+                    <div className="text-xs text-muted-foreground">RMSE (kWh)</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-primary">
+                      {dataDays}
+                    </div>
+                    <div className="text-xs text-muted-foreground">Jours d'historique</div>
+                  </div>
+                  <div>
+                    <div className="text-2xl font-bold text-primary">
+                      {Math.round(confidenceLevel * 100)}%
+                    </div>
+                    <div className="text-xs text-muted-foreground">Niveau de confiance</div>
+                  </div>
                 </div>
+                <p className="text-[11px] text-muted-foreground mt-3 text-center">
+                  MAPE &lt; 10% = excellent · MAPE 10-20% = bon · MAPE &gt; 20% = à améliorer (plus de données nécessaires)
+                </p>
               </CardContent>
             </Card>
           )}

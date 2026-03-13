@@ -80,6 +80,27 @@ if (!connection) {
 
       log.info("✓ Aggregation gap check scheduled: runs every 15 minutes");
 
+      // ── Telemetry aggregation: every hour (last 2h window) ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.aggregate") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log.info({ key: job.key }, 'Removed old aggregate job');
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.aggregate",
+        { payload: {} },
+        {
+          repeat: { pattern: "5 * * * *" }, // Every hour at :05
+          removeOnComplete: 5,
+          removeOnFail: 10,
+          attempts: 2,
+        }
+      );
+
+      log.info("✓ Telemetry aggregation scheduled: every hour at :05");
+
       // ── Queue health check: every 10 minutes ──
       for (const job of jobs) {
         if (job.name === "telemetry.check_queue_health") {

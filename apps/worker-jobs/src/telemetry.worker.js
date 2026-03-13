@@ -162,6 +162,7 @@ async function runProcessHistoricalMessages(payload = {}) {
       `SELECT id, received_at, payload_raw, modbus_addr, dev_eui
        FROM incoming_messages
        WHERE device_key = $1
+       
          AND (status = 'mapped' OR status = 'unmapped')
          AND payload_raw IS NOT NULL
        ORDER BY received_at ASC`,
