@@ -345,7 +345,7 @@ export const api = {
   // ── Tariffs ──
   getTariffPlans: (group?: string) => {
     const qs = group ? `?group=${group}` : '';
-    return request<Array<Record<string, unknown>>>(`/tariffs${qs}`);
+    return request<{ ok: boolean; tariffs: Array<{ id: string; group_code: string; plan_code: string; name: string; [key: string]: unknown }> }>(`/tariffs${qs}`);
   },
 
   // ── Monthly Invoices (Facturation) ──

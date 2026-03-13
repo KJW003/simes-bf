@@ -20,7 +20,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
-import { useSubmitFacture, useFactureResult, useTariffPlans, useTerrainContract, useSaveTerrainContract } from '@/hooks/useApi';
+import { useSubmitFacture, useFactureResult, useTariffPlans, useTerrainContract, useSaveTerrainContract, useFactureMonths, useFactureMonthly } from '@/hooks/useApi';
 import { Receipt, Zap, TrendingUp, AlertTriangle, Loader2, FileText, Calculator, Settings2, Check, ChevronDown } from 'lucide-react';
 
 const formatCurrency = (value: number) => value.toLocaleString('fr-FR');
@@ -52,14 +52,52 @@ export default function InvoiceImproved() {
     }
   };
 
-  // Facture
-  const [selectedMonth, setSelectedMonth] = useState(`${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}`);
+  // Facture – Load available months from DB
+  const { data: monthsData, isLoading: monthsLoading } = useFactureMonths(terrainId);
+  const availableMonths = monthsData?.months || [];
+  
+  // Initialize with first available month, or fallback to current month
+  const firstAvailableMonth = availableMonths.length > 0 
+    ? availableMonths[0] 
+    : null;
+  
+  const [selectedYear, setSelectedYear] = useState<number | null>(firstAvailableMonth?.year ?? new Date().getFullYear());
+  const [selectedMonth, setSelectedMonth] = useState<number | null>(firstAvailableMonth?.month ?? new Date().getMonth() + 1);
+  
+  // Auto-load the first available month's invoice when page loads
+  const { data: storedInvoice, isLoading: storedInvoiceLoading } = useFactureMonthly(
+    terrainId,
+    selectedYear && selectedMonth ? selectedYear : undefined,
+    selectedYear && selectedMonth ? selectedMonth : undefined
+  );
+  
   const [runId, setRunId] = useState<string | null>(null);
   const submitFacture = useSubmitFacture();
   const { data: apiFacture, isLoading: pollingFacture } = useFactureResult(runId);
 
-  const liveResult = apiFacture as Record<string, unknown> | null;
+  // Load real-time "Today" invoice (auto-refetch every 5 minutes)
+  const { data: todayInvoice, isLoading: todayLoading } = useFactureMonthly(
+    terrainId,
+    undefined,
+    undefined,
+    'today'
+  );
+
+  // Show stored invoice if available, otherwise show on-demand calculation result
+  const displayedInvoice = storedInvoice ?? apiFacture;
+  const liveResult = displayedInvoice as Record<string, unknown> | null;
   const hasLiveResult = !!liveResult;
+  const isLoadingInvoice = storedInvoiceLoading || pollingFacture;
+  
+  const todayResult = todayInvoice as Record<string, unknown> | null;
+  const hasTodayResult = !!todayResult;
+  const todayTotal = hasTodayResult ? Number(todayResult.totalAmount ?? 0) : 0;
+  const todayTotalKwh = hasTodayResult ? Number(todayResult.totalKwh ?? 0) : 0;
+  const todayMaxPower = hasTodayResult ? Number(todayResult.maxDemandKw ?? 0) : 0;
+  const todayCosPhi = hasTodayResult ? Number(todayResult.cosPhi ?? 0) : 0;
+  const todayKma = hasTodayResult ? Number(todayResult.Kma ?? 1) : 1;
+  const todayBreakdown = hasTodayResult ? (todayResult.breakdown as Array<any>) : null;
+  const todayHasPfWarning = todayCosPhi > 0 && todayCosPhi < 0.93;
 
   const apiTotal = hasLiveResult ? Number(liveResult.totalAmount ?? 0) : 0;
   const apiTotalKwh = hasLiveResult ? Number(liveResult.totalKwh ?? 0) : 0;
@@ -160,7 +198,7 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
               <Select value={contractForm.tariff_plan_id} onValueChange={v => setContractForm({ ...contractForm, tariff_plan_id: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  {Array.isArray(tariffData) && tariffData.map((p: any) => (
+                  {tariffData?.tariffs && tariffData.tariffs.map((p: any) => (
                     <SelectItem key={p.id} value={String(p.id)}>{p.name ?? p.plan_code}</SelectItem>
                   ))}
                 </SelectContent>
@@ -204,20 +242,149 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
         </CardContent>
       </Card>
 
-      {/* Calculate section */}
+      {/* Historical months section */}
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base font-medium">Calculer la facture</CardTitle>
+          <CardTitle className="text-base font-medium">Factures pré-calculées</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {monthsLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Chargement des mois disponibles...
+            </div>
+          ) : availableMonths.length === 0 ? (
+            <div className="text-sm text-muted-foreground">Aucun mois calculé encore. Cliquez sur "Calculer aujourd'hui" ci-dessous.</div>
+          ) : (
+            <div className="space-y-3">
+              <div className="space-y-2">
+                <Label className="text-sm font-medium">Choisir un mois</Label>
+                <Select value={selectedYear && selectedMonth ? `${selectedYear}-${String(selectedMonth).padStart(2, '0')}` : ''} onValueChange={v => {
+                  const [y, m] = v.split('-');
+                  setSelectedYear(parseInt(y));
+                  setSelectedMonth(parseInt(m));
+                }}>
+                  <SelectTrigger><SelectValue placeholder="Sélectionner un mois..." /></SelectTrigger>
+                  <SelectContent>
+                    {availableMonths.map((m: any) => (
+                      <SelectItem key={`${m.year}-${m.month}`} value={`${m.year}-${String(m.month).padStart(2, '0')}`}>
+                        {m.display} — <span className="text-xs text-muted-foreground">{m.status}</span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              
+              {isLoadingInvoice && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Chargement de la facture...
+                </div>
+              )}
+              
+              {selectedYear && selectedMonth && !isLoadingInvoice && !hasLiveResult && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                  Facture non encore disponible pour {availableMonths.find((m: any) => m.year === selectedYear && m.month === selectedMonth)?.display}. Cliquez sur "Calculer" pour la générer.
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Manual calculation section */}
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium">Calculer aujourd'hui</CardTitle>
         </CardHeader>
         <CardContent className="flex items-center gap-4">
           <div className="flex-1">
-            <Label className="text-sm text-muted-foreground mb-2 block">Mois</Label>
-            <Input type="month" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)} />
+            <p className="text-sm text-muted-foreground">Générer une facture avec les données du jour en cours</p>
           </div>
-          <Button onClick={handleCalculate} disabled={!hasContract || pollingFacture} className="mt-6">
+          <Button onClick={handleCalculate} disabled={!hasContract || pollingFacture} className="mt-0">
             {pollingFacture ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Calculator className="w-4 h-4 mr-2" />}
             Calculer
           </Button>
+        </CardContent>
+      </Card>
+
+      {/* Today Live Section */}
+      <Card className="border-green-200 bg-green-50/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Zap className="w-4 h-4 text-green-600" />
+            Consommation du jour
+          </CardTitle>
+          <p className="text-xs text-muted-foreground mt-1">Données en temps réel mises à jour toutes les 5 minutes</p>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {todayLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              Chargement des données du jour...
+            </div>
+          ) : !hasTodayResult ? (
+            <div className="text-sm text-muted-foreground">Pas de données disponibles pour aujourd'hui</div>
+          ) : (
+            <>
+              {/* Today KPIs */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                <div className="rounded-lg border border-green-200 bg-white p-3 text-center">
+                  <div className="text-lg font-bold text-green-700">{formatCurrency(Math.round(todayTotal))}</div>
+                  <div className="text-xs text-muted-foreground">Total TTC (XOF)</div>
+                </div>
+                <div className="rounded-lg border border-green-200 bg-white p-3 text-center">
+                  <div className="text-lg font-bold text-green-700">{(todayTotalKwh / 1000).toFixed(2)}</div>
+                  <div className="text-xs text-muted-foreground">MWh</div>
+                </div>
+                <div className="rounded-lg border border-green-200 bg-white p-3 text-center">
+                  <div className="text-lg font-bold text-green-700">{todayMaxPower.toFixed(1)}</div>
+                  <div className="text-xs text-muted-foreground">Puissance max (kW)</div>
+                </div>
+                <div className="rounded-lg border border-green-200 bg-white p-3 text-center">
+                  <div className={`text-lg font-bold ${todayHasPfWarning ? 'text-amber-600' : 'text-green-700'}`}>{todayCosPhi.toFixed(3)}</div>
+                  <div className="text-xs text-muted-foreground">cos φ</div>
+                </div>
+              </div>
+
+              {todayHasPfWarning && (
+                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-amber-800">
+                    <span className="font-medium">cos φ = {todayCosPhi.toFixed(3)}</span> — Pénalité Kma = <span className="font-mono font-medium">{todayKma.toFixed(3)}</span> appliquée
+                  </div>
+                </div>
+              )}
+
+              {/* Today breakdown table */}
+              <table className="w-full text-xs">
+                <thead className="bg-green-100/50 border-b">
+                  <tr className="text-left">
+                    <th className="font-semibold py-1 px-2">Catégorie</th>
+                    <th className="text-right font-semibold py-1 px-2">kWh</th>
+                    <th className="text-right font-semibold py-1 px-2">Tarif (XOF)</th>
+                    <th className="text-right font-semibold py-1 px-2">Montant (XOF)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {todayBreakdown?.map((row: any) => (
+                    <tr key={row.key} className="border-b hover:bg-green-50">
+                      <td className="py-1 px-2 font-medium text-xs">{row.label}</td>
+                      <td className="text-right py-1 px-2 font-mono text-xs">{row.kwh != null ? formatCurrency(Math.round(row.kwh)) : '—'}</td>
+                      <td className="text-right py-1 px-2 font-mono text-xs">{row.rate != null ? formatCurrency(Number(row.rate)) : '—'}</td>
+                      <td className="text-right py-1 px-2 font-mono font-semibold text-xs">{row.amount != null ? formatCurrency(Math.round(row.amount)) : '—'}</td>
+                    </tr>
+                  ))}
+                  <tr className="bg-green-100/30 font-semibold border-t">
+                    <td className="py-1 px-2 text-xs">TOTAL TTC</td>
+                    <td className="text-right py-1 px-2 font-mono text-xs">{formatCurrency(Math.round(todayTotalKwh))}</td>
+                    <td className="text-right py-1 px-2"></td>
+                    <td className="text-right py-1 px-2 font-mono text-green-700 text-xs">{formatCurrency(Math.round(todayTotal))}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </>
+          )}
         </CardContent>
       </Card>
 
