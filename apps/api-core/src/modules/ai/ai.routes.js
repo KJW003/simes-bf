@@ -5,6 +5,100 @@ const log = require('../../config/logger');
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://ml-service:8000';
 
+function fmtDay(date) {
+  const dd = String(date.getDate()).padStart(2, '0');
+  const mm = String(date.getMonth() + 1).padStart(2, '0');
+  return `${dd}/${mm}`;
+}
+
+function buildZeroDailyForecast(days) {
+  const out = [];
+  const now = new Date();
+  for (let i = 1; i <= days; i += 1) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i);
+    out.push({ day: fmtDay(d), predicted_kwh: 0, lower: 0, upper: 0 });
+  }
+  return out;
+}
+
+function buildHourlyFallback(terrainId, days, detail, pointId) {
+  const now = new Date();
+  const hourlyForecast = [];
+  const dailyForecast = [];
+  for (let i = 1; i <= days; i += 1) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i);
+    const day = fmtDay(d);
+    const dayIso = d.toISOString().slice(0, 10);
+    hourlyForecast.push({
+      day,
+      day_iso: dayIso,
+      hours: Array.from({ length: 24 }, (_, h) => ({ hour: h, predicted_kw: 0, lower: 0, upper: 0 })),
+    });
+    dailyForecast.push({ day, day_iso: dayIso, predicted_kwh: 0, lower: 0, upper: 0 });
+  }
+
+  return {
+    terrain_id: terrainId,
+    point_id: pointId || null,
+    model_type: 'fallback_insufficient_data',
+    confidence_level: 0,
+    data_days: 0,
+    daily_avg_kw: 0,
+    trend_per_day: 0,
+    warnings: [
+      'Donnees insuffisantes pour une prevision fiable',
+      detail ? `Detail: ${detail}` : 'Aucune donnee exploitable pour ce terrain',
+    ],
+    hourly_forecast: hourlyForecast,
+    daily_forecast: dailyForecast,
+    history_summary: { n_days: 0, daily_avg: 0, std_dev: 0, slope: 0 },
+  };
+}
+
+function buildProfilesFallback(terrainId, pointId, detail) {
+  return {
+    terrain_id: terrainId,
+    point_id: pointId || null,
+    warnings: [
+      'Profils indisponibles (donnees insuffisantes)',
+      detail ? `Detail: ${detail}` : undefined,
+    ].filter(Boolean),
+    today: Array.from({ length: 24 }, (_, h) => ({ hour: h, kw: null })),
+    yesterday: Array.from({ length: 24 }, (_, h) => ({ hour: h, kw: null })),
+  };
+}
+
+function buildDailyChartFallback(terrainId, forecastDays, detail) {
+  const now = new Date();
+  const chartData = [];
+  for (let i = 1; i <= forecastDays; i += 1) {
+    const d = new Date(now);
+    d.setDate(now.getDate() + i);
+    chartData.push({
+      day: fmtDay(d),
+      day_iso: d.toISOString().slice(0, 10),
+      actual_kwh: null,
+      actual_max: null,
+      predicted_kwh: 0,
+      upper: 0,
+      lower: 0,
+      type: 'forecast',
+    });
+  }
+  return {
+    terrain_id: terrainId,
+    history_days: 0,
+    forecast_days: forecastDays,
+    warnings: [
+      'Historique insuffisant pour tracer les donnees reelles',
+      detail ? `Detail: ${detail}` : undefined,
+    ].filter(Boolean),
+    chart_data: chartData,
+  };
+}
+
 // Verify user has access to terrain via org membership
 async function verifyTerrainAccess(req, res, next) {
   try {
@@ -71,8 +165,15 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
     }
 
     if (resp.status === 422) {
-      // Insufficient data for training
-      return res.status(422).json(data);
+      // Keep UI stable when terrain has too little history.
+      return res.status(200).json({
+        terrain_id: terrainId,
+        forecast: buildZeroDailyForecast(days),
+        model_mape: null,
+        model_rmse: null,
+        model_type: 'insufficient_data',
+        warning: data?.detail || 'Not enough data for ML forecast yet',
+      });
     }
 
     if (!resp.ok) {
@@ -155,18 +256,20 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
     if (req.query.point_id) params.set('point_id', req.query.point_id);
     if (req.query.history_days) params.set('history_days', Math.min(90, Math.max(7, parseInt(req.query.history_days, 10) || 14)).toString());
 
+    const days = Math.min(7, Math.max(1, parseInt(req.query.days, 10) || 1));
     const url = `${ML_SERVICE_URL}/forecast/hourly/${terrainId}?${params.toString()}`;
     const resp = await fetch(url);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
-    catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
+    catch (e) {
+      log.warn({ endpoint: 'hourly', text }, 'ml-service returned non-JSON, using fallback');
+      return res.status(200).json(buildHourlyFallback(terrainId, days, text, req.query.point_id));
+    }
     if (!resp.ok) {
-      return res.status(502).json({
-        error: 'ML upstream error',
-        upstream_status: resp.status,
-        detail: data?.detail || data?.error || data,
-      });
+      return res.status(200).json(
+        buildHourlyFallback(terrainId, days, data?.detail || data?.error || String(data), req.query.point_id),
+      );
     }
     res.status(200).json(data);
   } catch (err) {
@@ -199,8 +302,16 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
-    catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
-    res.status(resp.ok ? 200 : 502).json(data);
+    catch (e) {
+      log.warn({ endpoint: 'profiles', text }, 'ml-service returned non-JSON, using fallback');
+      return res.status(200).json(buildProfilesFallback(terrainId, req.query.point_id, text));
+    }
+    if (!resp.ok) {
+      return res.status(200).json(
+        buildProfilesFallback(terrainId, req.query.point_id, data?.detail || data?.error || String(data)),
+      );
+    }
+    res.status(200).json(data);
   } catch (err) {
     log.error({
       endpoint: '/ai/forecast/profiles/:terrainId',
@@ -227,13 +338,22 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
     if (req.query.history_days) params.set('history_days', Math.min(90, Math.max(7, parseInt(req.query.history_days, 10) || 14)).toString());
     if (req.query.forecast_days) params.set('forecast_days', Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3)).toString());
 
+    const forecastDays = Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3));
     const url = `${ML_SERVICE_URL}/forecast/daily-chart/${terrainId}?${params.toString()}`;
     const resp = await fetch(url);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
-    catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
-    res.status(resp.ok ? 200 : 502).json(data);
+    catch (e) {
+      log.warn({ endpoint: 'daily-chart', text }, 'ml-service returned non-JSON, using fallback');
+      return res.status(200).json(buildDailyChartFallback(terrainId, forecastDays, text));
+    }
+    if (!resp.ok) {
+      return res.status(200).json(
+        buildDailyChartFallback(terrainId, forecastDays, data?.detail || data?.error || String(data)),
+      );
+    }
+    res.status(200).json(data);
   } catch (err) {
     log.error({
       endpoint: '/ai/forecast/daily-chart/:terrainId',
