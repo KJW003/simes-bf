@@ -104,9 +104,13 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
     """
 
     with get_conn() as conn:
-        df = pd.read_sql(agg_query, conn, params=(terrain_id,))
-        if df.empty:
-            logger.info(f"acrel_agg_daily empty for {terrain_id}, falling back to raw readings")
+        try:
+            df = pd.read_sql(agg_query, conn, params=(terrain_id,))
+            if df.empty:
+                logger.info(f"acrel_agg_daily empty for {terrain_id}, falling back to raw readings")
+                df = pd.read_sql(raw_query, conn, params=(terrain_id,))
+        except Exception as e:
+            logger.warning(f"acrel_agg_daily query failed for {terrain_id}, fallback to raw readings: {e}")
             df = pd.read_sql(raw_query, conn, params=(terrain_id,))
     return df
 
@@ -144,8 +148,12 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
     ORDER BY day;
     """
     with get_conn() as conn:
-        df = pd.read_sql(query, conn, params=(terrain_id,))
-        if df.empty:
+        try:
+            df = pd.read_sql(query, conn, params=(terrain_id,))
+            if df.empty:
+                df = pd.read_sql(raw_fallback, conn, params=(terrain_id,))
+        except Exception as e:
+            logger.warning(f"Simple daily agg query failed for {terrain_id}, fallback to raw readings: {e}")
             df = pd.read_sql(raw_fallback, conn, params=(terrain_id,))
     return df
 
@@ -496,7 +504,13 @@ def train(req: TrainRequest):
 
 @app.post("/predict", response_model=PredictResponse)
 def predict(req: PredictRequest):
-    return predict_forecast(req.terrain_id, req.days)
+    try:
+        return predict_forecast(req.terrain_id, req.days)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Predict failed for terrain {req.terrain_id}")
+        raise HTTPException(status_code=500, detail=f"Predict failed: {e}")
 
 
 @app.get("/models/{terrain_id}/status")
@@ -1365,18 +1379,44 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
     try:
         # Get historical daily data
         with get_conn() as conn:
-            history_df = pd.read_sql("""
-                SELECT day,
-                       SUM(energy_total_delta) AS energy_kwh,
-                       AVG(power_avg) AS avg_kw,
-                       MAX(power_max) AS max_kw
-                FROM acrel_agg_daily
-                WHERE terrain_id = %s
-                  AND day >= CURRENT_DATE - (%s * INTERVAL '1 day')
-                  AND day < CURRENT_DATE
-                GROUP BY day
-                ORDER BY day
-            """, conn, params=(terrain_id, history_days))
+            try:
+                history_df = pd.read_sql("""
+                    SELECT day,
+                           SUM(energy_total_delta) AS energy_kwh,
+                           AVG(active_power_avg) AS avg_kw,
+                           MAX(active_power_max) AS max_kw
+                    FROM acrel_agg_daily
+                    WHERE terrain_id = %s
+                      AND day >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                      AND day < CURRENT_DATE
+                    GROUP BY day
+                    ORDER BY day
+                """, conn, params=(terrain_id, history_days))
+            except Exception as e:
+                logger.warning(f"Daily chart agg query failed for {terrain_id}, fallback to raw readings: {e}")
+                history_df = pd.read_sql("""
+                    WITH daily AS (
+                        SELECT
+                            time_bucket('1 day', time)::date AS day,
+                            point_id,
+                            MAX(energy_total) - MIN(energy_total) AS energy_kwh_point,
+                            AVG(active_power_total) AS avg_kw_point,
+                            MAX(active_power_total) AS max_kw_point
+                        FROM acrel_readings
+                        WHERE terrain_id = %s
+                          AND time >= NOW() - (%s * INTERVAL '1 day')
+                          AND time < CURRENT_DATE
+                        GROUP BY 1, 2
+                    )
+                    SELECT
+                        day,
+                        SUM(energy_kwh_point) AS energy_kwh,
+                        SUM(avg_kw_point) AS avg_kw,
+                        MAX(max_kw_point) AS max_kw
+                    FROM daily
+                    GROUP BY day
+                    ORDER BY day
+                """, conn, params=(terrain_id, history_days))
 
         # Get ML forecast
         try:
