@@ -1078,7 +1078,13 @@ def build_hourly_shape(readings_df: pd.DataFrame) -> list[float]:
         return [0.0] * 24
 
     readings_df = readings_df.copy()
-    readings_df["hour"] = pd.to_datetime(readings_df["time"]).dt.hour
+    readings_df["time"] = pd.to_datetime(readings_df["time"], errors="coerce")
+    readings_df["active_power_total"] = pd.to_numeric(readings_df["active_power_total"], errors="coerce")
+    readings_df = readings_df.dropna(subset=["time", "active_power_total"])
+    if readings_df.empty:
+        return [0.0] * 24
+
+    readings_df["hour"] = readings_df["time"].dt.hour
     hourly_avg = readings_df.groupby("hour")["active_power_total"].mean()
 
     shape = []
@@ -1096,7 +1102,13 @@ def build_daily_stats(readings_df: pd.DataFrame) -> dict:
         return {"daily_avg": 0, "slope": 0, "std_dev": 0, "n_days": 0, "days": []}
 
     readings_df = readings_df.copy()
-    readings_df["day"] = pd.to_datetime(readings_df["time"]).dt.date
+    readings_df["time"] = pd.to_datetime(readings_df["time"], errors="coerce")
+    readings_df["active_power_total"] = pd.to_numeric(readings_df["active_power_total"], errors="coerce")
+    readings_df = readings_df.dropna(subset=["time", "active_power_total"])
+    if readings_df.empty:
+        return {"daily_avg": 0, "slope": 0, "std_dev": 0, "n_days": 0, "days": []}
+
+    readings_df["day"] = readings_df["time"].dt.date
 
     daily = readings_df.groupby("day")["active_power_total"].agg(["mean", "max", "count"]).reset_index()
     daily = daily.sort_values("day")
