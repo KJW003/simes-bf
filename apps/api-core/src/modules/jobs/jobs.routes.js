@@ -1,6 +1,7 @@
 const express = require("express");
 const {corePool} = require("../../config/db");
 const { pickQueue, JobTypes } = require("../../jobs/dispatch");
+const { verifyTerrainAccess } = require("../../shared/auth-middleware");
 
 const router = express.Router();
 
@@ -30,7 +31,7 @@ router.post("/jobs/forecast", async (req, res) => {
   }
 });
 
-router.post("/jobs/facture", async (req, res) => {
+router.post("/jobs/facture", verifyTerrainAccess("body.terrain_id"), async (req, res) => {
   try {
     const run = await createRunAndEnqueue(JobTypes.FACTURE, req.body);
     res.status(201).json(run);

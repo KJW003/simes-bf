@@ -88,9 +88,8 @@ export default function Invoice() {
   const [dateTo, setDateTo] = useState(defaultTo);
   const submitFacture = useSubmitFacture();
   const { data: apiFacture, isLoading: pollingFacture } = useFactureResult(runId);
-  const { data: latestFacture } = useLatestFacture();
 
-  const liveResult = (apiFacture ?? latestFacture) as Record<string, unknown> | null;
+  const liveResult = apiFacture as Record<string, unknown> | null;
   const hasLiveResult = !!liveResult;
 
   const handleCalculate = async () => {
