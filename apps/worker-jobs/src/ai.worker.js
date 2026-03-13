@@ -343,11 +343,18 @@ async function computeFacture(payload = {}) {
   const breakdown = [
     { key: "K1", label: "K1 — Conso. Heure Pleine (HPL)", kwh: K1, rate: rateHp, amount: null },
     { key: "K2", label: "K2 — Conso. Heure Pointe (HPT)", kwh: K2, rate: rateHpt, amount: null },
-    { key: "MA", label: "Pertes actives Ma", kwh: Ma, rate: null, amount: null, detail: `αa=${alphaA}, βa=${betaA}, h=${periodHours.toFixed(0)}` },
-    { key: "MA_HPL", label: "Ma attribué HPL", kwh: Ma_HPL, rate: rateHp, amount: Ma_HPL * rateHp },
-    { key: "MA_HPT", label: "Ma attribué HPT", kwh: Ma_HPT, rate: rateHpt, amount: Ma_HPT * rateHpt },
+    { key: "WA", label: "Wa — Total active energy", kwh: Wa, rate: null, amount: null, detail: "K1 + K2" },
+    { key: "WR", label: "Wr — Total reactive energy", kwh: Wr, rate: null, amount: null },
+    { key: "MA", label: "Ma — Pertes actives (αa×Wa + βa×h)", kwh: Ma, rate: null, amount: null, detail: `αa=${alphaA}, βa=${betaA}, h=${periodHours.toFixed(0)}` },
+    { key: "MR", label: "Mr — Pertes réactives (αr×Wr + βr×h)", kwh: Mr, rate: null, amount: null, detail: `αr=${alphaR}, βr=${betaR}, h=${periodHours.toFixed(0)}` },
+    { key: "MA_HPL", label: "Ma attribué HPL (Ma × K1/Wa)", kwh: Ma_HPL, rate: rateHp, amount: Ma_HPL * rateHp },
+    { key: "MA_HPT", label: "Ma attribué HPT (Ma × K2/Wa)", kwh: Ma_HPT, rate: rateHpt, amount: Ma_HPT * rateHpt },
     { key: "CONSO_HPL", label: "Conso. facturée HPL (K1+Ma_HPL)", kwh: billedHpKwh, rate: rateHp, amount: energyHpAmount },
     { key: "CONSO_HPT", label: "Conso. facturée HPT (K2+Ma_HPT)", kwh: billedHptKwh, rate: rateHpt, amount: energyHptAmount },
+    { key: "CR", label: "Cr — Total reactive (Wr + Mr)", kwh: Cr, rate: null, amount: null },
+    { key: "ERC", label: "Erc — Reactive compensated (Pc × h)", kwh: Erc, rate: null, amount: null, detail: `Pc=${capacitorPowerKw} kW` },
+    { key: "ER", label: "Er — Excess reactive (max(0, Cr-Erc))", kwh: Er, rate: null, amount: null },
+    { key: "COSPHI", label: "cos φ (power factor)", kwh: null, rate: cosPhi, amount: null, detail: `tan φ=${tanPhi.toFixed(4)}, Kma=${Kma.toFixed(4)}` },
     { key: "PF", label: "Prime fixe (PS×Tarif_PF×Kma/12)", kwh: null, rate: primePerKw, amount: demandAmount, ps_kw: subscribedPowerKw, kma: Kma },
     { key: "EXCEED", label: "Dépassement puissance (30×ΔP×HPT)", kwh: null, rate: rateHpt, amount: exceedAmount, exceed_kw: exceedKw, pmax_kw: maxDemandKw },
     { key: "FIXED", label: "Prime fixe mensuelle", kwh: null, rate: null, amount: fixedMonthly * months },
@@ -370,14 +377,22 @@ async function computeFacture(payload = {}) {
     totalKwh: Wa,
     K1: K1,        // HPL kWh
     K2: K2,        // HPT kWh
+    Wa,            // Total active energy (K1 + K2)
+    Wr,            // Total reactive energy
     peakKwh: K2,
     offPeakKwh: K1,
     reactiveKwh: Wr,
-    // Losses
+    // Active losses
     activeLosses_Ma: Ma,
-    reactiveLosses_Mr: Mr,
+    Ma_HPL,
+    Ma_HPT,
     billedHpKwh,
     billedHptKwh,
+    // Reactive losses
+    reactiveLosses_Mr: Mr,
+    Cr,            // Total reactive consumption (Wr + Mr)
+    Erc,           // Reactive compensated by capacitor
+    Er,            // Excess reactive energy
     // Power factor
     pfAvg,
     cosPhi,
@@ -389,6 +404,11 @@ async function computeFacture(payload = {}) {
     maxDemandKw,
     subscribedPowerKw,
     exceedKw,
+    // Loss coefficients
+    alphaA,
+    betaA,
+    alphaR,
+    betaR,
     // Financials
     breakdown,
     totalAmount,
