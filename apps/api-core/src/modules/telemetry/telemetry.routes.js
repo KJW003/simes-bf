@@ -222,8 +222,8 @@ router.get("/terrains/:terrainId/chart-data", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // GET /terrains/:terrainId/energy-history
-// Daily energy totals (aggregated across all LOAD points) from raw readings
-// Calculates (MAX - MIN) per point per day, then sums across all LOAD points
+// Daily energy totals (aggregated across all LOAD points)
+// Strategy: Past days from acrel_agg_daily (pre-aggregated), today from agg_15m
 // Query: ?from=ISO&to=ISO
 // Returns: [{ day, energy_total_delta (sum of all points), points_count }]
 // ─────────────────────────────────────────────────────────────
@@ -246,23 +246,36 @@ router.get("/terrains/:terrainId/energy-history", async (req, res) => {
       return res.json({ ok: true, terrain_id: terrainId, count: 0, data: [] });
     }
 
-    // Calculate daily energy delta directly from raw readings
-    // For each point, calculate MAX(energy_total) - MIN(energy_total) per day
-    // Then sum across all LOAD points per day
+    // Hybrid strategy: pre-aggregated table for past days + 15m buckets for current day
     const sql = `
+      -- Past days: from acrel_agg_daily (fast, pre-computed)
       SELECT 
-        DATE(time) AS day,
-        SUM(GREATEST(MAX(energy_total) - MIN(energy_total), 0)) AS energy_total_delta,
+        day,
+        SUM(energy_total_delta) AS energy_total_delta,
         COUNT(DISTINCT point_id) AS points_count
-      FROM acrel_readings
+      FROM acrel_agg_daily
       WHERE terrain_id = $1 
-        AND time >= $2::timestamptz
-        AND time <= $3::timestamptz
-        AND point_id = ANY($4)
-      GROUP BY DATE(time)
+        AND day >= $2::date
+        AND day < CURRENT_DATE
+        AND point_id = ANY($3)
+      GROUP BY day
+      
+      UNION ALL
+      
+      -- Current day: from agg_15m (live, grouped by 15m buckets then by day)
+      SELECT 
+        DATE(bucket_start) AS day,
+        SUM(energy_total_delta) AS energy_total_delta,
+        COUNT(DISTINCT point_id) AS points_count
+      FROM acrel_agg_15m
+      WHERE terrain_id = $1 
+        AND DATE(bucket_start) = CURRENT_DATE
+        AND point_id = ANY($3)
+      GROUP BY DATE(bucket_start)
+      
       ORDER BY day ASC
     `;
-    const r = await telemetryPool.query(sql, [terrainId, from, to, loadIds]);
+    const r = await telemetryPool.query(sql, [terrainId, from, loadIds]);
     
     res.json({
       ok: true,
