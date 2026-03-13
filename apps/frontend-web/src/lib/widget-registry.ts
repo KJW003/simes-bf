@@ -767,7 +767,7 @@ export const widgetDefinitions: WidgetDefinition[] = [
     },
     resolver: anomaliesResolver,
     renderer: () => null,
-  }
+  },
   // NOTE: active-alerts removed (replaced by anomalies using AI service)
   {
     id: 'forecast',
