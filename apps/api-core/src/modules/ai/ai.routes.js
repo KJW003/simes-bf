@@ -75,7 +75,15 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
       return res.status(422).json(data);
     }
 
-    res.status(resp.ok ? 200 : 502).json(data);
+    if (!resp.ok) {
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || data,
+      });
+    }
+
+    res.status(200).json(data);
   } catch (err) {
     log.error({ error: err.message }, 'ML predict failed');
     res.status(503).json({ error: 'ML service unavailable', detail: err.message });
@@ -101,7 +109,14 @@ router.post('/ai/anomalies/detect/:terrainId', verifyTerrainAccess, async (req, 
     const { terrainId } = req.params;
     const resp = await fetch(`${ML_SERVICE_URL}/anomalies/detect/${terrainId}`, { method: 'POST' });
     const data = await resp.json();
-    res.status(resp.ok ? 200 : 502).json(data);
+    if (!resp.ok) {
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || data,
+      });
+    }
+    res.status(200).json(data);
   } catch (err) {
     res.status(503).json({ error: 'ML service unavailable', detail: err.message });
   }
@@ -114,7 +129,14 @@ router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => 
     const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
     const resp = await fetch(`${ML_SERVICE_URL}/anomalies/${terrainId}?days=${days}`);
     const data = await resp.json();
-    res.status(resp.ok ? 200 : 502).json(data);
+    if (!resp.ok) {
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || data,
+      });
+    }
+    res.status(200).json(data);
   } catch (err) {
     res.status(503).json({ error: 'ML service unavailable', detail: err.message });
   }
@@ -139,7 +161,14 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
     let data;
     try { data = JSON.parse(text); } 
     catch (e) { return res.status(502).json({ error: 'ML service bad response', detail: text }); }
-    res.status(resp.ok ? 200 : 502).json(data);
+    if (!resp.ok) {
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || data,
+      });
+    }
+    res.status(200).json(data);
   } catch (err) {
     log.error({
       endpoint: '/ai/forecast/hourly/:terrainId',

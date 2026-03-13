@@ -123,16 +123,25 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
     ORDER BY day;
     """
     raw_fallback = """
+    WITH per_point_day AS (
+        SELECT
+            time_bucket('1 day', time)::date AS day,
+            point_id,
+            MAX(energy_total) - MIN(energy_total) AS energy_delta_point,
+            AVG(active_power_total) AS power_avg_point
+        FROM acrel_readings
+        WHERE terrain_id = %s AND active_power_total IS NOT NULL
+          AND time > NOW() - INTERVAL '365 days'
+        GROUP BY 1, 2
+    )
     SELECT
-        time_bucket('1 day', time)::date AS day,
-        SUM(MAX(energy_total) - MIN(energy_total)) AS energy_delta,
-        AVG(active_power_total) AS power_avg,
-        EXTRACT(DOW FROM time_bucket('1 day', time))::int AS day_of_week
-    FROM acrel_readings
-    WHERE terrain_id = %s AND active_power_total IS NOT NULL
-      AND time > NOW() - INTERVAL '365 days'
-    GROUP BY 1
-    ORDER BY 1;
+        day,
+        SUM(energy_delta_point) AS energy_delta,
+        SUM(power_avg_point) AS power_avg,
+        EXTRACT(DOW FROM day)::int AS day_of_week
+    FROM per_point_day
+    GROUP BY day
+    ORDER BY day;
     """
     with get_conn() as conn:
         df = pd.read_sql(query, conn, params=(terrain_id,))
