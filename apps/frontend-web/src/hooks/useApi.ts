@@ -394,12 +394,11 @@ export function useChartData(
   params: { from?: string; to?: string; bucket: '15m' | 'daily'; point_id?: string },
 ) {
   return useQuery<ChartDataResult, Error, ChartDataResult>({
-    queryKey: ['chart-data', terrainId, params],
+    queryKey: ['chart-data', terrainId, JSON.stringify(params)],
     queryFn: () => api.getChartData(terrainId!, params),
     enabled: !!terrainId,
     staleTime: 5 * 60_000,
     gcTime: 30 * 60_000,
-    placeholderData: keepPreviousData,
     retry: 1,
   });
 }
