@@ -222,7 +222,8 @@ router.get("/terrains/:terrainId/chart-data", async (req, res) => {
 
 // ─────────────────────────────────────────────────────────────
 // GET /terrains/:terrainId/energy-history
-// Daily energy totals (aggregated across all LOAD points) from acrel_agg_daily
+// Daily energy totals (aggregated across all LOAD points) from raw readings
+// Calculates (MAX - MIN) per point per day, then sums across all LOAD points
 // Query: ?from=ISO&to=ISO
 // Returns: [{ day, energy_total_delta (sum of all points), points_count }]
 // ─────────────────────────────────────────────────────────────
@@ -245,15 +246,20 @@ router.get("/terrains/:terrainId/energy-history", async (req, res) => {
       return res.json({ ok: true, terrain_id: terrainId, count: 0, data: [] });
     }
 
-    // Sum energy_total_delta per day across all LOAD points
+    // Calculate daily energy delta directly from raw readings
+    // For each point, calculate MAX(energy_total) - MIN(energy_total) per day
+    // Then sum across all LOAD points per day
     const sql = `
-      SELECT day, SUM(energy_total_delta) AS energy_total_delta, COUNT(*) AS points_count
-      FROM acrel_agg_daily
+      SELECT 
+        DATE(time) AS day,
+        SUM(GREATEST(MAX(energy_total) - MIN(energy_total), 0)) AS energy_total_delta,
+        COUNT(DISTINCT point_id) AS points_count
+      FROM acrel_readings
       WHERE terrain_id = $1 
-        AND day >= ($2::timestamptz)::date 
-        AND day <= ($3::timestamptz)::date
+        AND time >= $2::timestamptz
+        AND time <= $3::timestamptz
         AND point_id = ANY($4)
-      GROUP BY day
+      GROUP BY DATE(time)
       ORDER BY day ASC
     `;
     const r = await telemetryPool.query(sql, [terrainId, from, to, loadIds]);
