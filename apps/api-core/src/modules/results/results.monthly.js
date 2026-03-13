@@ -18,10 +18,12 @@ const { corePool } = require("../../config/db");
 const { requireAuth } = require("../../shared/auth-middleware");
 const { verifyTerrainAccess } = require("../../shared/auth-middleware");
 const { Queue } = require("bullmq");
-const redis = require("redis");
+const IORedis = require("ioredis");
 
 // Connect to Redis for job submission
-const redisClient = redis.createClient(process.env.REDIS_URL || "redis://localhost:6379");
+const redisClient = new IORedis(process.env.REDIS_URL || "redis://localhost:6379", { 
+  maxRetriesPerRequest: null 
+});
 const aiQueue = new Queue("ai", { connection: redisClient });
 
 /**

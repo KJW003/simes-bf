@@ -115,6 +115,25 @@ router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => 
 // Hourly Forecast Endpoints (backend-computed, replaces frontend logic)
 // ──────────────────────────────────────────────────────────────────────────────
 
+// GET /ai/forecast/:terrainId — Main forecast endpoint
+router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const days = Math.min(7, Math.max(1, parseInt(req.query.days, 10) || 1));
+    
+    const url = `${ML_SERVICE_URL}/predict?terrain_id=${terrainId}&days=${days}`;
+    const resp = await fetch(url);
+    const data = await resp.json();
+    res.status(resp.ok ? 200 : 502).json(data);
+  } catch (err) {
+    res.status(503).json({ 
+      error: 'ML service unavailable', 
+      detail: err.message,
+      ml_service_url: ML_SERVICE_URL 
+    });
+  }
+});
+
 // GET /ai/forecast/hourly/:terrainId — 24-hour forecast curve (J+1 to J+7)
 router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
@@ -129,7 +148,11 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
-    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+    res.status(503).json({ 
+      error: 'ML service unavailable', 
+      detail: err.message,
+      ml_service_url: ML_SERVICE_URL 
+    });
   }
 });
 
@@ -145,7 +168,11 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
-    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+    res.status(503).json({ 
+      error: 'ML service unavailable', 
+      detail: err.message,
+      ml_service_url: ML_SERVICE_URL 
+    });
   }
 });
 
@@ -162,7 +189,11 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
-    res.status(503).json({ error: 'ML service unavailable', detail: err.message });
+    res.status(503).json({ 
+      error: 'ML service unavailable', 
+      detail: err.message,
+      ml_service_url: ML_SERVICE_URL 
+    });
   }
 });
 
