@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { corePool } = require('../../config/db');
+const log = require('../../config/logger');
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://ml-service:8000';
 
@@ -126,6 +127,15 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
+    log.error({
+      endpoint: '/ai/forecast/:terrainId',
+      terrainId: req.params.terrainId,
+      ml_service_url: ML_SERVICE_URL,
+      error: err.message,
+      stack: err.stack,
+      code: err.code,
+      errno: err.errno
+    }, 'Forecast endpoint error');
     res.status(503).json({ 
       error: 'ML service unavailable', 
       detail: err.message,
@@ -148,6 +158,15 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
+    log.error({
+      endpoint: '/ai/forecast/hourly/:terrainId',
+      terrainId: req.params.terrainId,
+      ml_service_url: ML_SERVICE_URL,
+      error: err.message,
+      stack: err.stack,
+      code: err.code,
+      errno: err.errno
+    }, 'Forecast hourly endpoint error');
     res.status(503).json({ 
       error: 'ML service unavailable', 
       detail: err.message,
@@ -168,6 +187,15 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
+    log.error({
+      endpoint: '/ai/forecast/profiles/:terrainId',
+      terrainId: req.params.terrainId,
+      ml_service_url: ML_SERVICE_URL,
+      error: err.message,
+      stack: err.stack,
+      code: err.code,
+      errno: err.errno
+    }, 'Forecast profiles endpoint error');
     res.status(503).json({ 
       error: 'ML service unavailable', 
       detail: err.message,
@@ -189,6 +217,15 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
+    log.error({
+      endpoint: '/ai/forecast/daily-chart/:terrainId',
+      terrainId: req.params.terrainId,
+      ml_service_url: ML_SERVICE_URL,
+      error: err.message,
+      stack: err.stack,
+      code: err.code,
+      errno: err.errno
+    }, 'Forecast daily-chart endpoint error');
     res.status(503).json({ 
       error: 'ML service unavailable', 
       detail: err.message,
