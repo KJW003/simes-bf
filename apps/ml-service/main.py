@@ -1204,7 +1204,7 @@ def detect_anomalies(terrain_id: str):
                                 (terrain_id, anomaly_date, anomaly_type, severity, score,
                                  expected_kwh, actual_kwh, deviation_pct, description)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT (terrain_id, anomaly_date, anomaly_type) DO NOTHING
+                            ON CONFLICT (terrain_id, anomaly_date, anomaly_type, COALESCE(point_id, '00000000-0000-0000-0000-000000000000'::uuid)) DO NOTHING
                         """, (terrain_id, a["anomaly_date"], a["anomaly_type"],
                               a["severity"], a["score"], a["expected_kwh"],
                               a["actual_kwh"], a["deviation_pct"], a["description"]))
