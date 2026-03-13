@@ -19,7 +19,7 @@ const Anomalies = React.lazy(() => import("./pages/org/Anomalies"));
 const PowerQuality = React.lazy(() => import("./pages/org/PowerQuality"));
 const History = React.lazy(() => import("./pages/org/Donnees"));
 const Forecasts = React.lazy(() => import("./pages/org/Forecasts"));
-const Invoice = React.lazy(() => import("./pages/org/Invoice"));
+const Invoice = React.lazy(() => import("./pages/org/Invoice.improved"));
 const PvBattery = React.lazy(() => import("./pages/org/SolairePerformance"));
 const Predimensionnement = React.lazy(() => import("./pages/org/Predimensionnement"));
 const EnergyAudit = React.lazy(() => import("./pages/org/EnergyAudit"));

@@ -18,7 +18,6 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-  Tabs, TabsContent, TabsList, TabsTrigger,
 } from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
 import { useSubmitFacture, useFactureResult, useTariffPlans, useTerrainContract, useSaveTerrainContract } from '@/hooks/useApi';
