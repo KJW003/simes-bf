@@ -249,7 +249,7 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
               <Label className="text-sm font-medium">Plan tarifaire (SONABEL)</Label>
               <Select value={contractForm.tariff_plan_id} onValueChange={v => setContractForm({ ...contractForm, tariff_plan_id: v })}>
                 <SelectTrigger>
-                  <SelectValue placeholder="Choisir un plan tarifaire..." />
+                  <SelectValue placeholder={currentTariffName || "Choisir un plan tarifaire..."} />
                 </SelectTrigger>
                 <SelectContent>
                   {tariffData?.tariffs && tariffData.tariffs.map((p: any) => (
