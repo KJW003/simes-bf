@@ -57,19 +57,31 @@ router.get("/results/facture/monthly",
         const currentMonth = today.getMonth() + 1;
 
         try {
-          // Generate a runId for tracking
-          const { v4: uuidv4 } = require("uuid");
-          const runId = uuidv4();
+          // Create a run record first
+          const runRecord = await corePool.query(
+            `INSERT INTO runs (type, status, payload)
+             VALUES ('facture', 'queued', $1::jsonb)
+             RETURNING id`,
+            [JSON.stringify({
+              terrain_id: terrainId,
+              year: currentYear,
+              month: currentMonth,
+              mode: "today"
+            })]
+          );
+          const runId = runRecord.rows[0].id;
 
           // Submit job to compute today's invoice
           const job = await aiQueue.add(
             "facture",
             {
               runId,  // Pass runId so worker can track result
-              terrain_id: terrainId,
-              year: currentYear,
-              month: currentMonth,
-              mode: "today",  // Signal to worker
+              payload: {
+                terrain_id: terrainId,
+                year: currentYear,
+                month: currentMonth,
+                mode: "today",  // Signal to worker
+              }
             },
             {
               jobId: runId,  // Use same ID for tracking
@@ -94,7 +106,8 @@ router.get("/results/facture/monthly",
                 [runId]
               );
               if (runRow.rows.length && runRow.rows[0].result) {
-                result = runRow.rows[0].result;
+                const dbResult = runRow.rows[0].result;
+                result = typeof dbResult === 'string' ? JSON.parse(dbResult) : dbResult;
               }
               break;
             } else if (jobState === "failed") {
