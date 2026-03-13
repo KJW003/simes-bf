@@ -355,7 +355,8 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
     res.status(503).json({ 
       error: 'ML service unavailable', 
       detail: err.message,
-      ml_service_url: ML_SERVICE_URL 
+      ml_service_url: ML_SERVICE_URL,
+      fallback: buildProfilesFallback(req.params.terrainId, req.query.point_id, err.message),
     });
   }
 });
@@ -402,10 +403,12 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
       code: err.code,
       errno: err.errno
     }, 'Forecast daily-chart endpoint error');
+    const fcDays = Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3));
     res.status(503).json({ 
       error: 'ML service unavailable', 
       detail: err.message,
-      ml_service_url: ML_SERVICE_URL 
+      ml_service_url: ML_SERVICE_URL,
+      fallback: buildDailyChartFallback(req.params.terrainId, fcDays, err.message),
     });
   }
 });

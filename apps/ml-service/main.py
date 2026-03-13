@@ -1473,8 +1473,12 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
 
     try:
         # Get historical daily data
-        with get_conn() as conn:
-            try:
+        # Use separate connections for agg and raw-fallback: if the first query fails at
+        # the SQL level, psycopg2 puts that connection into an aborted-transaction state
+        # and any subsequent query on the same connection raises InFailedSqlTransaction.
+        history_df = None
+        try:
+            with get_conn() as conn:
                 history_df = pd.read_sql("""
                     SELECT day,
                            SUM(energy_total_delta) AS energy_kwh,
@@ -1487,31 +1491,36 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                     GROUP BY day
                     ORDER BY day
                 """, conn, params=(terrain_id, history_days))
-            except Exception as e:
-                logger.warning(f"Daily chart agg query failed for {terrain_id}, fallback to raw readings: {e}")
-                history_df = pd.read_sql("""
-                    WITH daily AS (
+        except Exception as e:
+            logger.warning(f"Daily chart agg query failed for {terrain_id}, fallback to raw readings: {e}")
+            try:
+                with get_conn() as conn2:
+                    history_df = pd.read_sql("""
+                        WITH daily AS (
+                            SELECT
+                                time_bucket('1 day', time)::date AS day,
+                                point_id,
+                                MAX(energy_total) - MIN(energy_total) AS energy_kwh_point,
+                                AVG(active_power_total) AS avg_kw_point,
+                                MAX(active_power_total) AS max_kw_point
+                            FROM acrel_readings
+                            WHERE terrain_id = %s
+                              AND time >= NOW() - (%s * INTERVAL '1 day')
+                              AND time < CURRENT_DATE
+                            GROUP BY 1, 2
+                        )
                         SELECT
-                            time_bucket('1 day', time)::date AS day,
-                            point_id,
-                            MAX(energy_total) - MIN(energy_total) AS energy_kwh_point,
-                            AVG(active_power_total) AS avg_kw_point,
-                            MAX(active_power_total) AS max_kw_point
-                        FROM acrel_readings
-                        WHERE terrain_id = %s
-                          AND time >= NOW() - (%s * INTERVAL '1 day')
-                          AND time < CURRENT_DATE
-                        GROUP BY 1, 2
-                    )
-                    SELECT
-                        day,
-                        SUM(energy_kwh_point) AS energy_kwh,
-                        SUM(avg_kw_point) AS avg_kw,
-                        MAX(max_kw_point) AS max_kw
-                    FROM daily
-                    GROUP BY day
-                    ORDER BY day
-                """, conn, params=(terrain_id, history_days))
+                            day,
+                            SUM(energy_kwh_point) AS energy_kwh,
+                            SUM(avg_kw_point) AS avg_kw,
+                            MAX(max_kw_point) AS max_kw
+                        FROM daily
+                        GROUP BY day
+                        ORDER BY day
+                    """, conn2, params=(terrain_id, history_days))
+            except Exception as e2:
+                logger.warning(f"Daily chart raw fallback also failed for {terrain_id}: {e2}")
+                history_df = pd.DataFrame(columns=["day", "energy_kwh", "avg_kw", "max_kw"])
 
         # Get ML forecast
         try:
