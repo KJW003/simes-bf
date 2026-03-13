@@ -2,38 +2,61 @@
  * Facture System - Regression Test Suite
  * Tests to ensure facture calculations and security remain correct after code changes
  *
- * Golden Test Case: Single tenant, January 2025 period
- * Sample telemetry data: 744 hours of consumption
- * Expected result: Known billing breakdown
+ * Golden Test Case: Production data from March 13, 2026
+ * Period: 24 hours (single day)
+ * Terrain: abf6ad9a-2447-43eb-a4de-e99bf49765b7
+ * Plan: D1 Non industriel (SONABEL 2023-10)
  */
 
 const assert = require("assert");
 
-// Mock test data - Replace with real data from production runs table
+// Real production data extracted March 13, 2026
 const GOLDEN_TEST_CASE = {
-  id: "test_jan2025_001",
-  terrain_id: "terrain_abc123",
-  from: new Date("2025-01-01T00:00:00Z"),
-  to: new Date("2025-02-01T00:00:00Z"),
+  id: "prod_march13_2026",
+  terrain_id: "abf6ad9a-2447-43eb-a4de-e99bf49765b7",
+  from: new Date("2026-03-12T00:00:00Z"),
+  to: new Date("2026-03-13T00:00:00Z"),
+  
+  // Actual input parameters
   payload: {
-    terrain_id: "terrain_abc123",
+    terrain_id: "abf6ad9a-2447-43eb-a4de-e99bf49765b7",
     subscribed_power_kw: 100,
-    loss_coeff_a: 0.05,
-    loss_coeff_b: 0.03,
+    tariff_version_id: "1534ca91-c9a8-482a-8527-441a4035b389",
+    tariff_version_name: "D1 Non industriel (SONABEL 2023-10)",
+    // Note: α=0, β=0 in this plan (no active/reactive loss coefficients)
   },
+  
+  // Expected output - REAL OBSERVED VALUES (tolerance: 0.01 for floating point)
   expectedResult: {
-    // These values should come from a known-good calculation
-    // Update with actual values from production or SONABEL spec test case
-    K1: 450.25,  // HPL energy (off-peak)
-    K2: 320.10,  // HPT energy (peak)
-    Ma: 15.80,   // Active losses
-    Mr: 8.42,    // Reactive losses
-    Kma: 1.05,   // Power factor penalty
-    totalBeforeTax: 1055.42,
-    totalAfterTax: 1245.99,
+    K1: 1328.30,                 // HPL off-peak consumption (kWh)
+    K2: 922.10,                  // HPT peak consumption (kWh)
+    Ma: 0,                        // Active losses (α=0, β=0 → no losses)
+    Mr: 0,                        // Reactive losses
+    Kma: 1.0,                     // Power factor penalty (cosPhi=0.989 > 0.93 → no penalty)
+    cosPhi: 0.9898,               // Power factor
+    maxDemandKw: 126.906,         // Peak power observed
+    exceedKw: 26.906,             // Exceeds 100 kW subscribed by 26.906 kW
+    totalKwh: 2250.40,            // Total energy consumed
+    reactiveKwh: 324.70,          // Reactive component
+    
+    // Billing breakdown
+    conso_hpl: 116890.40,         // K1 × 88 XOF/kWh
+    conso_hpt: 152146.50,         // K2 × 165 XOF/kWh
+    prime_fixe_kw: 800.56,        // 100 kW × 2882 / 12 × 1
+    exceed_charge: 133184.70,     // 30 × 26.906 × 165 (power overage)
+    prime_fixe_monthly: 284.60,   // Fixed monthly charge
+    location_fees: 0,             // No location/entretien charges
+    tde_tdsaae: 4500.80,          // 2250.40 × 2
+    
+    // Totals
+    beforeVat: 407807.56,         // Subtotal before VAT
+    vat: 73405.36,                // TVA (18%)
+    totalAmount: 481212.92,       // Final invoice total
   },
-  tolerance: 0.01, // Allow 0.01 variance for floating point
+  
+  tolerance: 0.01, // Allow ±0.01 variance for floating point arithmetic
 };
+
 
 describe("Facture System - Regression Tests", () => {
   

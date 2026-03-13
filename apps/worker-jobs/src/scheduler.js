@@ -234,6 +234,30 @@ if (!connection) {
       );
 
       log.info("✓ Disk recovery scheduled: weekly Sunday at 01:00");
+
+      // ── Monthly invoice update: every day at midnight (user local time) ──
+      // Note: We run at 00:05 UTC daily to update all terrains' current-month invoices
+      // with data collected through yesterday (1-day latency)
+      for (const job of jobs) {
+        if (job.name === "ai.update_monthly_invoices") {
+          await aiQueue.removeRepeatableByKey(job.key);
+          log.info({ key: job.key }, 'Removed old invoice update job');
+        }
+      }
+
+      await aiQueue.add(
+        "ai.update_monthly_invoices",
+        { payload: { mode: 'auto', timezone: 'Africa/Ouagadougou' } },
+        {
+          repeat: { pattern: "5 0 * * *" }, // Every day at 00:05 UTC (= 00:05 UTC, adjust for BF time)
+          removeOnComplete: 30,  // Keep last 30 successful completions
+          removeOnFail: 60,      // Keep last 60 failed attempts for debugging
+          attempts: 2,
+        }
+      );
+
+      log.info("✓ Monthly invoice update scheduled: every day at 00:05 UTC (01:05 BF time)");
+
     } catch (e) {
       log.error(`✗ Failed to setup scheduler: ${e.message}`);
     }

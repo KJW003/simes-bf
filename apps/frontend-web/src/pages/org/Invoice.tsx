@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -53,7 +53,9 @@ export default function Invoice() {
     maintenance: 0,
     capacitor_power_kw: 0,
   });
-  const [contractSaved, setContractSaved] = useState(false);
+  const [contractSaveStatus, setContractSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const saveTimeoutRef = useRef<NodeJS.Timeout>();
+  const lastSavedRef = useRef<string>('');
 
   // Sync form when contract loads
   useEffect(() => {
@@ -66,21 +68,47 @@ export default function Invoice() {
         maintenance: Number(existingContract.maintenance ?? 0),
         capacitor_power_kw: Number(existingContract.capacitor_power_kw ?? 0),
       });
+      lastSavedRef.current = JSON.stringify(existingContract);
     } else if (tariffPlans.length > 0 && !contractForm.tariff_plan_id) {
       setContractForm(prev => ({ ...prev, tariff_plan_id: String(tariffPlans[0].id) }));
     }
   }, [existingContract, tariffPlans]);
 
-  const handleSaveContract = async () => {
-    if (!terrainId || !contractForm.tariff_plan_id) return;
+  // Auto-save on form change with debounce
+  const autoSaveContract = useCallback(async (formData: typeof contractForm) => {
+    if (!terrainId || !formData.tariff_plan_id) return;
+
+    const formJson = JSON.stringify(formData);
+    if (formJson === lastSavedRef.current) return; // No changes
+
+    setContractSaveStatus('saving');
+    
     try {
-      await saveContract.mutateAsync({ terrainId, data: contractForm });
-      setContractSaved(true);
-      setTimeout(() => setContractSaved(false), 2000);
+      await saveContract.mutateAsync({ terrainId, data: formData });
+      lastSavedRef.current = formJson;
+      setContractSaveStatus('saved');
+      setTimeout(() => setContractSaveStatus('idle'), 2000);
     } catch (e) {
       console.error('Erreur sauvegarde contrat:', e);
+      setContractSaveStatus('idle');
     }
-  };
+  }, [terrainId, saveContract]);
+
+  // Debounced save trigger
+  const handleContractChange = useCallback((newForm: typeof contractForm) => {
+    setContractForm(newForm);
+    
+    if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    saveTimeoutRef.current = setTimeout(() => {
+      autoSaveContract(newForm);
+    }, 1000); // Save 1 second after last change
+  }, [autoSaveContract]);
+
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+    };
+  }, []);
 
   // ── Facture ──
   const [runId, setRunId] = useState<string | null>(null);
@@ -242,7 +270,7 @@ ${apiCosPhi > 0 && apiCosPhi < 0.93 ? `<div class="warning">⚠ cos φ = ${apiCo
               <Label className="text-xs">Plan tarifaire</Label>
               <Select
                 value={contractForm.tariff_plan_id}
-                onValueChange={v => setContractForm(f => ({ ...f, tariff_plan_id: v }))}
+                onValueChange={v => handleContractChange({ ...contractForm, tariff_plan_id: v })}
               >
                 <SelectTrigger className="h-8 text-xs">
                   <SelectValue placeholder="Sélectionner…" />
@@ -259,39 +287,42 @@ ${apiCosPhi > 0 && apiCosPhi < 0.93 ? `<div class="warning">⚠ cos φ = ${apiCo
             <div className="space-y-1.5">
               <Label className="text-xs">Puissance souscrite (kW)</Label>
               <Input type="number" className="h-8 text-xs" value={contractForm.subscribed_power_kw}
-                onChange={e => setContractForm(f => ({ ...f, subscribed_power_kw: Number(e.target.value) }))} />
+                onChange={e => handleContractChange({ ...contractForm, subscribed_power_kw: Number(e.target.value) })} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Batterie condensateur (kW)</Label>
               <Input type="number" className="h-8 text-xs" value={contractForm.capacitor_power_kw}
-                onChange={e => setContractForm(f => ({ ...f, capacitor_power_kw: Number(e.target.value) }))} />
+                onChange={e => handleContractChange({ ...contractForm, capacitor_power_kw: Number(e.target.value) })} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Location compteur</Label>
               <Input type="number" className="h-8 text-xs" value={contractForm.meter_rental}
-                onChange={e => setContractForm(f => ({ ...f, meter_rental: Number(e.target.value) }))} />
+                onChange={e => handleContractChange({ ...contractForm, meter_rental: Number(e.target.value) })} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Location poste</Label>
               <Input type="number" className="h-8 text-xs" value={contractForm.post_rental}
-                onChange={e => setContractForm(f => ({ ...f, post_rental: Number(e.target.value) }))} />
+                onChange={e => handleContractChange({ ...contractForm, post_rental: Number(e.target.value) })} />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Entretien</Label>
               <Input type="number" className="h-8 text-xs" value={contractForm.maintenance}
-                onChange={e => setContractForm(f => ({ ...f, maintenance: Number(e.target.value) }))} />
+                onChange={e => handleContractChange({ ...contractForm, maintenance: Number(e.target.value) })} />
             </div>
           </div>
           <div className="flex justify-end mt-4">
-            <Button size="sm" onClick={handleSaveContract} disabled={saveContract.isPending || !terrainId || !contractForm.tariff_plan_id}>
-              {contractSaved ? (
-                <><Check className="w-4 h-4 mr-1" /> Enregistré</>
-              ) : saveContract.isPending ? (
-                <><Loader2 className="w-4 h-4 mr-1 animate-spin" /> Enregistrement…</>
-              ) : (
-                <><Save className="w-4 h-4 mr-1" /> Enregistrer le contrat</>
-              )}
-            </Button>
+            {contractSaveStatus === 'saving' && (
+              <div className="text-xs text-amber-600 flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Enregistrement…
+              </div>
+            )}
+            {contractSaveStatus === 'saved' && (
+              <div className="text-xs text-green-600 flex items-center gap-1">
+                <Check className="w-3 h-3" />
+                Enregistré automatiquement
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

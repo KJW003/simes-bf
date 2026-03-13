@@ -8,6 +8,17 @@ if (!connection) {
   return;
 }
 
+// Helper: Get number of days in a month
+function getDaysInMonth(year, month) {
+  if (month === 2) {
+    // February: check for leap year
+    const isLeapYear = (year % 4 === 0 && year % 100 !== 0) || (year % 400 === 0);
+    return isLeapYear ? 29 : 28;
+  }
+  if ([4, 6, 9, 11].includes(month)) return 30;
+  return 31;
+}
+
 function isIso(s) {
   return typeof s === "string" && !Number.isNaN(Date.parse(s));
 }
@@ -26,11 +37,50 @@ async function computeFacture(payload = {}) {
   const terrainId = payload.terrain_id;
   if (!terrainId) throw new Error("terrain_id is required");
 
-  const now = new Date();
-  const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  // ─── Determine billing period ──────────────────────────────
+  // NEW: Support both month-based and adhoc periods
+  
+  let from, to, billingMode = 'adhoc';
+  
+  if (payload.year && typeof payload.month === 'number') {
+    // Month-based billing (new default)
+    const year = Number(payload.year);
+    const month = Number(payload.month);
+    
+    if (month < 1 || month > 12) throw new Error("Month must be 1-12");
+    
+    billingMode = 'month';
+    from = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));  // 1st of month, 00:00 UTC
+    
+    // To = 1st of NEXT month (so this month's data is [from, to))
+    const nextMonth = month === 12 ? 1 : month + 1;
+    const nextYear = month === 12 ? year + 1 : year;
+    to = new Date(Date.UTC(nextYear, nextMonth - 1, 1, 0, 0, 0, 0));
+    
+  } else if (payload.from || payload.to) {
+    // Ad-hoc period (backward compatibility)
+    const now = new Date();
+    const defaultFrom = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    
+    from = payload.from && isIso(payload.from) ? new Date(payload.from) : defaultFrom;
+    to = payload.to && isIso(payload.to) ? new Date(payload.to) : now;
+    billingMode = 'adhoc';
+    
+  } else {
+    // Default: last 30 days (for backward compatibility)
+    const now = new Date();
+    from = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    to = now;
+  }
 
-  const from = payload.from && isIso(payload.from) ? new Date(payload.from) : defaultFrom;
-  const to = payload.to && isIso(payload.to) ? new Date(payload.to) : now;
+  log.info({
+    terrainId,
+    billingMode,
+    from: from.toISOString(),
+    to: to.toISOString(),
+    year: payload.year,
+    month: payload.month,
+  }, `Computing facture: ${billingMode} period`);
 
   // 1) contrat terrain -> PS + tariff_plan_id + capacitor_power
   const c = await db.query(
@@ -262,7 +312,14 @@ async function computeFacture(payload = {}) {
 
   // Prime fixe (PF) = (PS × Tarif_PF × Kma) / 12
   // prime_per_kw = tarif_PF annuel, diviser par 12 pour mensualiser
-  const months = periodHours / (30 * 24) || 1;
+  
+  // For month-based billing: always use months = 1 (full monthly charge)
+  // For adhoc billing: prorate based on actual period length
+  let months = 1;
+  if (billingMode === 'adhoc') {
+    months = periodHours / (30 * 24) || 1;  // Old behavior: prorate for adhoc periods
+  }
+  
   const demandAmount = (subscribedPowerKw * primePerKw * Kma / 12) * months;
 
   // Dépassement (30 * (Pmax-PS) * tarifHPT)
@@ -302,6 +359,9 @@ async function computeFacture(payload = {}) {
   return {
     version: "V2",
     terrain_id: terrainId,
+    billingMode,  // 'month' or 'adhoc'
+    year: payload.year,
+    month: payload.month,
     period: { from: from.toISOString(), to: to.toISOString(), hours: periodHours },
     tariffVersionId: tariff.id,
     tariffVersionName: tariff.name,
@@ -406,6 +466,100 @@ new Worker(
 
         log.info({ terrains: results.length }, "AI anomaly detection complete");
         return { ok: true };
+      }
+
+      if (job.name === "ai.update_monthly_invoices") {
+        // Daily job: Update all terrains' current-month invoices with data through yesterday
+        const now = new Date();
+        const currentYear = now.getUTCFullYear();
+        const currentMonth = now.getUTCMonth() + 1;  // 1-12
+
+        // Get all terrains with active contracts
+        const terrains = await db.query(`
+          SELECT DISTINCT t.id
+          FROM terrains t
+          JOIN terrain_contracts tc ON t.id = tc.terrain_id
+        `);
+
+        const updateResults = [];
+        let successCount = 0;
+        let failureCount = 0;
+
+        log.info({ terrainCount: terrains.rows.length, year: currentYear, month: currentMonth }, 
+          "Starting monthly invoice update for all terrains");
+
+        for (const { id: terrainId } of terrains.rows) {
+          try {
+            // Compute this month's invoice
+            const facture = await computeFacture({
+              terrain_id: terrainId,
+              year: currentYear,
+              month: currentMonth,
+            });
+
+            // Upsert into facture_monthly
+            const updateResult = await db.query(`
+              INSERT INTO facture_monthly (terrain_id, year, month, data, status, updated_at, computed_at)
+              VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+              ON CONFLICT (terrain_id, year, month)
+              DO UPDATE SET
+                data = $4,
+                updated_at = NOW()
+              RETURNING id
+            `, [terrainId, currentYear, currentMonth, JSON.stringify(facture), 'draft']);
+
+            // Log the daily update
+            await db.query(`
+              INSERT INTO facture_daily_updates (
+                terrain_id, year, month, update_date,
+                data_from, data_to,
+                consumption_added_kwh,
+                triggered_by
+              )
+              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+              ON CONFLICT (terrain_id, year, month, update_date) DO NOTHING
+            `, [
+              terrainId,
+              currentYear,
+              currentMonth,
+              new Date(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()).toISOString().split('T')[0],
+              new Date(Date.UTC(currentYear, currentMonth - 1, 1)).toISOString(),
+              new Date(Date.UTC(currentYear, currentMonth % 12, (currentMonth % 12) === 0 ? 0 : 1)).toISOString(),
+              facture.totalKwh,
+              'scheduler',
+            ]);
+
+            updateResults.push({ terrainId, status: 'success', totalAmount: facture.totalAmount });
+            successCount++;
+
+          } catch (err) {
+            log.warn({ terrainId, error: err.message, year: currentYear, month: currentMonth },
+              "Failed to update monthly invoice for terrain");
+            updateResults.push({ terrainId, status: 'error', error: err.message });
+            failureCount++;
+          }
+        }
+
+        const summary = {
+          year: currentYear,
+          month: currentMonth,
+          total: terrains.rows.length,
+          successCount,
+          failureCount,
+          updates: updateResults,
+          timestamp: now.toISOString(),
+        };
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          await setRunStatus(runId, "success", {
+            finished_at: new Date().toISOString(),
+            result: summary,
+          });
+        }
+
+        log.info(summary, "Monthly invoice update complete");
+        return { ok: true, ...summary };
       }
 
       // default mock for other ai jobs
