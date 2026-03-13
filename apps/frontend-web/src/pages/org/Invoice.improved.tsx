@@ -70,24 +70,25 @@ export default function InvoiceImproved() {
   const { data: tariffData } = useTariffPlans();
   const saveContract = useSaveTerrainContract();
 
-  const hasContract = !!contractData;
+  const hasContract = !!(contractData as any)?.contract;
   const [contractForm, setContractForm] = useState({
-    tariff_plan_id: String(contractData?.tariff_plan_id ?? ''),
-    subscribed_power_kw: Number(contractData?.subscribed_power_kw ?? 100),
+    tariff_plan_id: String((contractData as any)?.contract?.tariff_plan_id ?? ''),
+    subscribed_power_kw: Number((contractData as any)?.contract?.subscribed_power_kw ?? 100),
   });
   const [showOptional, setShowOptional] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Sync tariff plan when contract data changes
   useEffect(() => {
-    if (contractData?.tariff_plan_id) {
+    const cData = contractData as any;
+    if (cData?.contract?.tariff_plan_id) {
       setContractForm(prev => ({
         ...prev,
-        tariff_plan_id: String(contractData.tariff_plan_id),
-        subscribed_power_kw: Number(contractData.subscribed_power_kw ?? 100),
+        tariff_plan_id: String(cData.contract.tariff_plan_id),
+        subscribed_power_kw: Number(cData.contract.subscribed_power_kw ?? 100),
       }));
     }
-  }, [contractData?.tariff_plan_id, contractData?.subscribed_power_kw]);
+  }, [(contractData as any)?.contract?.tariff_plan_id, (contractData as any)?.contract?.subscribed_power_kw]);
 
   const handleSaveContract = async () => {
     try {
@@ -156,15 +157,9 @@ export default function InvoiceImproved() {
   const hasPfWarning = apiCosPhi > 0 && apiCosPhi < 0.93;
 
   // Find the name of the CURRENT tariff plan (from contract data)
-  const currentTariffName = contractData?.tariff_plan_id && tariffData?.tariffs
-    ? tariffData.tariffs.find((t: any) => {
-        const match = String(t.id) === String(contractData.tariff_plan_id);
-        console.log('Tariff match:', { tariff_id: t.id, contract_id: contractData.tariff_plan_id, match });
-        return match;
-      })?.name
+  const currentTariffName = (contractData as any)?.contract?.tariff_plan_id && tariffData?.tariffs
+    ? (tariffData as any).tariffs.find((t: any) => String(t.id) === String((contractData as any).contract.tariff_plan_id))?.name
     : null;
-
-  console.log('Current tariff name:', currentTariffName, { contractData, tariffData });
 
   const handleCalculate = async () => {
     if (!selectedTerrain || !hasContract) return;
