@@ -57,16 +57,22 @@ router.get("/results/facture/monthly",
         const currentMonth = today.getMonth() + 1;
 
         try {
+          // Generate a runId for tracking
+          const { v4: uuidv4 } = require("uuid");
+          const runId = uuidv4();
+
           // Submit job to compute today's invoice
           const job = await aiQueue.add(
             "facture",
             {
+              runId,  // Pass runId so worker can track result
               terrain_id: terrainId,
               year: currentYear,
               month: currentMonth,
               mode: "today",  // Signal to worker
             },
             {
+              jobId: runId,  // Use same ID for tracking
               attempts: 1,
               removeOnComplete: true,
             }
@@ -82,7 +88,14 @@ router.get("/results/facture/monthly",
             const jobState = await job.getState();
             
             if (jobState === "completed") {
-              result = job.returnvalue;
+              // Fetch the actual result from the database (stored by worker via setRunStatus)
+              const runRow = await corePool.query(
+                `SELECT result FROM runs WHERE id = $1`,
+                [runId]
+              );
+              if (runRow.rows.length && runRow.rows[0].result) {
+                result = runRow.rows[0].result;
+              }
               break;
             } else if (jobState === "failed") {
               await logAuditEvent(req.userId, 'view', 'facture_today', terrainId, { 
@@ -115,12 +128,12 @@ router.get("/results/facture/monthly",
             duration_ms: Date.now() - startTime
           }, clientIp);
 
+          // Return the actual computation result
           return res.json({
             ok: true,
             mode: "today",
-            result,
+            ...result,  // Spread the actual computation result (totalKwh, totalAmount, breakdown, etc.)
             computedAt: new Date().toISOString(),
-            lastUpdated: new Date().toISOString(),
           });
 
         } catch (err) {

@@ -38,12 +38,19 @@ async function computeFacture(payload = {}) {
   if (!terrainId) throw new Error("terrain_id is required");
 
   // ─── Determine billing period ──────────────────────────────
-  // NEW: Support both month-based and adhoc periods
+  // NEW: Support month-based, today-only, and adhoc periods
   
   let from, to, billingMode = 'adhoc';
   
-  if (payload.year && typeof payload.month === 'number') {
-    // Month-based billing (new default)
+  // Special case: mode="today" means just today's consumption
+  if (payload.mode === 'today') {
+    const today = new Date();
+    billingMode = 'today';
+    from = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0));
+    to = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1, 0, 0, 0, 0));
+    
+  } else if (payload.year && typeof payload.month === 'number') {
+    // Month-based billing (default for historical invoices)
     const year = Number(payload.year);
     const month = Number(payload.month);
     
@@ -314,10 +321,13 @@ async function computeFacture(payload = {}) {
   // prime_per_kw = tarif_PF annuel, diviser par 12 pour mensualiser
   
   // For month-based billing: always use months = 1 (full monthly charge)
+  // For today-only: prorate to 1/30 of monthly charge
   // For adhoc billing: prorate based on actual period length
   let months = 1;
-  if (billingMode === 'adhoc') {
-    months = periodHours / (30 * 24) || 1;  // Old behavior: prorate for adhoc periods
+  if (billingMode === 'today') {
+    months = periodHours / (24 * 30) || 1;  // 1 day / 30 days = ~1/30
+  } else if (billingMode === 'adhoc') {
+    months = periodHours / (30 * 24) || 1;  // Prorate for adhoc periods
   }
   
   const demandAmount = (subscribedPowerKw * primePerKw * Kma / 12) * months;

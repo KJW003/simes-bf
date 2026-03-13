@@ -53,7 +53,7 @@ export default function InvoiceImproved() {
   };
 
   // Facture – Load available months from DB
-  const { data: monthsData, isLoading: monthsLoading } = useFactureMonths(terrainId);
+  const { data: monthsData, isLoading: monthsLoading, isError: monthsError } = useFactureMonths(terrainId);
   const availableMonths = monthsData?.months || [];
   
   // Initialize with first available month, or fallback to current month
@@ -65,7 +65,7 @@ export default function InvoiceImproved() {
   const [selectedMonth, setSelectedMonth] = useState<number | null>(firstAvailableMonth?.month ?? new Date().getMonth() + 1);
   
   // Auto-load the first available month's invoice when page loads
-  const { data: storedInvoice, isLoading: storedInvoiceLoading } = useFactureMonthly(
+  const { data: storedInvoice, isLoading: storedInvoiceLoading, isError: storedInvoiceError } = useFactureMonthly(
     terrainId,
     selectedYear && selectedMonth ? selectedYear : undefined,
     selectedYear && selectedMonth ? selectedMonth : undefined
@@ -76,7 +76,7 @@ export default function InvoiceImproved() {
   const { data: apiFacture, isLoading: pollingFacture } = useFactureResult(runId);
 
   // Load real-time "Today" invoice (auto-refetch every 5 minutes)
-  const { data: todayInvoice, isLoading: todayLoading } = useFactureMonthly(
+  const { data: todayInvoice, isLoading: todayLoading, isError: todayError } = useFactureMonthly(
     terrainId,
     undefined,
     undefined,
@@ -282,7 +282,13 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
                 </div>
               )}
               
-              {selectedYear && selectedMonth && !isLoadingInvoice && !hasLiveResult && (
+              {storedInvoiceError && (
+                <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                  ⚠ Facture non disponible pour {availableMonths.find((m: any) => m.year === selectedYear && m.month === selectedMonth)?.display}. Pas encore calculée.
+                </div>
+              )}
+              
+              {selectedYear && selectedMonth && !isLoadingInvoice && !hasLiveResult && !storedInvoiceError && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
                   Facture non encore disponible pour {availableMonths.find((m: any) => m.year === selectedYear && m.month === selectedMonth)?.display}. Cliquez sur "Calculer" pour la générer.
                 </div>
@@ -322,6 +328,10 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
             <div className="flex items-center gap-2 text-sm text-muted-foreground animate-pulse">
               <Loader2 className="w-4 h-4 animate-spin" />
               Chargement des données du jour...
+            </div>
+          ) : todayError ? (
+            <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+              ⚠ Données du jour non disponibles temporairement. Le calcul est en cours ou une erreur s'est produite. Réessayez dans quelques secondes.
             </div>
           ) : !hasTodayResult ? (
             <div className="text-sm text-muted-foreground">Pas de données disponibles pour aujourd'hui</div>
