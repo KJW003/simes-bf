@@ -6,12 +6,17 @@ const log = require('../../config/logger');
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://ml-service:8000';
 const ML_FETCH_TIMEOUT_MS = Math.max(1000, parseInt(process.env.ML_FETCH_TIMEOUT_MS || '15000', 10) || 15000);
 
-async function fetchML(path, options = {}) {
+async function fetchML(path, options = {}, authToken = null) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ML_FETCH_TIMEOUT_MS);
   try {
+    const headers = options.headers || {};
+    if (authToken) {
+      headers.Authorization = authToken;
+    }
     return await fetch(`${ML_SERVICE_URL}${path}`, {
       ...options,
+      headers,
       signal: controller.signal,
     });
   } finally {
@@ -148,7 +153,7 @@ router.post('/ai/train/:terrainId', verifyTerrainAccess, async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ terrain_id: terrainId }),
-    });
+    }, req.headers.authorization);
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
@@ -167,7 +172,7 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ terrain_id: terrainId, days }),
-    });
+    }, req.headers.authorization);
 
     const text = await resp.text();
     let data;
@@ -210,7 +215,7 @@ router.get('/ai/model/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
     const { terrainId } = req.params;
 
-    const resp = await fetchML(`/models/${terrainId}/status`);
+    const resp = await fetchML(`/models/${terrainId}/status`, {}, req.headers.authorization);
     const data = await resp.json();
     res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
@@ -222,7 +227,7 @@ router.get('/ai/model/:terrainId', verifyTerrainAccess, async (req, res) => {
 router.post('/ai/anomalies/detect/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
     const { terrainId } = req.params;
-    const resp = await fetchML(`/anomalies/detect/${terrainId}`, { method: 'POST' });
+    const resp = await fetchML(`/anomalies/detect/${terrainId}`, { method: 'POST' }, req.headers.authorization);
     const data = await resp.json();
     if (!resp.ok) {
       return res.status(502).json({
@@ -242,7 +247,7 @@ router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => 
   try {
     const { terrainId } = req.params;
     const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
-    const resp = await fetchML(`/anomalies/${terrainId}?days=${days}`);
+    const resp = await fetchML(`/anomalies/${terrainId}?days=${days}`, {}, req.headers.authorization);
     const data = await resp.json();
     if (!resp.ok) {
       return res.status(502).json({
@@ -272,7 +277,7 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
 
     const days = Math.min(7, Math.max(1, parseInt(req.query.days, 10) || 1));
     const path = `/forecast/hourly/${terrainId}?${params.toString()}`;
-    const resp = await fetchML(path);
+    const resp = await fetchML(path, {}, req.headers.authorization);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
@@ -320,7 +325,7 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
     if (req.query.point_id) params.set('point_id', req.query.point_id);
 
     const path = `/forecast/profiles/${terrainId}?${params.toString()}`;
-    const resp = await fetchML(path);
+    const resp = await fetchML(path, {}, req.headers.authorization);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
@@ -371,7 +376,7 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
 
     const forecastDays = Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3));
     const path = `/forecast/daily-chart/${terrainId}?${params.toString()}`;
-    const resp = await fetchML(path);
+    const resp = await fetchML(path, {}, req.headers.authorization);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
