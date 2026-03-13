@@ -298,6 +298,18 @@ export const api = {
     }>(`/terrains/${terrainId}/chart-data?${qs.toString()}`);
   },
 
+  getEnergyHistory: (terrainId: string, params: { from?: string; to?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set('from', params.from);
+    if (params.to) qs.set('to', params.to);
+    return request<{
+      ok: boolean;
+      terrain_id: string;
+      count: number;
+      data: Array<{ day: string; energy_total_delta: number; points_count: number }>;
+    }>(`/terrains/${terrainId}/energy-history?${qs.toString()}`);
+  },
+
   // ── Jobs (facture, forecast, etc.) ──
   submitFacture: (payload: { terrain_id: string; from?: string; to?: string; subscribed_power_kw?: number }) =>
     request<{ id: string; type: string; status: string; created_at: string }>('/jobs/facture', {

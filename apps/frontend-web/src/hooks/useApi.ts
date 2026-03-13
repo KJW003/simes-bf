@@ -403,6 +403,20 @@ export function useChartData(
   });
 }
 
+export function useEnergyHistory(
+  terrainId: string | null,
+  params: { from?: string; to?: string },
+) {
+  return useQuery({
+    queryKey: ['energy-history', terrainId, JSON.stringify(params)],
+    queryFn: () => api.getEnergyHistory(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 15 * 60_000, // Cache for 15 min (historical data doesn't change much)
+    gcTime: 60 * 60_000,
+    retry: 1,
+  });
+}
+
 // ─── Runs ──────────────────────────────────────────────────
 
 export function useRuns() {

@@ -221,6 +221,60 @@ router.get("/terrains/:terrainId/chart-data", async (req, res) => {
 });
 
 // ─────────────────────────────────────────────────────────────
+// GET /terrains/:terrainId/energy-history
+// Daily energy totals (aggregated across all LOAD points) from acrel_agg_daily
+// Query: ?from=ISO&to=ISO
+// Returns: [{ day, energy_total_delta (sum of all points), points_count }]
+// ─────────────────────────────────────────────────────────────
+router.get("/terrains/:terrainId/energy-history", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const now = new Date();
+    const defaultFrom = new Date(now.getTime() - 30 * 86400_000);
+    const from = req.query.from || defaultFrom.toISOString();
+    const to = req.query.to || now.toISOString();
+
+    // Get LOAD point IDs (only include LOAD measurements)
+    const loadPts = await corePool.query(
+      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'LOAD'`,
+      [terrainId]
+    );
+    const loadIds = loadPts.rows.map(r => r.id);
+
+    if (loadIds.length === 0) {
+      return res.json({ ok: true, terrain_id: terrainId, count: 0, data: [] });
+    }
+
+    // Sum energy_total_delta per day across all LOAD points
+    const sql = `
+      SELECT day, SUM(energy_total_delta) AS energy_total_delta, COUNT(*) AS points_count
+      FROM acrel_agg_daily
+      WHERE terrain_id = $1 
+        AND day >= ($2::timestamptz)::date 
+        AND day <= ($3::timestamptz)::date
+        AND point_id = ANY($4)
+      GROUP BY day
+      ORDER BY day ASC
+    `;
+    const r = await telemetryPool.query(sql, [terrainId, from, to, loadIds]);
+    
+    res.json({
+      ok: true,
+      terrain_id: terrainId,
+      count: r.rows.length,
+      data: r.rows.map(row => ({
+        day: row.day,
+        energy_total_delta: Number(row.energy_total_delta || 0),
+        points_count: Number(row.points_count || 0),
+      })),
+    });
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/energy-history]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
 // GET /terrains/:terrainId/dashboard
 // Real-time KPIs for a terrain (power, energy today, etc.)
 // ─────────────────────────────────────────────────────────────

@@ -14,7 +14,7 @@ import {
   DollarSign, AlertTriangle, Bell,
   Settings2, CheckCircle2, Plus, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { useDashboard, useReadings, useChartData, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
+import { useDashboard, useReadings, useChartData, useEnergyHistory, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
@@ -463,53 +463,54 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, 
   const periodDays = COST_PERIODS.find(p => p.key === period)?.days ?? 30;
   const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
-  const { data: chartResult } = useChartData(terrainId, { from, to, bucket: 'daily' });
-
-  // Fetch today's data from 15-minute aggregation (daily agg doesn't have today yet)
-  const todayStart = useMemo(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }, []);
-  const { data: todayResult } = useChartData(
-    offsetDays === 0 ? terrainId : null,
-    { from: todayStart, bucket: '15m' },
-  );
+  
+  // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
+  const { data: historyResult } = useEnergyHistory(terrainId, { from, to });
+  
+  // Fetch today's energy from KPI endpoint (real-time, sum of all LOAD points)
+  const { data: dashboardData } = useDashboard(offsetDays === 0 ? terrainId : null);
+  const todayEnergy = dashboardData?.energy_today?.total_kwh ?? 0;
 
   const dailyCost = useMemo(() => {
-    const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
-    // Aggregate energy_total_delta by ISO date (day boundary at 00:00)
-    const byDate = new Map<string, number>(); // key: YYYY-MM-DD (ISO date string)
+    const historyRows = (historyResult?.data ?? []) as Array<{ day: string; energy_total_delta: number; points_count: number }>;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISO = today.toISOString().split('T')[0];
     
-    for (const r of rows) {
-      // r.day should be ISO string; extract just the date part
-      const dateISO = String(r.day).split('T')[0]; // Handle both ISO and plain date formats
-      // Skip today's partial data from daily bucket; will use 15m data instead
-      if (offsetDays === 0 && dateISO === todayISO) continue;
-      byDate.set(dateISO, (byDate.get(dateISO) ?? 0) + (Number(r.energy_total_delta) || 0));
-    }
-    // Add today from 15-minute buckets (always use 15m for today to avoid stale daily data)
-    if (offsetDays === 0 && todayResult?.data?.length) {
-      let todayKwh = 0;
-      for (const r of todayResult.data) todayKwh += Number(r.energy_total_delta) || 0;
-      byDate.set(todayISO, todayKwh);
-    }
-    if (!byDate.size) return [];
-    // Sort chronologically by ISO date, then convert to display format
-    return Array.from(byDate.entries())
-      .sort((a, b) => a[0].localeCompare(b[0])) // ISO dates sort alphabetically
-      .map(([dateISO, kwh]) => {
-        const displayDate = new Date(dateISO + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+    // Convert history to cost data
+    const result = historyRows
+      .filter(r => {
+        // Skip today if we're viewing today (will add it separately with today's real-time data)
+        const rDate = String(r.day).split('T')[0];
+        return offsetDays === 0 ? rDate !== todayISO : true;
+      })
+      .map(r => {
+        const rDate = String(r.day).split('T')[0];
+        const displayDate = new Date(rDate + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+        const kwh = Number(r.energy_total_delta || 0);
         return {
           day: displayDate,
-          dateISO, // Keep ISO for chart key if needed
+          dateISO: rDate,
           kwh: Number(kwh.toFixed(2)),
           cost: Number((kwh * prefs.tariffRate).toFixed(2)),
         };
       });
-  }, [chartResult, todayResult, prefs.tariffRate, offsetDays]);
+    
+    // Add today with live data (if viewing today)
+    if (offsetDays === 0 && todayEnergy > 0) {
+      const todayLabel = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      result.push({
+        day: todayLabel,
+        dateISO: todayISO,
+        kwh: Number(todayEnergy.toFixed(2)),
+        cost: Number((todayEnergy * prefs.tariffRate).toFixed(2)),
+      });
+    }
+    
+    // Sort chronologically
+    result.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+    return result;
+  }, [historyResult, todayEnergy, prefs.tariffRate, offsetDays]);
 
   if (!dailyCost.length) return (
     <Card>
@@ -590,57 +591,61 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, dashbo
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
   const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
-  const { data: chartResult } = useChartData(terrainId, { from, to, bucket: 'daily' });
-
-  // Fetch today's data from 15-minute aggregation (daily agg doesn't have today yet)
-  const todayStart = useMemo(() => {
-    const d = new Date(); d.setHours(0, 0, 0, 0);
-    return d.toISOString();
-  }, []);
-  const { data: todayResult } = useChartData(
-    offsetDays === 0 ? terrainId : null,
-    { from: todayStart, bucket: '15m' },
-  );
+  
+  // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
+  const { data: historyResult } = useEnergyHistory(terrainId, { from, to });
+  
+  // Fetch today's energy from KPI endpoint (real-time, sum of all LOAD points)
+  const { data: dashboardData } = useDashboard(offsetDays === 0 ? terrainId : null);
+  const todayEnergy = dashboardData?.energy_today?.total_kwh ?? 0;
 
   const dailyCarbon = useMemo(() => {
-    const rows = (chartResult?.data ?? []) as Array<Record<string, any>>;
-    // Aggregate energy_total_delta by ISO date (day boundary at 00:00)
-    const totalByDate = new Map<string, number>(); // key: YYYY-MM-DD (ISO date string)
+    const historyRows = (historyResult?.data ?? []) as Array<{ day: string; energy_total_delta: number; points_count: number }>;
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISO = today.toISOString().split('T')[0];
     
-    for (const r of rows) {
-      // r.day should be ISO string; extract just the date part
-      const dateISO = String(r.day).split('T')[0]; // Handle both ISO and plain date formats
-      // Skip today's partial data from daily bucket; will use 15m data instead
-      if (offsetDays === 0 && dateISO === todayISO) continue;
-      totalByDate.set(dateISO, (totalByDate.get(dateISO) ?? 0) + (Number(r.energy_total_delta) || 0));
-    }
-    // Add today from 15-minute buckets (always use 15m for today to avoid stale daily data)
-    if (offsetDays === 0 && todayResult?.data?.length) {
-      let todayKwh = 0;
-      for (const r of todayResult.data) todayKwh += Number(r.energy_total_delta) || 0;
-      totalByDate.set(todayISO, todayKwh);
-    }
-    if (!totalByDate.size) return [];
+    // Convert history to carbon data
     let cumulative = 0;
-    // Sort chronologically by ISO date, then convert to display format
-    return Array.from(totalByDate.entries())
-      .sort((a, b) => a[0].localeCompare(b[0])) // ISO dates sort alphabetically
-      .map(([dateISO, kwh]) => {
-        const displayDate = new Date(dateISO + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+    const result = historyRows
+      .filter(r => {
+        // Skip today if we're viewing today (will add it separately with today's real-time data)
+        const rDate = String(r.day).split('T')[0];
+        return offsetDays === 0 ? rDate !== todayISO : true;
+      })
+      .map(r => {
+        const rDate = String(r.day).split('T')[0];
+        const displayDate = new Date(rDate + 'T00:00:00Z').toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+        const kwh = Number(r.energy_total_delta || 0);
         const co2 = kwh * prefs.co2Factor;
         cumulative += co2;
         return {
           day: displayDate,
-          dateISO, // Keep ISO for chart key if needed
+          dateISO: rDate,
           kwh: Number(kwh.toFixed(2)),
           co2: Number(co2.toFixed(2)),
           cumulative: Number(cumulative.toFixed(2)),
         };
       });
-  }, [chartResult, todayResult, prefs.co2Factor, offsetDays]);
+    
+    // Add today with live data (if viewing today)
+    if (offsetDays === 0 && todayEnergy > 0) {
+      const todayLabel = new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
+      const todayCo2 = todayEnergy * prefs.co2Factor;
+      cumulative += todayCo2;
+      result.push({
+        day: todayLabel,
+        dateISO: todayISO,
+        kwh: Number(todayEnergy.toFixed(2)),
+        co2: Number(todayCo2.toFixed(2)),
+        cumulative: Number(cumulative.toFixed(2)),
+      });
+    }
+    
+    // Sort chronologically
+    result.sort((a, b) => a.dateISO.localeCompare(b.dateISO));
+    return result;
+  }, [historyResult, todayEnergy, prefs.co2Factor, offsetDays]);
 
   const totalCO2 = dailyCarbon.length ? dailyCarbon[dailyCarbon.length - 1].cumulative : 0;
   const totalKwh = dailyCarbon.reduce((s, d) => s + d.kwh, 0);
