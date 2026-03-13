@@ -1263,10 +1263,7 @@ def get_anomalies(terrain_id: str, days: int = 30):
             """, conn, params=(terrain_id, days))
         
         # Replace NaN/Inf with None for JSON serialization
-        df = df.where(pd.notna(df), None)
-        for col in ['score', 'expected_kwh', 'actual_kwh', 'deviation_pct']:
-            if col in df.columns:
-                df[col] = df[col].apply(lambda x: None if pd.isna(x) or np.isinf(x) if isinstance(x, (int, float)) else False else x)
+        df = df.replace({np.nan: None, np.inf: None, -np.inf: None})
         
         return {"terrain_id": terrain_id, "anomalies": df.to_dict(orient="records")}
     except Exception as e:
