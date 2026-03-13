@@ -147,6 +147,102 @@ async function runAggregate(payload = {}) {
   return result;
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// Daily aggregation: runs at midnight UTC to finalize yesterday's complete day
+// Uses GREATEST(MAX-MIN, 0) for safety with negative deltas
+// ────────────────────────────────────────────────────────────────────────────
+async function runDailyAggregation(payload = {}) {
+  if (!telemetryDb) {
+    const msg = "telemetryDb not available - daily aggregation cannot run";
+    log.info(`✗ ${msg}`);
+    throw new Error(msg);
+  }
+
+  // Default: aggregate yesterday's completed day (midnight to midnight UTC)
+  const now = new Date();
+  const yesterday = new Date(now);
+  yesterday.setUTCDate(yesterday.getUTCDate() - 1);
+  yesterday.setUTCHours(0, 0, 0, 0);
+
+  const dayStart = payload.dayStart ? new Date(payload.dayStart) : yesterday;
+  const dayEnd = new Date(dayStart);
+  dayEnd.setUTCDate(dayEnd.getUTCDate() + 1); // Next day midnight
+
+  const siteId = payload.site_id || null;
+  const terrainId = payload.terrain_id || null;
+  const pointId = payload.point_id || null;
+
+  // Build dynamic filters
+  const where = [];
+  const params = [dayStart.toISOString(), dayEnd.toISOString()];
+  let idx = 3;
+
+  where.push(`time >= $1 AND time < $2`);
+
+  if (siteId) {
+    where.push(`site_id = $${idx++}`);
+    params.push(siteId);
+  }
+  if (terrainId) {
+    where.push(`terrain_id = $${idx++}`);
+    params.push(terrainId);
+  }
+  if (pointId) {
+    where.push(`point_id = $${idx++}`);
+    params.push(pointId);
+  }
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+
+  // Daily aggregation (using GREATEST for safety, matching dashboard calculation)
+  const sqlDaily = `
+    INSERT INTO acrel_agg_daily (
+      day, org_id, site_id, terrain_id, point_id,
+      samples_count,
+      active_power_avg, active_power_max,
+      energy_import_delta, energy_export_delta, energy_total_delta,
+      reactive_energy_import_delta, power_factor_avg
+    )
+    SELECT
+      (DATE_TRUNC('day', time AT TIME ZONE 'UTC'))::date AS day,
+      org_id, site_id, terrain_id, point_id,
+      COUNT(*)::int AS samples_count,
+      AVG(active_power_total) AS active_power_avg,
+      MAX(active_power_total) AS active_power_max,
+      GREATEST(MAX(energy_import) - MIN(energy_import), 0) AS energy_import_delta,
+      GREATEST(MAX(energy_export) - MIN(energy_export), 0) AS energy_export_delta,
+      GREATEST(MAX(energy_total) - MIN(energy_total), 0) AS energy_total_delta,
+      GREATEST(MAX(reactive_energy_import) - MIN(reactive_energy_import), 0) AS reactive_energy_import_delta,
+      AVG(power_factor_total) AS power_factor_avg
+    FROM acrel_readings
+    ${whereSql}
+    GROUP BY day, org_id, site_id, terrain_id, point_id
+    ON CONFLICT (point_id, day)
+    DO UPDATE SET
+      org_id = EXCLUDED.org_id,
+      site_id = EXCLUDED.site_id,
+      terrain_id = EXCLUDED.terrain_id,
+      samples_count = EXCLUDED.samples_count,
+      active_power_avg = EXCLUDED.active_power_avg,
+      active_power_max = EXCLUDED.active_power_max,
+      energy_import_delta = EXCLUDED.energy_import_delta,
+      energy_export_delta = EXCLUDED.energy_export_delta,
+      energy_total_delta = EXCLUDED.energy_total_delta,
+      reactive_energy_import_delta = EXCLUDED.reactive_energy_import_delta,
+      power_factor_avg = EXCLUDED.power_factor_avg
+  `;
+
+  const rDay = await telemetryDb.query(sqlDaily, params);
+  log.info(`Daily aggregation for ${dayStart.toISOString().split('T')[0]}: ${rDay.rowCount} rows upserted`);
+
+  const result = {
+    day: dayStart.toISOString().split('T')[0],
+    filters: { site_id: siteId, terrain_id: terrainId, point_id: pointId },
+    upserted: rDay.rowCount
+  };
+  return result;
+}
+
 async function runProcessHistoricalMessages(payload = {}) {
   // Fetch all incoming_messages for a newly-mapped device and replay them to /ingest/acrel
   const { device_key, terrain_id, point_id } = payload;
@@ -946,6 +1042,21 @@ new Worker(
     try {
       if (job.name === "telemetry.aggregate") {
         const summary = await runAggregate(payload);
+
+        if (runId) {
+          await insertJobResult(runId, job.name, summary);
+          await setRunStatus(runId, "success", {
+            finished_at: new Date().toISOString(),
+            result: summary
+          });
+        }
+
+        return { ok: true, summary };
+      }
+
+      // ── telemetry.aggregate_daily: midnight UTC job to finalize yesterday's day ──
+      if (job.name === "telemetry.aggregate_daily") {
+        const summary = await runDailyAggregation(payload);
 
         if (runId) {
           await insertJobResult(runId, job.name, summary);

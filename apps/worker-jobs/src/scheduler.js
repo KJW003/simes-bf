@@ -258,6 +258,27 @@ if (!connection) {
 
       log.info("✓ Monthly invoice update scheduled: every day at 00:05 UTC (01:05 BF time)");
 
+      // ── Daily aggregation: midnight UTC to finalize yesterday's complete day ──
+      for (const job of jobs) {
+        if (job.name === "telemetry.aggregate_daily") {
+          await telemetryQueue.removeRepeatableByKey(job.key);
+          log.info({ key: job.key }, 'Removed old daily aggregation job');
+        }
+      }
+
+      await telemetryQueue.add(
+        "telemetry.aggregate_daily",
+        { payload: {} },
+        {
+          repeat: { pattern: "0 0 * * *" }, // Daily at 00:00 UTC
+          removeOnComplete: 30,
+          removeOnFail: 60,
+          attempts: 2,
+        }
+      );
+
+      log.info("✓ Daily aggregation scheduled: midnight UTC (01:00 BF time)");
+
     } catch (e) {
       log.error(`✗ Failed to setup scheduler: ${e.message}`);
     }
