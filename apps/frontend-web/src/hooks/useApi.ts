@@ -232,6 +232,28 @@ export function useSaveTerrainContract() {
   });
 }
 
+// ─── Monthly Invoices (Facturation) ───────────────────────
+
+export function useFactureMonths(terrainId: string | null) {
+  return useQuery({
+    queryKey: ['facture-months', terrainId],
+    queryFn: () => api.getFactureMonths(terrainId!),
+    enabled: !!terrainId,
+    staleTime: 300_000,
+    retry: 1,
+  });
+}
+
+export function useFactureMonthly(terrainId: string | null, year?: number, month?: number, mode?: 'today') {
+  return useQuery({
+    queryKey: ['facture-monthly', terrainId, year, month, mode],
+    queryFn: () => api.getFactureMonthly(terrainId!, year, month, mode),
+    enabled: !!terrainId,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
 // ─── Terrain Overview (points + zones + readings) ──────────
 
 export interface TerrainOverviewData {

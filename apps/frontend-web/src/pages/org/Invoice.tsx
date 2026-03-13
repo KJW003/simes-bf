@@ -10,9 +10,11 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
+import api from '@/lib/api';
 import {
   useSubmitFacture, useFactureResult, useLatestFacture,
   useTariffPlans, useTerrainContract, useSaveTerrainContract,
+  useFactureMonths, useFactureMonthly,
 } from '@/hooks/useApi';
 import {
   Receipt, Zap, Clock, TrendingUp, FileText, AlertTriangle,
@@ -121,49 +123,31 @@ export default function Invoice() {
   const [isMonthlyMode, setIsMonthlyMode] = useState(true);
   const submitFacture = useSubmitFacture();
   const { data: apiFacture, isLoading: pollingFacture } = useFactureResult(runId);
+  const { data: monthsData, isLoading: loadingMonths } = useFactureMonths(isMonthlyMode ? selectedTerrain?.id ?? null : null);
 
   const liveResult = apiFacture as Record<string, unknown> | null;
   const hasLiveResult = !!liveResult;
+  const availableMonths = Array.isArray(monthsData?.months) ? monthsData.months : [];
 
-  // Load available months on component mount
-  useEffect(() => {
-    const loadMonths = async () => {
-      if (!selectedTerrain) return;
-      try {
-        const res = await fetch(`/api/results/facture/monthly/months?terrainId=${selectedTerrain.id}`);
-        if (res.ok) {
-          const data = await res.json();
-          setAvailableMonths(data.months || []);
-        }
-      } catch (e) {
-        console.error('Error loading months:', e);
-      }
-    };
-    loadMonths();
-  }, [selectedTerrain]);
+  // Keep old useEffect for backward compatibility if needed
+  // const [availableMonths, setAvailableMonths] = useState<Array<{ year: number; month: number; display: string }>>([]);
 
   const handleCalculate = async () => {
     if (!selectedTerrain || !hasContract) return;
     try {
       if (isMonthlyMode) {
-        // Monthly mode: fetch from stored invoice
-        const mode = todayOnly ? 'today' : undefined;
-        const url = new URL('/api/results/facture/monthly', window.location.origin);
-        url.searchParams.set('terrainId', selectedTerrain.id);
-        if (mode === 'today') {
-          url.searchParams.set('mode', 'today');
-        } else {
-          url.searchParams.set('year', String(selectedYear));
-          url.searchParams.set('month', String(selectedMonth));
-        }
-        
-        const res = await fetch(url.toString());
-        if (res.ok) {
-          const data = await res.json();
-          // Mock result object for display compatibility
+        // Monthly mode: fetch from stored invoice with auth headers
+        try {
+          let result;
+          if (todayOnly) {
+            result = await api.getFactureMonthly(selectedTerrain.id, undefined, undefined, 'today');
+          } else {
+            result = await api.getFactureMonthly(selectedTerrain.id, selectedYear, selectedMonth);
+          }
           setRunId('monthly-' + Date.now());
-          // Manually set the result to avoid API call
-          console.log('Monthly invoice loaded:', data);
+          console.log('Monthly invoice loaded:', result);
+        } catch (e) {
+          console.error('Error fetching monthly invoice:', e);
         }
       } else {
         // Ad-hoc mode: old behavior with date range

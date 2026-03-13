@@ -348,6 +348,23 @@ export const api = {
     return request<Array<Record<string, unknown>>>(`/tariffs${qs}`);
   },
 
+  // ── Monthly Invoices (Facturation) ──
+  getFactureMonths: (terrainId: string) =>
+    request<{ ok: boolean; months: Array<{ year: number; month: number; display: string; status: string; lastUpdated: string }> }>
+      (`/results/facture/monthly/months?terrainId=${terrainId}`),
+
+  getFactureMonthly: (terrainId: string, year?: number, month?: number, mode?: 'today') => {
+    const qs = new URLSearchParams();
+    qs.set('terrainId', terrainId);
+    if (mode === 'today') {
+      qs.set('mode', 'today');
+    } else if (year && month) {
+      qs.set('year', String(year));
+      qs.set('month', String(month));
+    }
+    return request<Record<string, unknown>>(`/results/facture/monthly?${qs.toString()}`);
+  },
+
   getTerrainContract: (terrainId: string) =>
     request<Record<string, unknown>>(`/terrains/${terrainId}/contract`),
 
