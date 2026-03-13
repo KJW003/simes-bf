@@ -157,8 +157,14 @@ export default function InvoiceImproved() {
 
   // Find the name of the CURRENT tariff plan (from contract data)
   const currentTariffName = contractData?.tariff_plan_id && tariffData?.tariffs
-    ? tariffData.tariffs.find((t: any) => String(t.id) === String(contractData.tariff_plan_id))?.name
+    ? tariffData.tariffs.find((t: any) => {
+        const match = String(t.id) === String(contractData.tariff_plan_id);
+        console.log('Tariff match:', { tariff_id: t.id, contract_id: contractData.tariff_plan_id, match });
+        return match;
+      })?.name
     : null;
+
+  console.log('Current tariff name:', currentTariffName, { contractData, tariffData });
 
   const handleCalculate = async () => {
     if (!selectedTerrain || !hasContract) return;
