@@ -155,9 +155,9 @@ export default function InvoiceImproved() {
 
   const hasPfWarning = apiCosPhi > 0 && apiCosPhi < 0.93;
 
-  // Find the name of the selected tariff plan
-  const selectedTariffName = contractForm.tariff_plan_id && tariffData?.tariffs
-    ? tariffData.tariffs.find((t: any) => String(t.id) === contractForm.tariff_plan_id)?.name
+  // Find the name of the CURRENT tariff plan (from contract data)
+  const currentTariffName = contractData?.tariff_plan_id && tariffData?.tariffs
+    ? tariffData.tariffs.find((t: any) => String(t.id) === String(contractData.tariff_plan_id))?.name
     : null;
 
   const handleCalculate = async () => {
@@ -257,8 +257,8 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
                   ))}
                 </SelectContent>
               </Select>
-              {selectedTariffName && (
-                <p className="text-xs text-muted-foreground">Plan actif: <span className="font-medium text-foreground">{selectedTariffName}</span></p>
+              {currentTariffName && (
+                <p className="text-xs text-muted-foreground">Plan actif: <span className="font-medium text-foreground">{currentTariffName}</span></p>
               )}
             </div>
             <div className="space-y-2">
