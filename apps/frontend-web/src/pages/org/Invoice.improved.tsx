@@ -8,7 +8,7 @@
 // 4. Toast feedback instead of tiny status text
 // ==================================================
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import { PageHeader } from '@/components/ui/page-header';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -24,6 +24,42 @@ import { useSubmitFacture, useFactureResult, useTariffPlans, useTerrainContract,
 import { Receipt, Zap, TrendingUp, AlertTriangle, Loader2, FileText, Calculator, Settings2, Check, ChevronDown } from 'lucide-react';
 
 const formatCurrency = (value: number) => value.toLocaleString('fr-FR');
+
+/**
+ * Make breakdown labels user-friendly by replacing technical names with clear French labels
+ * Keep ALL fields, just rename them
+ */
+function filterUserFriendlyBreakdown(breakdown: Array<any> | null | undefined) {
+  if (!breakdown) return [];
+  
+  const friendlyLabels: Record<string, string> = {
+    'K1': 'Consommation heures pleines',
+    'K2': 'Consommation heures creuses',
+    'WA': 'Énergie active totale',
+    'WR': 'Énergie réactive totale',
+    'MA': 'Pertes actives',
+    'MR': 'Pertes réactives',
+    'MA_HPL': 'Pertes attribuées heures pleines',
+    'MA_HPT': 'Pertes attribuées heures creuses',
+    'CONSO_HPL': 'Consommation facturée heures pleines',
+    'CONSO_HPT': 'Consommation facturée heures creuses',
+    'CR': 'Réactivité totale',
+    'ERC': 'Réactivité compensée par condensateurs',
+    'ER': 'Réactivité excédentaire',
+    'COSPHI': 'Facteur de puissance (cos φ)',
+    'PF': 'Prime de puissance souscrite',
+    'EXCEED': 'Dépassement de puissance',
+    'FIXED': 'Prime fixe mensuelle',
+    'FEES': 'Frais fixes (compteur, poste, entretien)',
+    'TDE_TDSAAE': 'Taxe/contribution électricité',
+    'TVA': 'TVA',
+  };
+  
+  return breakdown.map(row => ({
+    ...row,
+    label: friendlyLabels[row.key] || row.label,
+  }));
+}
 
 export default function InvoiceImproved() {
   const { selectedTerrain } = useAppContext();
@@ -41,6 +77,17 @@ export default function InvoiceImproved() {
   });
   const [showOptional, setShowOptional] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  // Sync tariff plan when contract data changes
+  useEffect(() => {
+    if (contractData?.tariff_plan_id) {
+      setContractForm(prev => ({
+        ...prev,
+        tariff_plan_id: String(contractData.tariff_plan_id),
+        subscribed_power_kw: Number(contractData.subscribed_power_kw ?? 100),
+      }));
+    }
+  }, [contractData?.tariff_plan_id, contractData?.subscribed_power_kw]);
 
   const handleSaveContract = async () => {
     try {
@@ -96,7 +143,7 @@ export default function InvoiceImproved() {
   const todayMaxPower = hasTodayResult ? Number(todayResult.maxDemandKw ?? 0) : 0;
   const todayCosPhi = hasTodayResult ? Number(todayResult.cosPhi ?? 0) : 0;
   const todayKma = hasTodayResult ? Number(todayResult.Kma ?? 1) : 1;
-  const todayBreakdown = hasTodayResult ? (todayResult.breakdown as Array<any>) : null;
+  const todayBreakdown = filterUserFriendlyBreakdown(hasTodayResult ? (todayResult.breakdown as Array<any>) : null);
   const todayHasPfWarning = todayCosPhi > 0 && todayCosPhi < 0.93;
 
   const apiTotal = hasLiveResult ? Number(liveResult.totalAmount ?? 0) : 0;
@@ -104,7 +151,7 @@ export default function InvoiceImproved() {
   const apiMaxPower = hasLiveResult ? Number(liveResult.maxDemandKw ?? 0) : 0;
   const apiCosPhi = hasLiveResult ? Number(liveResult.cosPhi ?? 0) : 0;
   const apiKma = hasLiveResult ? Number(liveResult.Kma ?? 1) : 1;
-  const apiBreakdown = hasLiveResult ? (liveResult.breakdown as Array<any>) : null;
+  const apiBreakdown = filterUserFriendlyBreakdown(hasLiveResult ? (liveResult.breakdown as Array<any>) : null);
 
   const hasPfWarning = apiCosPhi > 0 && apiCosPhi < 0.93;
 
@@ -196,7 +243,9 @@ ${hasPfWarning ? `<div class="warning">⚠ cos φ = ${apiCosPhi.toFixed(3)} &lt;
             <div className="space-y-2">
               <Label className="text-sm font-medium">Plan tarifaire (SONABEL)</Label>
               <Select value={contractForm.tariff_plan_id} onValueChange={v => setContractForm({ ...contractForm, tariff_plan_id: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choisir un plan tarifaire..." />
+                </SelectTrigger>
                 <SelectContent>
                   {tariffData?.tariffs && tariffData.tariffs.map((p: any) => (
                     <SelectItem key={p.id} value={String(p.id)}>{p.name ?? p.plan_code}</SelectItem>
