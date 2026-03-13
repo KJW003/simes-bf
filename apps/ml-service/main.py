@@ -990,22 +990,29 @@ def detect_anomalies(terrain_id: str):
     try:
         with get_conn() as conn:
             # ─ Get last analysis state for efficient sliding-window analysis ─
-            state_df = pd.read_sql("""
-                SELECT last_analyzed_until FROM anomaly_analysis_state
-                WHERE terrain_id = %s
-            """, conn, params=(terrain_id,))
+            # Gracefully fallback if anomaly_analysis_state table doesn't exist yet
+            lookback_hours = 48
+            analysis_start_time = pd.Timestamp.now(tz='UTC') - pd.Timedelta(hours=lookback_hours)
             
-            if len(state_df) > 0:
-                last_analyzed_until = pd.Timestamp(state_df.iloc[0]['last_analyzed_until'])
-                analysis_start_time = last_analyzed_until
-                lookback_hours = int((pd.Timestamp.now(tz='UTC') - last_analyzed_until).total_seconds() / 3600)
-                lookback_hours = min(max(lookback_hours, 1), 48)  # Clamp 1-48h
-                logger.info(f"Incremental analysis for {terrain_id}: analyzing last {lookback_hours}h (since {last_analyzed_until})")
-            else:
-                # First time: analyze full 48 hours
-                lookback_hours = 48
-                analysis_start_time = pd.Timestamp.now(tz='UTC') - pd.Timedelta(hours=lookback_hours)
-                logger.info(f"Initial analysis for {terrain_id}: analyzing last {lookback_hours}h")
+            try:
+                state_df = pd.read_sql("""
+                    SELECT last_analyzed_until FROM anomaly_analysis_state
+                    WHERE terrain_id = %s
+                """, conn, params=(terrain_id,))
+                
+                if len(state_df) > 0:
+                    last_analyzed_until = pd.Timestamp(state_df.iloc[0]['last_analyzed_until'])
+                    analysis_start_time = last_analyzed_until
+                    lookback_hours = int((pd.Timestamp.now(tz='UTC') - last_analyzed_until).total_seconds() / 3600)
+                    lookback_hours = min(max(lookback_hours, 1), 48)  # Clamp 1-48h
+                    logger.info(f"Incremental analysis for {terrain_id}: analyzing last {lookback_hours}h (since {last_analyzed_until})")
+                else:
+                    # First time: analyze full 48 hours
+                    logger.info(f"Initial analysis for {terrain_id}: analyzing last {lookback_hours}h")
+            except Exception as state_err:
+                # Table doesn't exist yet (migration pending) - fallback to 48h
+                logger.warn(f"anomaly_analysis_state not available: {state_err}. Using fallback 48h lookback.")
+                logger.info(f"Initial analysis for {terrain_id}: analyzing last {lookback_hours}h (migration pending)")
             
             # Fetch features once for all methods
             features_df = fetch_daily_features(terrain_id)
@@ -1207,18 +1214,22 @@ def detect_anomalies(terrain_id: str):
             # Update analysis state (sliding window tracking)
             # ─────────────────────────────────────────────────────────────
             analysis_end_time = pd.Timestamp.now(tz='UTC')
-            with conn.cursor() as cur:
-                cur.execute("""
-                    INSERT INTO anomaly_analysis_state (terrain_id, last_analysis_time, last_analyzed_until)
-                    VALUES (%s, %s, %s)
-                    ON CONFLICT (terrain_id) 
-                    DO UPDATE SET 
-                        last_analysis_time = EXCLUDED.last_analysis_time,
-                        last_analyzed_until = EXCLUDED.last_analyzed_until,
-                        updated_at = NOW()
-                """, (terrain_id, analysis_end_time, analysis_end_time))
-                conn.commit()
-                logger.info(f"Updated analysis state for {terrain_id}: last_analyzed_until = {analysis_end_time}")
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO anomaly_analysis_state (terrain_id, last_analysis_time, last_analyzed_until)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (terrain_id) 
+                        DO UPDATE SET 
+                            last_analysis_time = EXCLUDED.last_analysis_time,
+                            last_analyzed_until = EXCLUDED.last_analyzed_until,
+                            updated_at = NOW()
+                    """, (terrain_id, analysis_end_time, analysis_end_time))
+                    conn.commit()
+                    logger.info(f"Updated analysis state for {terrain_id}: last_analyzed_until = {analysis_end_time}")
+            except Exception as state_err:
+                logger.warn(f"Could not update analysis state (table pending): {state_err}")
+                # This is OK - migration will create the table and it will work next time
 
         # Group by type for summary
         by_type = {}
