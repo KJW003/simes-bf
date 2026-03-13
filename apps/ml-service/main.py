@@ -857,23 +857,156 @@ def detect_seasonality_break(energy_series: np.ndarray, lookback_weeks: int = 4)
     return breaks
 
 
+# ─── Quality Anomaly Detection (from raw acrel_readings) ──────
+
+def detect_quality_anomalies(terrain_id: str, lookback_hours: int = 48) -> list[dict]:
+    """
+    Detect electrical quality anomalies from raw acrel_readings.
+    Analyzes: THD, Power Factor, Voltage/Current Unbalance, Frequency.
+    
+    Returns list of quality anomalies with violations flagged when:
+    - Consecutive violations or high frequency of violations detected
+    """
+    results = []
+    
+    quality_metrics = {
+        'thd': {
+            'cols': ['thdi_a', 'thdi_b', 'thdi_c'],
+            'thresholds': {'warning': 5, 'critical': 8},
+            'description_template': 'THD {phase} = {value}% ({severity})',
+        },
+        'pf': {
+            'cols': ['power_factor_a', 'power_factor_b', 'power_factor_c', 'power_factor_total'],
+            'thresholds': {'warning': 0.85, 'critical': 0.80},
+            'is_lower_bound': True,
+            'description_template': 'Facteur de puissance {phase} = {value} ({severity})',
+        },
+        'voltage_unbalance': {
+            'cols': ['voltage_unbalance'],
+            'thresholds': {'warning': 3, 'critical': 5},
+            'description_template': 'Déséquilibre tension = {value}% ({severity})',
+        },
+        'current_unbalance': {
+            'cols': ['current_unbalance'],
+            'thresholds': {'warning': 10, 'critical': 15},
+            'description_template': 'Déséquilibre courant = {value}% ({severity})',
+        },
+    }
+    
+    try:
+        with get_conn() as conn:
+            # Fetch raw readings from last N hours
+            query = f"""
+            SELECT 
+                time,
+                point_id,
+                thdi_a, thdi_b, thdi_c,
+                power_factor_a, power_factor_b, power_factor_c, power_factor_total,
+                voltage_unbalance, current_unbalance, frequency
+            FROM acrel_readings
+            WHERE terrain_id = %s
+              AND time >= NOW() - INTERVAL '{lookback_hours} hours'
+            ORDER BY point_id, time
+            """
+            df = pd.read_sql(query, conn, params=(terrain_id,))
+            
+            if df.empty:
+                return results
+            
+            # Analyze each metric
+            for metric_name, metric_config in quality_metrics.items():
+                cols = metric_config['cols']
+                thresholds = metric_config['thresholds']
+                is_lower = metric_config.get('is_lower_bound', False)
+                desc_template = metric_config['description_template']
+                
+                # Check each column
+                for col in cols:
+                    if col not in df.columns:
+                        continue
+                    
+                    valid_data = df[df[col].notna()].copy()
+                    if len(valid_data) < 10:  # Need minimum data
+                        continue
+                    
+                    # Find violations
+                    if is_lower:
+                        warnings = valid_data[valid_data[col] < thresholds['warning']]
+                        criticals = valid_data[valid_data[col] < thresholds['critical']]
+                    else:
+                        warnings = valid_data[valid_data[col] > thresholds['warning']]
+                        criticals = valid_data[valid_data[col] > thresholds['critical']]
+                    
+                    # Count consecutive violations
+                    violation_count = len(criticals) if len(criticals) > 0 else len(warnings)
+                    
+                    if violation_count >= 5:  # Flag if 5+ violations in lookback
+                        most_severe = criticals if len(criticals) > 0 else warnings
+                        worst_reading = most_severe.iloc[-1]  # Last violation (most recent)
+                        
+                        severity = "critical" if len(criticals) > 0 else "high" if len(warnings) >= 5 else "medium"
+                        value = worst_reading[col]
+                        phase_label = col.split('_')[-1].upper() if col != 'voltage_unbalance' and col != 'current_unbalance' else ""
+                        
+                        phase_display = f"Phase {phase_label}" if phase_label else metric_name.replace('_', ' ').title()
+                        
+                        results.append({
+                            "anomaly_type": f"quality_{metric_name}",
+                            "anomaly_date": str(worst_reading['time'].date()),
+                            "severity": severity,
+                            "score": round(float(value), 3),
+                            "expected_kwh": None,
+                            "actual_kwh": None,
+                            "deviation_pct": None,
+                            "description": f"{phase_display}: {value:.2f} ({severity.upper()}) — {violation_count} violation(s) détectée(s) sur {lookback_hours}h",
+                        })
+        
+        return results
+    
+    except Exception as e:
+        logger.error(f"Quality anomaly detection failed for {terrain_id}: {e}")
+        return results
+
+
 # ─── Anomaly Detection Endpoint ─────────────────────────────
 
 @app.post("/anomalies/detect/{terrain_id}")
 def detect_anomalies(terrain_id: str):
-    """Run anomaly detection for a terrain using SEVEN methods:
+    """Run anomaly detection for a terrain using algorithms:
     1. Residual analysis: compare actual vs predicted (uses ML predictions)
     2. Isolation Forest: multivariate outlier detection
     3. CUSUM change point: detect mean shifts in energy consumption
     4. Volatility spikes: detect equipment instability
     5. Anomaly clustering: detect systemic issues (multiple anomalies in short window)
     6. Seasonality break: detect if weekly pattern changed (FFT)
+    7. Quality analysis: THD, PF, unbalances from raw readings
+    
+    Uses sliding window: only analyzes data since last successful analysis.
     """
     results = []
     all_anomaly_indices = []  # For clustering
+    analysis_start_time = None
 
     try:
         with get_conn() as conn:
+            # ─ Get last analysis state for efficient sliding-window analysis ─
+            state_df = pd.read_sql("""
+                SELECT last_analyzed_until FROM anomaly_analysis_state
+                WHERE terrain_id = %s
+            """, conn, params=(terrain_id,))
+            
+            if len(state_df) > 0:
+                last_analyzed_until = pd.Timestamp(state_df.iloc[0]['last_analyzed_until'])
+                analysis_start_time = last_analyzed_until
+                lookback_hours = int((pd.Timestamp.now(tz='UTC') - last_analyzed_until).total_seconds() / 3600)
+                lookback_hours = min(max(lookback_hours, 1), 48)  # Clamp 1-48h
+                logger.info(f"Incremental analysis for {terrain_id}: analyzing last {lookback_hours}h (since {last_analyzed_until})")
+            else:
+                # First time: analyze full 48 hours
+                lookback_hours = 48
+                analysis_start_time = pd.Timestamp.now(tz='UTC') - pd.Timedelta(hours=lookback_hours)
+                logger.info(f"Initial analysis for {terrain_id}: analyzing last {lookback_hours}h")
+            
             # Fetch features once for all methods
             features_df = fetch_daily_features(terrain_id)
             if features_df.empty:
@@ -1051,6 +1184,11 @@ def detect_anomalies(terrain_id: str):
             # ─────────────────────────────────────────────────────────────
             # Store all results in DB
             # ─────────────────────────────────────────────────────────────
+            
+            # Add quality anomalies (from raw readings, using calculated lookback)
+            quality_results = detect_quality_anomalies(terrain_id, lookback_hours=lookback_hours)
+            results.extend(quality_results)
+            
             if results:
                 with conn.cursor() as cur:
                     for a in results:
@@ -1059,11 +1197,28 @@ def detect_anomalies(terrain_id: str):
                                 (terrain_id, anomaly_date, anomaly_type, severity, score,
                                  expected_kwh, actual_kwh, deviation_pct, description)
                             VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                            ON CONFLICT DO NOTHING
+                            ON CONFLICT (terrain_id, anomaly_date, anomaly_type) DO NOTHING
                         """, (terrain_id, a["anomaly_date"], a["anomaly_type"],
                               a["severity"], a["score"], a["expected_kwh"],
                               a["actual_kwh"], a["deviation_pct"], a["description"]))
                     conn.commit()
+            
+            # ─────────────────────────────────────────────────────────────
+            # Update analysis state (sliding window tracking)
+            # ─────────────────────────────────────────────────────────────
+            analysis_end_time = pd.Timestamp.now(tz='UTC')
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO anomaly_analysis_state (terrain_id, last_analysis_time, last_analyzed_until)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (terrain_id) 
+                    DO UPDATE SET 
+                        last_analysis_time = EXCLUDED.last_analysis_time,
+                        last_analyzed_until = EXCLUDED.last_analyzed_until,
+                        updated_at = NOW()
+                """, (terrain_id, analysis_end_time, analysis_end_time))
+                conn.commit()
+                logger.info(f"Updated analysis state for {terrain_id}: last_analyzed_until = {analysis_end_time}")
 
         # Group by type for summary
         by_type = {}

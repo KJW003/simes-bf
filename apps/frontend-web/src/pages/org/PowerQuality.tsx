@@ -12,7 +12,7 @@ import {
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
 import {
-  Gauge, AlertTriangle, CheckCircle2, Loader2, Activity,
+  Gauge, AlertTriangle, CheckCircle2, Loader2, Activity, Info,
 } from 'lucide-react';
 import {
   BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid,
@@ -177,6 +177,17 @@ export default function PowerQuality() {
         </Select>
       </div>
 
+      {/* Info Banner */}
+      <Card className="border-blue-200 bg-blue-50">
+        <CardContent className="p-4 flex items-start gap-3">
+          <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+          <div className="text-sm text-blue-900">
+            <p className="font-medium mb-1">État actuel</p>
+            <p>Cette page affiche les mesures électriques en temps réel. Pour analyser les anomalies historiques et obtenir des recommandations détaillées, consultez la page <span className="font-semibold">Anomalies IA</span>.</p>
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 animate-stagger-children">
         <KpiCard
           label="PF moyen 24h"
@@ -320,32 +331,35 @@ export default function PowerQuality() {
                       <th>Point</th>
                       <th>Déséquilibre tension</th>
                       <th>Déséquilibre courant</th>
-                      <th>Recommandation</th>
+                      <th>Statut</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {pointStats.filter(p => p.v_unbal != null || p.i_unbal != null).map(p => (
-                      <tr key={p.id}>
-                        <td className="font-medium text-sm">{p.name}</td>
-                        <td>
-                          <span className={cn('mono text-sm', p.v_unbal != null && p.v_unbal > 2 && 'text-amber-600 font-semibold')}>
-                            {p.v_unbal != null ? p.v_unbal.toFixed(1) + '%' : '—'}
-                          </span>
-                        </td>
-                        <td>
-                          <span className={cn('mono text-sm', p.i_unbal != null && p.i_unbal > 10 && 'text-amber-600 font-semibold')}>
-                            {p.i_unbal != null ? p.i_unbal.toFixed(1) + '%' : '—'}
-                          </span>
-                        </td>
-                        <td className="text-xs text-muted-foreground">
-                          {p.i_unbal != null && p.i_unbal > 10
-                            ? 'Rééquilibrer les charges monophasées'
-                            : p.v_unbal != null && p.v_unbal > 2
-                              ? 'Vérifier les tensions d\'alimentation'
-                              : 'RAS'}
-                        </td>
-                      </tr>
-                    ))}
+                    {pointStats.filter(p => p.v_unbal != null || p.i_unbal != null).map(p => {
+                      const vStatus = p.v_unbal != null && p.v_unbal > 2 ? 'warning' : 'ok';
+                      const iStatus = p.i_unbal != null && p.i_unbal > 10 ? 'warning' : 'ok';
+                      const overallStatus = vStatus === 'warning' || iStatus === 'warning' ? 'warning' : 'ok';
+                      return (
+                        <tr key={p.id}>
+                          <td className="font-medium text-sm">{p.name}</td>
+                          <td>
+                            <span className={cn('mono text-sm', vStatus === 'warning' && 'text-amber-600 font-semibold')}>
+                              {p.v_unbal != null ? p.v_unbal.toFixed(1) + '%' : '—'}
+                            </span>
+                          </td>
+                          <td>
+                            <span className={cn('mono text-sm', iStatus === 'warning' && 'text-amber-600 font-semibold')}>
+                              {p.i_unbal != null ? p.i_unbal.toFixed(1) + '%' : '—'}
+                            </span>
+                          </td>
+                          <td>
+                            <Badge variant="outline" className={cn('text-[10px]', overallStatus === 'warning' ? 'badge-warning' : 'badge-ok')}>
+                              {overallStatus === 'warning' ? 'Attention' : 'OK'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 </div>

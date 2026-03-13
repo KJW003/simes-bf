@@ -46,6 +46,26 @@ const anomalyExplanations: Record<string, { label: string; meaning: string; acti
     label: 'Problème systémique',
     meaning: 'Plusieurs anomalies se produisent pendant la même période. Cela peut indiquer un problème au niveau du site.',
     action: 'Contacter un électricien pour un diagnostic complet.'
+  },
+  'quality_thd': {
+    label: 'THD élevé',
+    meaning: 'La distorsion harmonique est trop élevée. Cela peut être causé par des équipements électroniques (variateurs, LED, etc.) qui polluent le réseau.',
+    action: 'Installer des filtres harmoniques ou améliorer la qualité des équipements. Contacter un électricien spécialisé.'
+  },
+  'quality_pf': {
+    label: 'Facteur de puissance faible',
+    meaning: 'Le facteur de puissance est en dessous du seuil. Vous payez des pénalités tarifaires et l\'énergie réactive est gaspillée.',
+    action: 'Installer un banc de condensateurs ou un correcteur de facteur de puissance. Consulter un électricien.'
+  },
+  'quality_voltage_unbalance': {
+    label: 'Déséquilibre de tension',
+    meaning: 'Les tensions entre les trois phases ne sont pas équilibrées. Cela use prématurément les moteurs et équipements triphasés.',
+    action: 'Vérifier la répartition des charges monophasées. Demander un diagnostic au distributeur d\'électricité.'
+  },
+  'quality_current_unbalance': {
+    label: 'Déséquilibre de courant',
+    meaning: 'Les courants des trois phases sont déséquilibrés. Certaines phases sont surchargées, d\'autres sous-utilisées.',
+    action: 'Rééquilibrer les charges monophasées entre les phases. Redistribuer les équipements de manière homogène.'
   }
 };
 
