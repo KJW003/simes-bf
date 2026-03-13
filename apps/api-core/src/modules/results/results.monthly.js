@@ -32,11 +32,15 @@ router.get("/results/facture/monthly",
   requireAuth,
   verifyTerrainAccess("query.terrainId"),  // Security: Verify user owns this terrain
   async (req, res) => {
+    const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+    const startTime = Date.now();
+    
     try {
       const { terrainId, year, month, mode } = req.query;
 
       // Validate terrain ID
       if (!terrainId) {
+        await logAuditEvent(req.userId, 'view', 'facture_monthly', 'invalid', { error: 'missing_terrainId' }, clientIp);
         return res.status(400).json({ 
           ok: false,
           error: "terrainId parameter required"
@@ -79,6 +83,10 @@ router.get("/results/facture/monthly",
               result = job.returnvalue;
               break;
             } else if (jobState === "failed") {
+              await logAuditEvent(req.userId, 'view', 'facture_today', terrainId, { 
+                error: 'computation_failed',
+                reason: job.failedReason 
+              }, clientIp);
               return res.status(500).json({ 
                 ok: false,
                 error: "Computation failed",
@@ -89,17 +97,21 @@ router.get("/results/facture/monthly",
           }
 
           if (!result) {
+            await logAuditEvent(req.userId, 'view', 'facture_today', terrainId, { 
+              error: 'computation_timeout'
+            }, clientIp);
             return res.status(503).json({ 
               ok: false,
               error: "Computation timeout - please try again"
             });
           }
 
-          // Log access for audit
-          await corePool.query(`
-            INSERT INTO audit_facture (user_id, action, resource_type, resource_id, details, timestamp)
-            VALUES ($1, $2, $3, $4, $5, NOW())
-          `, [req.userId, "view", "facture_today", terrainId, JSON.stringify({ year: currentYear, month: currentMonth })]);
+          // Log successful access for audit
+          await logAuditEvent(req.userId, 'view', 'facture_today', terrainId, { 
+            year: currentYear, 
+            month: currentMonth,
+            duration_ms: Date.now() - startTime
+          }, clientIp);
 
           return res.json({
             ok: true,
@@ -111,6 +123,10 @@ router.get("/results/facture/monthly",
 
         } catch (err) {
           console.error("Today mode computation error:", err);
+          await logAuditEvent(req.userId, 'view', 'facture_today', terrainId, { 
+            error: 'exception',
+            message: err.message 
+          }, clientIp);
           return res.status(500).json({ 
             ok: false,
             error: "Failed to compute today's invoice"
@@ -120,6 +136,11 @@ router.get("/results/facture/monthly",
 
       // Standard mode: retrieve stored monthly invoice
       if (!year || !month || month < 1 || month > 12) {
+        await logAuditEvent(req.userId, 'view', 'facture_monthly', 'invalid', { 
+          error: 'invalid_parameters',
+          year, 
+          month 
+        }, clientIp);
         return res.status(400).json({ 
           ok: false,
           error: "year and month (1-12) parameters required for standard mode"
@@ -143,6 +164,11 @@ router.get("/results/facture/monthly",
       `, [terrainId, parseInt(year), parseInt(month)]);
 
       if (!invoiceQuery.rows.length) {
+        await logAuditEvent(req.userId, 'view', 'facture_monthly', terrainId, { 
+          error: 'not_found',
+          year: parseInt(year),
+          month: parseInt(month)
+        }, clientIp);
         return res.status(404).json({ 
           ok: false,
           error: `No invoice found for ${year}-${String(month).padStart(2, '0')}`
@@ -151,11 +177,13 @@ router.get("/results/facture/monthly",
 
       const invoice = invoiceQuery.rows[0];
 
-      // Log access for audit
-      await corePool.query(`
-        INSERT INTO audit_facture (user_id, action, resource_type, resource_id, details, timestamp)
-        VALUES ($1, $2, $3, $4, $5, NOW())
-      `, [req.userId, "view", "facture_monthly", invoice.id, JSON.stringify({ year, month })]);
+      // Log successful access for audit
+      await logAuditEvent(req.userId, 'view', 'facture_monthly', invoice.id, { 
+        year: parseInt(year), 
+        month: parseInt(month),
+        status: invoice.status,
+        duration_ms: Date.now() - startTime
+      }, clientIp);
 
       res.json({
         ok: true,
@@ -169,6 +197,10 @@ router.get("/results/facture/monthly",
 
     } catch (e) {
       console.error("GET /results/facture/monthly error:", e);
+      await logAuditEvent(req.userId, 'view', 'facture_monthly', 'error', { 
+        error: 'exception',
+        message: e.message 
+      }, clientIp);
       res.status(500).json({ 
         ok: false, 
         error: e.message 
@@ -184,10 +216,13 @@ router.get("/results/facture/monthly/months",
   requireAuth,
   verifyTerrainAccess("query.terrainId"),
   async (req, res) => {
+    const clientIp = req.ip || req.connection.remoteAddress || 'unknown';
+    
     try {
       const { terrainId } = req.query;
 
       if (!terrainId) {
+        await logAuditEvent(req.userId, 'list', 'facture_months', 'invalid', { error: 'missing_terrainId' }, clientIp);
         return res.status(400).json({ 
           ok: false,
           error: "terrainId required"
@@ -203,6 +238,11 @@ router.get("/results/facture/monthly/months",
         LIMIT 24  -- Last 24 months
       `, [terrainId]);
 
+      // Log successful access
+      await logAuditEvent(req.userId, 'list', 'facture_months', terrainId, { 
+        months_count: monthsQuery.rows.length 
+      }, clientIp);
+
       res.json({
         ok: true,
         months: monthsQuery.rows.map(row => ({
@@ -215,12 +255,32 @@ router.get("/results/facture/monthly/months",
       });
 
     } catch (e) {
+      console.error("GET /results/facture/monthly/months error:", e);
+      await logAuditEvent(req.userId, 'list', 'facture_months', 'error', { 
+        error: 'exception',
+        message: e.message 
+      }, clientIp);
       res.status(500).json({ 
         ok: false,
         error: e.message
       });
     }
 });
+
+/**
+ * Helper: Log audit event to database
+ */
+async function logAuditEvent(userId, action, resourceType, resourceId, details, clientIp) {
+  try {
+    await corePool.query(`
+      INSERT INTO audit_facture (user_id, action, resource_type, resource_id, details, client_ip, timestamp)
+      VALUES ($1, $2, $3, $4, $5, $6, NOW())
+    `, [userId, action, resourceType, resourceId, JSON.stringify(details), clientIp]);
+  } catch (err) {
+    console.error("Error logging audit event:", err);
+    // Don't throw - audit logging shouldn't break the request
+  }
+}
 
 // Helper function: days in month
 function getDaysInMonth(year, month) {

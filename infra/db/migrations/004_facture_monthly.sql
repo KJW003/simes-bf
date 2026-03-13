@@ -90,17 +90,18 @@ CREATE TABLE IF NOT EXISTS audit_facture (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id UUID,  -- org_id (for multi-tenancy restrictions)
   user_id UUID,
-  action VARCHAR NOT NULL,  -- 'view', 'download', 'recompute', 'update'
-  resource_type VARCHAR,  -- 'facture_monthly', 'facture_daily_update', etc.
-  resource_id UUID,
-  details JSONB,  -- { terrainId, year, month, reason, etc. }
-  ip_address VARCHAR,
+  action VARCHAR NOT NULL,  -- 'view', 'list', 'download', 'recompute', 'update'
+  resource_type VARCHAR,  -- 'facture_monthly', 'facture_today', 'facture_months', etc.
+  resource_id VARCHAR,  -- Can be UUID or string identifier
+  details JSONB,  -- { terrainId, year, month, error, duration_ms, etc. }
+  client_ip VARCHAR,  -- IP address of requesting client
   timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS audit_facture_tenant_idx ON audit_facture(tenant_id);
 CREATE INDEX IF NOT EXISTS audit_facture_user_idx ON audit_facture(user_id);
 CREATE INDEX IF NOT EXISTS audit_facture_action_idx ON audit_facture(action);
+CREATE INDEX IF NOT EXISTS audit_facture_resource_idx ON audit_facture(resource_type, resource_id);
 CREATE INDEX IF NOT EXISTS audit_facture_timestamp_idx ON audit_facture(timestamp DESC);
 
 -- ─── Comment Summary ────────────────────────────────────────
