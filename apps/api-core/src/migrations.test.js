@@ -26,10 +26,17 @@ describe('migrate.js', () => {
 
     assert.ok(files.length > 0, 'Should have at least one migration file');
 
-    // Verify sequential numbering
+    // Verify sequential numbering (allows a/b sub-migrations sharing the same base number,
+    // e.g. 015a_ and 015b_, or paired files with the same numeric prefix).
     const numbers = files.map(f => parseInt(f.split('_')[0], 10));
-    for (let i = 0; i < numbers.length; i++) {
-      assert.equal(numbers[i], i + 1, `Migration ${files[i]} should have number ${i + 1}`);
+    assert.ok(numbers.every(n => !isNaN(n) && n >= 1), 'All migration files must start with a positive number');
+    for (let i = 1; i < numbers.length; i++) {
+      assert.ok(numbers[i] >= numbers[i - 1], `Migration ${files[i]} (${numbers[i]}) is lower than the previous migration (${numbers[i - 1]})`);
+    }
+    // No gaps in the unique set of migration numbers
+    const unique = [...new Set(numbers)].sort((a, b) => a - b);
+    for (let i = 1; i < unique.length; i++) {
+      assert.equal(unique[i], unique[i - 1] + 1, `Gap in migration numbers between ${unique[i - 1]} and ${unique[i]}`);
     }
 
     // Verify each file is non-empty SQL

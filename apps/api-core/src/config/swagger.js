@@ -273,12 +273,14 @@ module.exports = {
     },
 
     // ── AI / Forecasting ─────────────────────────────────
-    '/terrains/{terrainId}/ai/forecast': {
-      post: {
+    '/ai/forecast/{terrainId}': {
+      get: {
         tags: ['AI'],
         summary: 'Request energy consumption forecast',
-        parameters: [{ name: 'terrainId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } }],
-        requestBody: { content: { 'application/json': { schema: { type: 'object', properties: { horizon_days: { type: 'integer', default: 7 } } } } } },
+        parameters: [
+          { name: 'terrainId', in: 'path', required: true, schema: { type: 'string', format: 'uuid' } },
+          { name: 'days', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 30, default: 7 } },
+        ],
         responses: { 200: { description: 'Forecast result' } },
       },
     },

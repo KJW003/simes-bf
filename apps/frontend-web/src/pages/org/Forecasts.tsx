@@ -85,15 +85,16 @@ export default function Forecasts() {
 
   const isLoading = hourlyLoading || dailyLoading;
   const useML = !!mlForecast && !mlError;
-  const mlType = (mlForecast as any)?.model_type as string | undefined;
+  const mlType = mlForecast?.model_type;
+  const mlWarnings = mlForecast?.warnings ?? [];
 
-  const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
+  const points = (overviewData?.points ?? []) as Array<Record<string, unknown>>;
 
   // ── Extract data from backend responses ──
   const dailyAvg = hourlyData?.daily_avg_kw ?? 0;
   const trend = hourlyData?.trend_per_day ?? 0;
   const confidenceLevel = hourlyData?.confidence_level ?? 0;
-  const warnings = hourlyData?.warnings ?? [];
+  const warnings = Array.from(new Set([...(hourlyData?.warnings ?? []), ...mlWarnings]));
   const dataDays = hourlyData?.data_days ?? 0;
 
   // Predicted hourly curve (J+1)
@@ -136,7 +137,7 @@ export default function Forecasts() {
   // Forecast array for KPIs (use ML if available, otherwise backend hourly)
   const forecast = useMemo(() => {
     if (useML && mlForecast?.forecast) {
-      return mlForecast.forecast.map((d: any) => ({
+      return mlForecast.forecast.map((d) => ({
         day: d.day,
         predicted: d.predicted_kwh,
         upper: d.upper,
@@ -155,7 +156,7 @@ export default function Forecasts() {
   }, [useML, mlForecast, hourlyData]);
 
   // KPIs
-  const forecastEnergy = forecast.reduce((s, d) => s + d.predicted * 24, 0);
+  const forecastEnergy = forecast.reduce((s, d) => s + d.predicted, 0);
   const forecastCost = forecastEnergy * prefs.tariffRate;
   const forecastCO2 = forecastEnergy * prefs.co2Factor;
   const trendPercent = dailyAvg > 0 ? (trend / dailyAvg) * 100 : 0;
@@ -165,7 +166,9 @@ export default function Forecasts() {
   const modelBadge = useML
     ? mlType === 'simple'
       ? 'Moyenne par jour de semaine'
-      : `LightGBM (MAPE: ${(mlForecast as any)?.model_mape?.toFixed(1) ?? '?'}%)`
+      : mlType === 'bootstrap_1d'
+        ? 'Bootstrap (historique minimal)'
+      : `LightGBM (MAPE: ${mlForecast?.model_mape != null ? mlForecast.model_mape.toFixed(1) : '?'}%)`
     : hourlyData?.model_type
       ? `Profil horaire (${dataDays}j historique)`
       : 'Régression linéaire';
@@ -402,13 +405,13 @@ export default function Forecasts() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
                   <div>
                     <div className="text-2xl font-bold text-primary">
-                      {(mlForecast as any)?.model_mape?.toFixed(1) ?? '—'}%
+                      {mlForecast?.model_mape != null ? mlForecast.model_mape.toFixed(1) : '—'}%
                     </div>
                     <div className="text-xs text-muted-foreground">MAPE (erreur moyenne)</div>
                   </div>
                   <div>
                     <div className="text-2xl font-bold text-primary">
-                      {(mlForecast as any)?.model_rmse?.toFixed(1) ?? '—'}
+                      {mlForecast?.model_rmse != null ? mlForecast.model_rmse.toFixed(1) : '—'}
                     </div>
                     <div className="text-xs text-muted-foreground">RMSE (kWh)</div>
                   </div>

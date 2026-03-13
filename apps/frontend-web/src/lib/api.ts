@@ -7,6 +7,18 @@
 
 const BASE = (import.meta.env.VITE_API_URL as string) ?? '';
 
+interface ApiRequestError extends Error {
+  status?: number;
+  body?: unknown;
+  fallback?: unknown;
+}
+
+function fallbackFromError<T>(err: unknown): T | undefined {
+  if (!err || typeof err !== 'object') return undefined;
+  const candidate = err as { fallback?: unknown };
+  return candidate.fallback as T | undefined;
+}
+
 function getAuthToken(): string | null {
   try {
     return localStorage.getItem('auth_token');
@@ -34,8 +46,14 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs: number = 
     const res = await fetch(url, { ...init, headers, signal: controller.signal });
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
-      const error = new Error(body.error ?? `API ${res.status}`) as any;
+      const bodyRecord = (body && typeof body === 'object') ? body as Record<string, unknown> : {};
+      const message = typeof bodyRecord.error === 'string' ? bodyRecord.error : `API ${res.status}`;
+      const error = new Error(message) as ApiRequestError;
       error.status = res.status;
+      error.body = body;
+      if ('fallback' in bodyRecord) {
+        error.fallback = bodyRecord.fallback;
+      }
       throw error;
     }
     return res.json() as Promise<T>;
@@ -437,13 +455,13 @@ export const api = {
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.offset) qs.set('offset', String(params.offset));
     const q = qs.toString();
-    return request<{ ok: boolean; incidents: any[]; total: number }>(`/incidents${q ? `?${q}` : ''}`);
+    return request<{ ok: boolean; incidents: unknown[]; total: number }>(`/incidents${q ? `?${q}` : ''}`);
   },
-  getIncidentStats: () => request<{ ok: boolean; breakdown: any[]; open_count: number; critical_count: number; total: number }>('/incidents/stats'),
+  getIncidentStats: () => request<{ ok: boolean; breakdown: unknown[]; open_count: number; critical_count: number; total: number }>('/incidents/stats'),
   createIncident: (data: { title: string; description?: string; severity?: string; source?: string; terrain_id?: string; point_id?: string; metadata?: Record<string, unknown> }) =>
-    request<{ ok: boolean; incident: any }>('/incidents', { method: 'POST', body: JSON.stringify(data) }),
+    request<{ ok: boolean; incident: unknown }>('/incidents', { method: 'POST', body: JSON.stringify(data) }),
   updateIncident: (id: string, data: { status?: string; severity?: string; assigned_to?: string; description?: string; metadata?: Record<string, unknown> }) =>
-    request<{ ok: boolean; incident: any }>(`/incidents/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+    request<{ ok: boolean; incident: unknown }>(`/incidents/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
 
   // ── Audit Logs ──
   getLogs: (params?: { level?: string; source?: string; search?: string; limit?: number; offset?: number }) => {
@@ -454,12 +472,12 @@ export const api = {
     if (params?.limit) qs.set('limit', String(params.limit));
     if (params?.offset) qs.set('offset', String(params.offset));
     const q = qs.toString();
-    return request<{ ok: boolean; logs: any[]; total: number }>(`/logs${q ? `?${q}` : ''}`);
+    return request<{ ok: boolean; logs: unknown[]; total: number }>(`/logs${q ? `?${q}` : ''}`);
   },
-  getLogStats: () => request<{ ok: boolean; stats: any[] }>('/logs/stats'),
+  getLogStats: () => request<{ ok: boolean; stats: unknown[] }>('/logs/stats'),
 
   // ── Pipeline Health ──
-  getPipelineHealth: () => request<{ ok: boolean; components: any[]; checked_at: string }>('/health/pipeline'),
+  getPipelineHealth: () => request<{ ok: boolean; components: unknown[]; checked_at: string }>('/health/pipeline'),
 
   // ── Purge readings ──
   purgeReadings: (pointId: string, from?: string, to?: string) => {
@@ -554,7 +572,13 @@ export const api = {
 
   // ── AI / ML Forecasts ──
   getMLForecast: (terrainId: string | number, days: number) =>
-    request<{ forecast: Array<{ day: string; predicted_kwh: number; lower: number; upper: number }>; model_mape: number | null; model_rmse: number | null }>(`/ai/forecast/${terrainId}?days=${days}`),
+    request<{
+      forecast: Array<{ day: string; predicted_kwh: number; lower: number; upper: number }>;
+      model_mape: number | null;
+      model_rmse: number | null;
+      model_type?: string;
+      warnings?: string[];
+    }>(`/ai/forecast/${terrainId}?days=${days}`),
   trainMLModel: (terrainId: string | number) =>
     request<{ terrain_id: number; status: string; samples: number; mape: number | null; rmse: number | null; message: string }>(`/ai/train/${terrainId}`, { method: 'POST' }),
   getMLModelStatus: (terrainId: string | number) =>
@@ -582,21 +606,53 @@ export const api = {
       ...(opts?.days ? { days: String(opts.days) } : {}),
       ...(opts?.point_id ? { point_id: opts.point_id } : {}),
       ...(opts?.history_days ? { history_days: String(opts.history_days) } : {}),
-    }).toString()}`),
+    }).toString()}`).catch((err: unknown) => {
+      const fallback = fallbackFromError<{
+        terrain_id: string;
+        point_id: string | null;
+        model_type: string;
+        confidence_level: number;
+        data_days: number;
+        daily_avg_kw: number;
+        trend_per_day: number;
+        warnings: string[] | null;
+        hourly_forecast: Array<{
+          day: string;
+          day_iso: string;
+          hours: Array<{ hour: number; predicted_kw: number; lower: number; upper: number }>;
+        }>;
+        daily_forecast: Array<{ day: string; day_iso: string; predicted_kwh: number; lower: number; upper: number }>;
+        history_summary: { n_days: number; daily_avg: number; std_dev: number; slope: number };
+      }>(err);
+      if (fallback) return fallback;
+      throw err;
+    }),
 
   getComparisonProfiles: (terrainId: string | number, point_id?: string) =>
     request<{
       terrain_id: string;
       point_id: string | null;
+      warnings?: string[];
       today: Array<{ hour: number; kw: number | null }>;
       yesterday: Array<{ hour: number; kw: number | null }>;
-    }>(`/ai/forecast/profiles/${terrainId}${point_id ? `?point_id=${point_id}` : ''}`),
+    }>(`/ai/forecast/profiles/${terrainId}${point_id ? `?point_id=${point_id}` : ''}`).catch((err: unknown) => {
+      const fallback = fallbackFromError<{
+        terrain_id: string;
+        point_id: string | null;
+        warnings?: string[];
+        today: Array<{ hour: number; kw: number | null }>;
+        yesterday: Array<{ hour: number; kw: number | null }>;
+      }>(err);
+      if (fallback) return fallback;
+      throw err;
+    }),
 
   getDailyChartData: (terrainId: string | number, opts?: { history_days?: number; forecast_days?: number }) =>
     request<{
       terrain_id: string;
       history_days: number;
       forecast_days: number;
+      warnings?: string[];
       chart_data: Array<{
         day: string;
         day_iso: string | null;
@@ -610,7 +666,26 @@ export const api = {
     }>(`/ai/forecast/daily-chart/${terrainId}?${new URLSearchParams({
       ...(opts?.history_days ? { history_days: String(opts.history_days) } : {}),
       ...(opts?.forecast_days ? { forecast_days: String(opts.forecast_days) } : {}),
-    }).toString()}`),
+    }).toString()}`).catch((err: unknown) => {
+      const fallback = fallbackFromError<{
+        terrain_id: string;
+        history_days: number;
+        forecast_days: number;
+        warnings?: string[];
+        chart_data: Array<{
+          day: string;
+          day_iso: string | null;
+          actual_kwh: number | null;
+          actual_max: number | null;
+          predicted_kwh: number | null;
+          upper: number | null;
+          lower: number | null;
+          type: 'history' | 'forecast';
+        }>;
+      }>(err);
+      if (fallback) return fallback;
+      throw err;
+    }),
 
   // ── AI Anomaly Detection ──
   getAnomalies: (terrainId: string | number, days = 30) =>

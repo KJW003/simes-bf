@@ -197,17 +197,17 @@ TARGET_COL = "energy_delta"
 
 
 # ─── Prediction storage ──────────────────────────────────────
-def store_predictions(terrain_id: str, forecast: list, model_type: str):
+def store_predictions(terrain_id: str, forecast: list, model_type: str, start_date=None):
     """Store forecast predictions in ml_predictions table for later comparison."""
     try:
+        from datetime import datetime, timedelta
+
+        base_date = start_date or datetime.now()
         with get_conn() as conn:
             with conn.cursor() as cur:
-                for fd in forecast:
-                    # Parse dd/mm day format back to a full date
-                    from datetime import datetime
-                    day_parts = fd.day.split("/")
-                    year = datetime.now().year
-                    predicted_day = f"{year}-{day_parts[1]}-{day_parts[0]}"
+                for idx, fd in enumerate(forecast, start=1):
+                    # Persist by forecast horizon offset to avoid year rollover bugs.
+                    predicted_day = (base_date + timedelta(days=idx)).date()
                     cur.execute("""
                         INSERT INTO ml_predictions
                           (terrain_id, model_type, predicted_day, predicted_kwh, lower_bound, upper_bound)
@@ -217,7 +217,7 @@ def store_predictions(terrain_id: str, forecast: list, model_type: str):
                                       lower_bound  = EXCLUDED.lower_bound,
                                       upper_bound  = EXCLUDED.upper_bound,
                                       created_at   = NOW()
-                    """, (terrain_id, model_type, predicted_day, fd.predicted_kwh, fd.lower, fd.upper))
+                        """, (terrain_id, model_type, predicted_day, fd.predicted_kwh, fd.lower, fd.upper))
             conn.commit()
         logger.info(f"Stored {len(forecast)} predictions for terrain {terrain_id}")
     except Exception as e:
@@ -363,7 +363,8 @@ class PredictResponse(BaseModel):
     forecast: list[ForecastDay]
     model_mape: float | None = None
     model_rmse: float | None = None
-    model_type: str = "lightgbm"  # "lightgbm" | "simple" | "naive"
+    model_type: str = "lightgbm"  # "lightgbm" | "simple" | "bootstrap_1d"
+    warnings: list[str] | None = None
 
 
 def get_model(terrain_id: str):
@@ -425,7 +426,57 @@ def simple_forecast(terrain_id: str, days: int) -> PredictResponse | None:
         model_rmse=None,
         model_type="simple",
     )
-    store_predictions(terrain_id, forecast, "simple")
+    store_predictions(terrain_id, forecast, "simple", start_date=today)
+    return result
+
+
+def bootstrap_forecast(terrain_id: str, days: int) -> PredictResponse | None:
+    """Very-low-data fallback forecast for terrains with 1-2 daily samples."""
+    from datetime import datetime, timedelta
+
+    df = fetch_daily_simple(terrain_id)
+    if df.empty or len(df) < 1:
+        return None
+
+    n = len(df)
+    recent = df.tail(min(2, n))
+    base = float(recent["energy_delta"].mean())
+    if n >= 2:
+        vals = recent["energy_delta"].values.astype(float)
+        slope = float(vals[-1] - vals[0])
+    else:
+        slope = 0.0
+
+    base_std = float(df["energy_delta"].std()) if n >= 2 else max(base * 0.35, 0.1)
+
+    today = datetime.now()
+    forecast: list[ForecastDay] = []
+    for i in range(1, days + 1):
+        future = today + timedelta(days=i)
+        pred = max(0.0, base + slope * i)
+        band = max(base_std * 1.8 * np.sqrt(1 + i / max(n, 1)), pred * 0.25)
+        forecast.append(ForecastDay(
+            day=future.strftime("%d/%m"),
+            predicted_kwh=round(pred, 2),
+            lower=round(max(0.0, pred - band), 2),
+            upper=round(pred + band, 2),
+        ))
+
+    warnings = [
+        f"Mode bootstrap active: seulement {n} jour(s) d'historique.",
+        "Confiance tres faible: previsions basees sur extrapolation minimale.",
+    ]
+
+    logger.warning(f"Bootstrap forecast for terrain {terrain_id}: {n} days of data, {days} days predicted")
+    result = PredictResponse(
+        terrain_id=terrain_id,
+        forecast=forecast,
+        model_mape=None,
+        model_rmse=None,
+        model_type="bootstrap_1d",
+        warnings=warnings,
+    )
+    store_predictions(terrain_id, forecast, "bootstrap_1d", start_date=today)
     return result
 
 
@@ -440,6 +491,9 @@ def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
             simple = simple_forecast(terrain_id, days)
             if simple is not None:
                 return simple
+            bootstrap = bootstrap_forecast(terrain_id, days)
+            if bootstrap is not None:
+                return bootstrap
             raise HTTPException(
                 status_code=422,
                 detail=f"Not enough data for any forecast: {result.message}",
@@ -468,8 +522,9 @@ def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
 
     for i in range(1, days + 1):
         future = today + timedelta(days=i)
+        pg_dow = (future.weekday() + 1) % 7  # Match PostgreSQL EXTRACT(DOW): 0=Sun..6=Sat
         features = np.array([[
-            future.weekday(),  # day_of_week (0=Mon in Python vs 0=Sun in PG, close enough)
+            pg_dow,
             future.month,
             future.isocalendar()[1],
             1 if future.weekday() >= 5 else 0,
@@ -506,7 +561,7 @@ def predict_forecast(terrain_id: str, days: int) -> PredictResponse:
         model_rmse=bundle.get("rmse"),
         model_type="lightgbm",
     )
-    store_predictions(terrain_id, forecast, "lightgbm")
+    store_predictions(terrain_id, forecast, "lightgbm", start_date=today)
     return result
 
 

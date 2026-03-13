@@ -4,6 +4,20 @@ const { corePool } = require('../../config/db');
 const log = require('../../config/logger');
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://ml-service:8000';
+const ML_FETCH_TIMEOUT_MS = Math.max(1000, parseInt(process.env.ML_FETCH_TIMEOUT_MS || '15000', 10) || 15000);
+
+async function fetchML(path, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ML_FETCH_TIMEOUT_MS);
+  try {
+    return await fetch(`${ML_SERVICE_URL}${path}`, {
+      ...options,
+      signal: controller.signal,
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 function fmtDay(date) {
   const dd = String(date.getDate()).padStart(2, '0');
@@ -130,7 +144,7 @@ router.post('/ai/train/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
     const { terrainId } = req.params;
 
-    const resp = await fetch(`${ML_SERVICE_URL}/train`, {
+    const resp = await fetchML('/train', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ terrain_id: terrainId }),
@@ -149,7 +163,7 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
     const days = Math.min(30, Math.max(1, parseInt(req.query.days, 10) || 7));
 
     // ml-service now auto-trains when no model exists; 404 should no longer occur
-    const resp = await fetch(`${ML_SERVICE_URL}/predict`, {
+    const resp = await fetchML('/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ terrain_id: terrainId, days }),
@@ -172,7 +186,7 @@ router.get('/ai/forecast/:terrainId', verifyTerrainAccess, async (req, res) => {
         model_mape: null,
         model_rmse: null,
         model_type: 'insufficient_data',
-        warning: data?.detail || 'Not enough data for ML forecast yet',
+        warnings: [data?.detail || 'Not enough data for ML forecast yet'],
       });
     }
 
@@ -196,9 +210,9 @@ router.get('/ai/model/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
     const { terrainId } = req.params;
 
-    const resp = await fetch(`${ML_SERVICE_URL}/models/${terrainId}/status`);
+    const resp = await fetchML(`/models/${terrainId}/status`);
     const data = await resp.json();
-    res.json(data);
+    res.status(resp.ok ? 200 : 502).json(data);
   } catch (err) {
     res.status(503).json({ error: 'ML service unavailable', detail: err.message });
   }
@@ -208,7 +222,7 @@ router.get('/ai/model/:terrainId', verifyTerrainAccess, async (req, res) => {
 router.post('/ai/anomalies/detect/:terrainId', verifyTerrainAccess, async (req, res) => {
   try {
     const { terrainId } = req.params;
-    const resp = await fetch(`${ML_SERVICE_URL}/anomalies/detect/${terrainId}`, { method: 'POST' });
+    const resp = await fetchML(`/anomalies/detect/${terrainId}`, { method: 'POST' });
     const data = await resp.json();
     if (!resp.ok) {
       return res.status(502).json({
@@ -228,7 +242,7 @@ router.get('/ai/anomalies/:terrainId', verifyTerrainAccess, async (req, res) => 
   try {
     const { terrainId } = req.params;
     const days = Math.min(90, Math.max(1, parseInt(req.query.days, 10) || 30));
-    const resp = await fetch(`${ML_SERVICE_URL}/anomalies/${terrainId}?days=${days}`);
+    const resp = await fetchML(`/anomalies/${terrainId}?days=${days}`);
     const data = await resp.json();
     if (!resp.ok) {
       return res.status(502).json({
@@ -257,19 +271,27 @@ router.get('/ai/forecast/hourly/:terrainId', verifyTerrainAccess, async (req, re
     if (req.query.history_days) params.set('history_days', Math.min(90, Math.max(7, parseInt(req.query.history_days, 10) || 14)).toString());
 
     const days = Math.min(7, Math.max(1, parseInt(req.query.days, 10) || 1));
-    const url = `${ML_SERVICE_URL}/forecast/hourly/${terrainId}?${params.toString()}`;
-    const resp = await fetch(url);
+    const path = `/forecast/hourly/${terrainId}?${params.toString()}`;
+    const resp = await fetchML(path);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
     catch (e) {
       log.warn({ endpoint: 'hourly', text }, 'ml-service returned non-JSON, using fallback');
-      return res.status(200).json(buildHourlyFallback(terrainId, days, text, req.query.point_id));
+      return res.status(502).json({
+        error: 'ML upstream bad response',
+        endpoint: '/ai/forecast/hourly/:terrainId',
+        detail: text,
+        fallback: buildHourlyFallback(terrainId, days, text, req.query.point_id),
+      });
     }
     if (!resp.ok) {
-      return res.status(200).json(
-        buildHourlyFallback(terrainId, days, data?.detail || data?.error || String(data), req.query.point_id),
-      );
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || String(data),
+        fallback: buildHourlyFallback(terrainId, days, data?.detail || data?.error || String(data), req.query.point_id),
+      });
     }
     res.status(200).json(data);
   } catch (err) {
@@ -297,19 +319,27 @@ router.get('/ai/forecast/profiles/:terrainId', verifyTerrainAccess, async (req, 
     const params = new URLSearchParams();
     if (req.query.point_id) params.set('point_id', req.query.point_id);
 
-    const url = `${ML_SERVICE_URL}/forecast/profiles/${terrainId}?${params.toString()}`;
-    const resp = await fetch(url);
+    const path = `/forecast/profiles/${terrainId}?${params.toString()}`;
+    const resp = await fetchML(path);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
     catch (e) {
       log.warn({ endpoint: 'profiles', text }, 'ml-service returned non-JSON, using fallback');
-      return res.status(200).json(buildProfilesFallback(terrainId, req.query.point_id, text));
+      return res.status(502).json({
+        error: 'ML upstream bad response',
+        endpoint: '/ai/forecast/profiles/:terrainId',
+        detail: text,
+        fallback: buildProfilesFallback(terrainId, req.query.point_id, text),
+      });
     }
     if (!resp.ok) {
-      return res.status(200).json(
-        buildProfilesFallback(terrainId, req.query.point_id, data?.detail || data?.error || String(data)),
-      );
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || String(data),
+        fallback: buildProfilesFallback(terrainId, req.query.point_id, data?.detail || data?.error || String(data)),
+      });
     }
     res.status(200).json(data);
   } catch (err) {
@@ -339,19 +369,27 @@ router.get('/ai/forecast/daily-chart/:terrainId', verifyTerrainAccess, async (re
     if (req.query.forecast_days) params.set('forecast_days', Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3)).toString());
 
     const forecastDays = Math.min(7, Math.max(1, parseInt(req.query.forecast_days, 10) || 3));
-    const url = `${ML_SERVICE_URL}/forecast/daily-chart/${terrainId}?${params.toString()}`;
-    const resp = await fetch(url);
+    const path = `/forecast/daily-chart/${terrainId}?${params.toString()}`;
+    const resp = await fetchML(path);
     const text = await resp.text();
     let data;
     try { data = JSON.parse(text); } 
     catch (e) {
       log.warn({ endpoint: 'daily-chart', text }, 'ml-service returned non-JSON, using fallback');
-      return res.status(200).json(buildDailyChartFallback(terrainId, forecastDays, text));
+      return res.status(502).json({
+        error: 'ML upstream bad response',
+        endpoint: '/ai/forecast/daily-chart/:terrainId',
+        detail: text,
+        fallback: buildDailyChartFallback(terrainId, forecastDays, text),
+      });
     }
     if (!resp.ok) {
-      return res.status(200).json(
-        buildDailyChartFallback(terrainId, forecastDays, data?.detail || data?.error || String(data)),
-      );
+      return res.status(502).json({
+        error: 'ML upstream error',
+        upstream_status: resp.status,
+        detail: data?.detail || data?.error || String(data),
+        fallback: buildDailyChartFallback(terrainId, forecastDays, data?.detail || data?.error || String(data)),
+      });
     }
     res.status(200).json(data);
   } catch (err) {

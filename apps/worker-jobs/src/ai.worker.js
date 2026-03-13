@@ -442,6 +442,9 @@ new Worker(
         auditLog('info', 'ai-worker', `ML retrain started (job: ${job.name})`, { jobId: job.id });
         const resp = await fetch(`${mlUrl}/train-all`, { method: "POST" });
         const result = await resp.json();
+        if (!resp.ok) {
+          throw new Error(`ML train-all failed (${resp.status}): ${result?.detail || result?.error || JSON.stringify(result)}`);
+        }
 
         if (runId) {
           await insertJobResult(runId, job.name, result);
@@ -467,6 +470,9 @@ new Worker(
           try {
             const resp = await fetch(`${mlUrl}/anomalies/detect/${t.id}`, { method: "POST" });
             const r = await resp.json();
+            if (!resp.ok) {
+              throw new Error(`ML anomalies/detect failed (${resp.status}): ${r?.detail || r?.error || JSON.stringify(r)}`);
+            }
             results.push({ terrain_id: t.id, ...r });
           } catch (err) {
             log.warn({ terrain_id: t.id, err: err.message }, "anomaly detection failed for terrain");
