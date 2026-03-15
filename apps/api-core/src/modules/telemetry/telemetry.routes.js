@@ -123,7 +123,7 @@ function parseCols(colsParam) {
 router.get("/terrains/:terrainId/readings", async (req, res) => {
   try {
     const { terrainId } = req.params;
-    const limit = Math.min(parseInt(req.query.limit) || 5000, 50000);
+    const limit = Math.min(parseInt(req.query.limit) || 5000, 500000);
 
     const now = new Date();
     const defaultFrom = new Date(now.getTime() - 24 * 60 * 60 * 1000);
@@ -152,7 +152,7 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
 
     const client = await telemetryPool.connect();
     try {
-      await client.query("SET statement_timeout = '15s'");
+      await client.query("SET statement_timeout = '45s'");
       const r = await client.query(sql, params);
       res.json({ ok: true, terrain_id: terrainId, count: r.rows.length, readings: r.rows });
     } finally {

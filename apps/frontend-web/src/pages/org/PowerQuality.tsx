@@ -245,7 +245,12 @@ export default function PowerQuality() {
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Points les plus faibles</CardTitle></CardHeader>
               <CardContent className="space-y-2">
-                {worstPf.length === 0 && <div className="text-sm text-muted-foreground">Aucune donnée PF</div>}
+                {worstPf.length === 0 && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Activity className="w-4 h-4 opacity-60" />
+                    <span>Aucune donnée PF</span>
+                  </div>
+                )}
                 {worstPf.map(p => (
                   <div key={p.id} className="flex items-center justify-between text-sm border rounded px-3 py-2">
                     <div className="flex items-center gap-2">
@@ -289,7 +294,10 @@ export default function PowerQuality() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Points avec THD élevé</CardTitle></CardHeader>
             <CardContent>
               {worstThd.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Aucune donnée THD</div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Activity className="w-4 h-4 opacity-60" />
+                  <span>Aucune donnée THD</span>
+                </div>
               ) : (
                 <div className="table-responsive">
                 <table className="data-table">
@@ -323,7 +331,10 @@ export default function PowerQuality() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Déséquilibre courant et tension par point</CardTitle></CardHeader>
             <CardContent>
               {pointStats.length === 0 ? (
-                <div className="text-sm text-muted-foreground">Aucune donnée</div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Activity className="w-4 h-4 opacity-60" />
+                  <span>Aucune donnée</span>
+                </div>
               ) : (
                 <div className="table-responsive">
                 <table className="data-table">

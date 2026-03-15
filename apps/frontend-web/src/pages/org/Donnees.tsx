@@ -144,7 +144,7 @@ export default function History() {
     to: window.to,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     cols: readingsCols,
-    limit: range === '24h' ? 8000 : range === '7d' ? 25000 : 50000,
+    limit: range === '24h' ? 120000 : range === '7d' ? 260000 : 450000,
   });
 
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
@@ -157,7 +157,7 @@ export default function History() {
       to: compTo,
       point_id: selectedPoint === '_all' ? undefined : selectedPoint,
       cols: metric,
-      limit: range === '24h' ? 8000 : range === '7d' ? 25000 : 50000,
+      limit: range === '24h' ? 120000 : range === '7d' ? 260000 : 450000,
     } : undefined,
   );
   const compareReadings = (compareData?.readings ?? []) as Array<Record<string, unknown>>;
@@ -461,7 +461,10 @@ export default function History() {
                 </CardHeader>
                 <CardContent>
                   {chartData.length === 0 ? (
-                    <div className="h-64 flex items-center justify-center text-muted-foreground text-sm">Aucune donnée pour cette période</div>
+                    <div className="h-64 flex flex-col items-center justify-center text-muted-foreground text-sm gap-2">
+                      <Activity className="w-5 h-5 opacity-60" />
+                      <span>Aucune donnée pour cette période</span>
+                    </div>
                   ) : (
                     <ResponsiveContainer width="100%" height={320}>
                       <LineChart data={chartData}>
@@ -559,7 +562,10 @@ export default function History() {
               </CardHeader>
               <CardContent>
                 {readings.length === 0 ? (
-                  <div className="py-8 text-center text-muted-foreground text-sm">Aucune donnée pour cette période</div>
+                  <div className="py-8 flex items-center justify-center gap-2 text-muted-foreground text-sm">
+                    <Database className="w-4 h-4 opacity-60" />
+                    <span>Aucune donnée pour cette période</span>
+                  </div>
                 ) : (
                   <div className="overflow-x-auto max-h-[500px] overflow-y-auto">
                     <table className="w-full text-xs border-collapse">

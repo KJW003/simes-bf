@@ -41,8 +41,12 @@ export const LiveKPIs = React.memo(function LiveKPIs({ terrainId }: { terrainId:
   if (isLoading) {
     return (
       <Card>
-        <CardContent className="p-4 text-sm text-muted-foreground animate-pulse">
-          Chargement des données temps réel...
+        <CardContent className="p-4">
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 animate-pulse">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="rounded-md border bg-muted/40 h-16" />
+            ))}
+          </div>
         </CardContent>
       </Card>
     );
@@ -132,34 +136,67 @@ const LOAD_PERIODS = [
 
 const METRIC_OPTIONS = [
   { value: 'active_power_total', label: 'Puissance active (kW)', unit: ' kW' },
+  { value: 'active_power_a', label: 'Puissance active A (kW)', unit: ' kW' },
+  { value: 'active_power_b', label: 'Puissance active B (kW)', unit: ' kW' },
+  { value: 'active_power_c', label: 'Puissance active C (kW)', unit: ' kW' },
+  { value: 'reactive_power_total', label: 'Puissance reactive (kVar)', unit: ' kVar' },
+  { value: 'apparent_power_total', label: 'Puissance apparente (kVA)', unit: ' kVA' },
   { value: 'voltage_a', label: 'Tension phase A (V)', unit: ' V' },
   { value: 'voltage_b', label: 'Tension phase B (V)', unit: ' V' },
   { value: 'voltage_c', label: 'Tension phase C (V)', unit: ' V' },
+  { value: 'voltage_ab', label: 'Tension ligne AB (V)', unit: ' V' },
+  { value: 'voltage_bc', label: 'Tension ligne BC (V)', unit: ' V' },
+  { value: 'voltage_ca', label: 'Tension ligne CA (V)', unit: ' V' },
   { value: 'current_a', label: 'Courant phase A (A)', unit: ' A' },
   { value: 'current_b', label: 'Courant phase B (A)', unit: ' A' },
   { value: 'current_c', label: 'Courant phase C (A)', unit: ' A' },
+  { value: 'current_sum', label: 'Courant somme (A)', unit: ' A' },
   { value: 'power_factor_total', label: 'Facteur de puissance', unit: '' },
+  { value: 'power_factor_a', label: 'Facteur de puissance A', unit: '' },
+  { value: 'power_factor_b', label: 'Facteur de puissance B', unit: '' },
+  { value: 'power_factor_c', label: 'Facteur de puissance C', unit: '' },
+  { value: 'energy_import', label: 'Energie importee (kWh)', unit: ' kWh' },
+  { value: 'energy_export', label: 'Energie exportee (kWh)', unit: ' kWh' },
   { value: 'energy_total', label: 'Énergie totale (kWh)', unit: ' kWh' },
+  { value: 'frequency', label: 'Frequence (Hz)', unit: ' Hz' },
+  { value: 'thdi_a', label: 'THD courant A (%)', unit: ' %' },
+  { value: 'thdi_b', label: 'THD courant B (%)', unit: ' %' },
+  { value: 'thdi_c', label: 'THD courant C (%)', unit: ' %' },
+  { value: 'thdu_a', label: 'THD tension A (%)', unit: ' %' },
+  { value: 'thdu_b', label: 'THD tension B (%)', unit: ' %' },
+  { value: 'thdu_c', label: 'THD tension C (%)', unit: ' %' },
+  { value: 'voltage_unbalance', label: 'Desequilibre tension (%)', unit: ' %' },
+  { value: 'current_unbalance', label: 'Desequilibre courant (%)', unit: ' %' },
+  { value: 'temp_a', label: 'Temperature A (degC)', unit: ' degC' },
+  { value: 'temp_b', label: 'Temperature B (degC)', unit: ' degC' },
+  { value: 'temp_c', label: 'Temperature C (degC)', unit: ' degC' },
+  { value: 'temp_n', label: 'Temperature N (degC)', unit: ' degC' },
 ] as const;
 
 /* ── UnifiedLoadCurve (Courbe des points) ── */
 export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId }: { terrainId: string }) {
-  const [period, setPeriod] = useState<string>('24h');
+  const [period, setPeriod] = useState<'24h' | '48h' | '7d' | '30d' | 'custom'>('24h');
+  const [customDate, setCustomDate] = useState('');
   const [offsetDays, setOffsetDays] = useState(0);
   const [metric, setMetric] = useState<string>('active_power_total');
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
 
   const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
-  const from = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
-  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const window = useMemo(() => {
+    if (period === 'custom') {
+      return computeTimeWindow('custom', customDate || new Date().toISOString().slice(0, 10));
+    }
+    const shiftedNow = new Date(Date.now() - offsetDays * 86400_000);
+    return computeTimeWindow(period, '', shiftedNow);
+  }, [period, customDate, offsetDays]);
 
-  // Scale limit based on period to avoid data truncation
-  const limit = periodMs <= 48 * 3600_000 ? 10000 : periodMs <= 7 * 86400_000 ? 30000 : 50000;
+  // Raise limits to keep full selected windows even with many points.
+  const limit = window.durationMs <= 2 * 86400_000 ? 120000 : window.durationMs <= 7 * 86400_000 ? 260000 : 450000;
 
   const metricOpt = METRIC_OPTIONS.find(m => m.value === metric) ?? METRIC_OPTIONS[0];
 
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data, isLoading } = useReadings(terrainId, { from, to, cols: metric, limit });
+  const { data, isLoading } = useReadings(terrainId, { from: window.from, to: window.to, cols: metric, limit });
   const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
@@ -191,8 +228,8 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
       idByName.set(name, id);
     }
 
-    const fromTs = new Date(from).getTime();
-    const toTs = new Date(to).getTime();
+    const fromTs = new Date(window.from).getTime();
+    const toTs = new Date(window.to).getTime();
     const bucketMs = adaptiveBucketMs(Math.max(1, toTs - fromTs));
     const buckets = new Map<number, Record<string, number | null>>();
     for (const r of readings) {
@@ -217,7 +254,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
     const sampled = downsampleByStep(sorted, maxPoints);
 
     return { chartData: sampled, pointNames: pNames, pointIdByName: idByName };
-  }, [readings, points, metric, selectedPoints, from, to, periodMs]);
+  }, [readings, points, metric, selectedPoints, window.from, window.to, periodMs]);
 
   const handleLegendClick = useCallback((entry: any) => {
     const name = entry.value ?? entry.dataKey;
@@ -229,7 +266,24 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
   }, []);
 
   if (isLoading) return <Card><CardContent className="py-8 text-center"><Loader2 className="w-5 h-5 animate-spin mx-auto" /></CardContent></Card>;
-  if (!points.length) return null;
+  if (!points.length) {
+    return (
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base font-medium flex items-center gap-2">
+            <Activity className="w-4 h-4 text-primary" />
+            Courbe des points
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex flex-col items-center justify-center py-8 gap-2 text-muted-foreground">
+            <Activity className="w-5 h-5 opacity-60" />
+            <span className="text-xs">Aucun point disponible</span>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -240,18 +294,45 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
             Courbe des points
           </CardTitle>
           <div className="flex items-center gap-1">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => d + (periodMs / 86400_000))} title="Période précédente">
-              <ChevronLeft className="w-4 h-4" />
-            </Button>
+            {period !== 'custom' && (
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => d + (periodMs / 86400_000))} title="Periode precedente">
+                <ChevronLeft className="w-4 h-4" />
+              </Button>
+            )}
             {LOAD_PERIODS.map(p => (
               <Button key={p.key} variant={period === p.key ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => { setPeriod(p.key); setOffsetDays(0); }}>
                 {p.label}
               </Button>
             ))}
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => Math.max(0, d - (periodMs / 86400_000)))} disabled={offsetDays === 0} title="Période suivante">
-              <ChevronRight className="w-4 h-4" />
+            <Button
+              variant={period === 'custom' ? 'default' : 'outline'}
+              size="sm"
+              className="h-6 text-[10px] px-2"
+              onClick={() => {
+                setPeriod('custom');
+                if (!customDate) setCustomDate(new Date().toISOString().slice(0, 10));
+                setOffsetDays(0);
+              }}
+            >
+              Date
             </Button>
-            {offsetDays > 0 && <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setOffsetDays(0)}>Auj.</Button>}
+            {period === 'custom' && (
+              <input
+                type="date"
+                className="h-6 rounded border px-1.5 text-[10px] bg-background"
+                value={customDate}
+                onChange={e => setCustomDate(e.target.value)}
+                max={new Date().toISOString().slice(0, 10)}
+              />
+            )}
+            {period !== 'custom' && (
+              <>
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOffsetDays(d => Math.max(0, d - (periodMs / 86400_000)))} disabled={offsetDays === 0} title="Periode suivante">
+                  <ChevronRight className="w-4 h-4" />
+                </Button>
+                {offsetDays > 0 && <Button variant="outline" size="sm" className="h-6 text-[10px] px-2" onClick={() => setOffsetDays(0)}>Auj.</Button>}
+              </>
+            )}
           </div>
         </div>
         {/* Metric selector + point chips */}
@@ -284,7 +365,10 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
         </div>
         <div className="flex items-center gap-2 mt-1">
           <Badge variant="outline" className="text-[10px]">{readings.length} mesures</Badge>
-          {offsetDays > 0 && <span className="text-[10px] text-muted-foreground">({new Date(Date.now() - (offsetDays + periodMs / 86400_000) * 86400_000).toLocaleDateString('fr-FR')} → {new Date(Date.now() - offsetDays * 86400_000).toLocaleDateString('fr-FR')})</span>}
+          {period === 'custom' && customDate && (
+            <span className="text-[10px] text-muted-foreground">({new Date(`${customDate}T00:00:00`).toLocaleDateString('fr-FR')})</span>
+          )}
+          {period !== 'custom' && offsetDays > 0 && <span className="text-[10px] text-muted-foreground">({new Date(Date.now() - (offsetDays + periodMs / 86400_000) * 86400_000).toLocaleDateString('fr-FR')} → {new Date(Date.now() - offsetDays * 86400_000).toLocaleDateString('fr-FR')})</span>}
         </div>
       </CardHeader>
       <CardContent>
@@ -332,7 +416,10 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
           </LineChart>
         </ResponsiveContainer>
         ) : (
-          <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée pour cette période</div>
+          <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
+            <Activity className="w-5 h-5 opacity-60" />
+            <span className="text-xs">Aucune mesure dans cette plage</span>
+          </div>
         )}
       </CardContent>
     </Card>
@@ -349,9 +436,9 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId }
     return computeTimeWindow(period, '');
   }, [period, customDate]);
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const peaksLimit = peaksWindow.durationMs <= 2 * 86400_000 ? 12000 : peaksWindow.durationMs <= 7 * 86400_000 ? 30000 : 50000;
-  const { data } = useReadings(terrainId, { from: peaksWindow.from, to: peaksWindow.to, cols: 'active_power_total', limit: peaksLimit });
-  const { data: historyData } = usePowerPeaks(terrainId, 30);
+  const peaksLimit = peaksWindow.durationMs <= 2 * 86400_000 ? 120000 : peaksWindow.durationMs <= 7 * 86400_000 ? 260000 : 450000;
+  const { data, isLoading: peaksLoading } = useReadings(terrainId, { from: peaksWindow.from, to: peaksWindow.to, cols: 'active_power_total', limit: peaksLimit });
+  const { data: historyData, isLoading: historyLoading } = usePowerPeaks(terrainId, 30);
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
@@ -376,6 +463,20 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId }
 
   const historyPeaks = (historyData?.peaks ?? []) as Array<{ point_id: string; peak_date: string; max_power: number; peak_time: string; point_name: string }>;
 
+  if (peaksLoading || historyLoading) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <TrendingUp className="w-4 h-4 text-primary" />
+          Pics de puissance
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="py-8 text-center">
+        <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+      </CardContent>
+    </Card>
+  );
+
   if (!peaks.length && !historyPeaks.length) return (
     <Card>
       <CardHeader className="pb-2">
@@ -385,7 +486,10 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId }
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée de pics disponible pour cette période</div>
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+          <TrendingUp className="w-5 h-5 opacity-60" />
+          <span className="text-xs">Aucune donnee de pics sur cette periode</span>
+        </div>
       </CardContent>
     </Card>
   );
@@ -481,7 +585,7 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
   
   // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
-  const { data: historyResult } = useEnergyHistory(terrainId, { from, to });
+  const { data: historyResult, isLoading: historyLoading } = useEnergyHistory(terrainId, { from, to });
   
   // Fetch today's energy from KPI endpoint (real-time, sum of all LOAD points)
   const { data: dashboardData } = useDashboard(offsetDays === 0 ? terrainId : null);
@@ -528,6 +632,20 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
     return result;
   }, [historyResult, todayEnergy, prefs.tariffRate, offsetDays]);
 
+  if (historyLoading) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <DollarSign className="w-4 h-4 text-amber-600" />
+          Coût journalier
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="py-8 text-center">
+        <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+      </CardContent>
+    </Card>
+  );
+
   if (!dailyCost.length) return (
     <Card>
       <CardHeader className="pb-2">
@@ -537,7 +655,10 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée de coût disponible pour cette période</div>
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+          <DollarSign className="w-5 h-5 opacity-60" />
+          <span className="text-xs">Aucune donnee de cout disponible</span>
+        </div>
       </CardContent>
     </Card>
   );
@@ -601,7 +722,7 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
   const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
   
   // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
-  const { data: historyResult } = useEnergyHistory(terrainId, { from, to });
+  const { data: historyResult, isLoading: historyLoading } = useEnergyHistory(terrainId, { from, to });
   
   // Fetch today's energy from KPI endpoint (real-time, sum of all LOAD points)
   const { data: dashboardData } = useDashboard(offsetDays === 0 ? terrainId : null);
@@ -658,6 +779,20 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
   const totalCO2 = dailyCarbon.length ? dailyCarbon[dailyCarbon.length - 1].cumulative : 0;
   const totalKwh = dailyCarbon.reduce((s, d) => s + d.kwh, 0);
 
+  if (historyLoading) return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-base font-medium flex items-center gap-2">
+          <Leaf className="w-4 h-4 text-green-600" />
+          Empreinte carbone
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="py-8 text-center">
+        <Loader2 className="w-5 h-5 animate-spin mx-auto" />
+      </CardContent>
+    </Card>
+  );
+
   if (!dailyCarbon.length) return (
     <Card>
       <CardHeader className="pb-2">
@@ -667,7 +802,10 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { te
         </CardTitle>
       </CardHeader>
       <CardContent>
-        <div className="text-center py-8 text-sm text-muted-foreground">Aucune donnée carbone disponible pour cette période</div>
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground gap-2">
+          <Leaf className="w-5 h-5 opacity-60" />
+          <span className="text-xs">Aucune donnee carbone sur cette periode</span>
+        </div>
       </CardContent>
     </Card>
   );

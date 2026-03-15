@@ -104,7 +104,14 @@ const InteractiveLineChart = React.memo(function InteractiveLineChart({ data, li
     setHiddenSeries(prev => { const next = new Set(prev); next.has(key) ? next.delete(key) : next.add(key); return next; });
   }, []);
 
-  if (!data.length) return <div className="text-sm text-muted-foreground py-8 text-center">Aucune donnée pour cette période</div>;
+  if (!data.length) {
+    return (
+      <div className="flex flex-col items-center justify-center gap-2 py-8 text-muted-foreground">
+        <Activity className="w-5 h-5 opacity-60" />
+        <span className="text-sm">Aucune donnée pour cette période</span>
+      </div>
+    );
+  }
 
   return (
     <ResponsiveContainer width="100%" height={height}>
@@ -147,7 +154,7 @@ export default function PointDetails() {
     from: window.from,
     to: window.to,
     point_id: pointId,
-    limit: range === '24h' ? 10000 : range === '7d' ? 30000 : 50000,
+    limit: range === '24h' ? 120000 : range === '7d' ? 260000 : 450000,
     cols: 'active_power_total,active_power_a,active_power_b,active_power_c,reactive_power_total,reactive_power_a,reactive_power_b,reactive_power_c,apparent_power_total,apparent_power_a,apparent_power_b,apparent_power_c,voltage_a,voltage_b,voltage_c,voltage_ab,voltage_bc,voltage_ca,current_a,current_b,current_c,power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,energy_total',
   });
 
@@ -449,7 +456,12 @@ export default function PointDetails() {
             <Card>
               <CardHeader className="pb-2"><CardTitle className="text-base">Diagnostics qualité</CardTitle></CardHeader>
               <CardContent className="space-y-2">
-                {diags.length === 0 && <div className="text-sm text-muted-foreground">Aucune donnée qualité</div>}
+                {diags.length === 0 && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Activity className="w-4 h-4 opacity-60" />
+                    <span>Aucune donnée qualité</span>
+                  </div>
+                )}
                 {diags.map(d => (
                   <div key={d.label} className="flex items-center justify-between text-sm border rounded px-3 py-2">
                     <div className="flex items-center gap-2">
@@ -497,7 +509,10 @@ export default function PointDetails() {
             <CardHeader className="pb-2"><CardTitle className="text-base">Données brutes ({readings.length} lignes)</CardTitle></CardHeader>
             <CardContent className="overflow-auto max-h-[70vh]">
               {readings.length === 0 ? (
-                <div className="text-sm text-muted-foreground py-4 text-center">Aucune donnée</div>
+                <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground py-4">
+                  <Activity className="w-4 h-4 opacity-60" />
+                  <span>Aucune donnée</span>
+                </div>
               ) : (
                 <table className="data-table text-xs">
                   <thead>

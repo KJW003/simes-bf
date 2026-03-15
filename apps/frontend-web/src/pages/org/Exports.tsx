@@ -285,7 +285,8 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
   }, [imgDays, imgExactDate]);
   const imgFrom = imgWindow.from;
   const imgTo = imgWindow.to;
-  const { data: imgReadingsData, isLoading: imgLoading } = useReadings(selectedTerrainId, { from: imgFrom, to: imgTo, limit: 25000 });
+  const imgLimit = imgWindow.durationMs <= 2 * 86400_000 ? 120000 : imgWindow.durationMs <= 7 * 86400_000 ? 260000 : 450000;
+  const { data: imgReadingsData, isLoading: imgLoading } = useReadings(selectedTerrainId, { from: imgFrom, to: imgTo, limit: imgLimit });
   const imgReadings = (imgReadingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
   // Toggle point for image
@@ -377,6 +378,34 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     }
     return Array.from(keys);
   }, [imgChartData]);
+
+  const buildPaddedDomain = useCallback((keys: string[]) => {
+    if (!imgChartData.length || !keys.length) return ['auto', 'auto'] as const;
+    const values: number[] = [];
+    for (const row of imgChartData) {
+      for (const key of keys) {
+        const value = (row as Record<string, unknown>)[key];
+        if (typeof value === 'number' && Number.isFinite(value)) values.push(value);
+      }
+    }
+    if (!values.length) return ['auto', 'auto'] as const;
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    if (min === max) {
+      const pad = Math.max(Math.abs(min) * 0.08, 1);
+      return [min - pad, max + pad] as const;
+    }
+    const span = Math.max(1e-9, max - min);
+    const pad = span * 0.12;
+    return [min - pad, max + pad] as const;
+  }, [imgChartData]);
+
+  const dailyPowerDomain = useMemo(() => buildPaddedDomain(['avg', 'max']), [buildPaddedDomain]);
+  const dailyCostDomain = useMemo(() => buildPaddedDomain(['cost']), [buildPaddedDomain]);
+  const dailyCostCumDomain = useMemo(() => buildPaddedDomain(['cumul']), [buildPaddedDomain]);
+  const dailyCo2Domain = useMemo(() => buildPaddedDomain(['co2']), [buildPaddedDomain]);
+  const dailyCo2CumDomain = useMemo(() => buildPaddedDomain(['cumul']), [buildPaddedDomain]);
+  const perPointDomain = useMemo(() => buildPaddedDomain(imgSeriesNames), [buildPaddedDomain, imgSeriesNames]);
 
   const exportLegendNames = useMemo(() => {
     if (imgSeriesNames.length) return imgSeriesNames;
@@ -712,7 +741,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                   <AreaChart data={imgChartData}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="day" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} unit=" kW" />
+                    <YAxis tick={{ fontSize: 10 }} unit=" kW" domain={dailyPowerDomain as any} />
                     <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Area type="monotone" dataKey="avg" stroke="#3b82f6" fill="#3b82f620" strokeWidth={2} name="Puissance moyenne" />
@@ -722,8 +751,8 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                   <BarChart data={imgChartData}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit={` ${currSym}`} />
-                    <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} unit={` ${currSym}`} hide />
+                    <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit={` ${currSym}`} domain={dailyCostDomain as any} />
+                    <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} unit={` ${currSym}`} hide domain={dailyCostCumDomain as any} />
                     <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar yAxisId="bar" dataKey="cost" fill="#f59e0b" radius={[3, 3, 0, 0]} name={`Coût (${currSym})`} />
@@ -733,8 +762,8 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                   <BarChart data={imgChartData}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="day" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit=" kg" />
-                    <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} hide />
+                    <YAxis yAxisId="bar" tick={{ fontSize: 10 }} unit=" kg" domain={dailyCo2Domain as any} />
+                    <YAxis yAxisId="line" orientation="right" tick={{ fontSize: 10 }} hide domain={dailyCo2CumDomain as any} />
                     <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar yAxisId="bar" dataKey="co2" fill="#86efac" radius={[3, 3, 0, 0]} name="CO₂ journalier" />
@@ -744,7 +773,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                   <LineChart data={imgChartData}>
                     <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
                     <XAxis dataKey="label" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-                    <YAxis tick={{ fontSize: 10 }} unit={imgChartType === 'power' ? ' kW' : imgChartType === 'voltage' ? ' V' : imgChartType === 'current' ? ' A' : imgChartType === 'energy' ? ' kWh' : ''} />
+                    <YAxis tick={{ fontSize: 10 }} unit={imgChartType === 'power' ? ' kW' : imgChartType === 'voltage' ? ' V' : imgChartType === 'current' ? ' A' : imgChartType === 'energy' ? ' kWh' : ''} domain={perPointDomain as any} />
                     <Tooltip wrapperClassName="!bg-card !border-border" contentStyle={{ fontSize: 12 }} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     {imgSeriesNames.map((name, i) => (
@@ -755,8 +784,9 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
-              Aucune donnée pour ce graphique
+            <div className="flex flex-col items-center justify-center py-12 text-muted-foreground gap-2">
+              <BarChart3 className="w-5 h-5 opacity-60" />
+              <span className="text-sm">Aucune donnée pour ce graphique</span>
             </div>
           )}
         </CardContent>

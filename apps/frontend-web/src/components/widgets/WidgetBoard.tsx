@@ -152,8 +152,11 @@ function MetricChart({
         'flex items-center justify-center text-xs text-muted-foreground border border-dashed rounded-md',
         size === 'sm' ? 'h-20' : size === 'md' ? 'h-28' : 'h-40'
       )}>
-        <BarChart3 className="w-4 h-4 mr-2 opacity-40" />
-        Aucune donnée disponible
+        <div className="w-2/3 space-y-1.5 animate-pulse">
+          <div className="h-2 rounded bg-muted" />
+          <div className="h-2 rounded bg-muted/80 w-5/6" />
+          <div className="h-2 rounded bg-muted/60 w-3/4" />
+        </div>
       </div>
     );
   }
@@ -267,8 +270,11 @@ function MetricTable({
   if (metrics.length === 0 || rows.length === 0) {
     return (
       <div className="flex items-center justify-center h-24 text-xs text-muted-foreground border border-dashed rounded-md">
-        <Table2 className="w-4 h-4 mr-2 opacity-40" />
-        Aucune donnée tabulaire
+        <div className="w-3/4 space-y-1.5 animate-pulse">
+          <div className="h-2 rounded bg-muted" />
+          <div className="h-2 rounded bg-muted/80" />
+          <div className="h-2 rounded bg-muted/60 w-2/3" />
+        </div>
       </div>
     );
   }
