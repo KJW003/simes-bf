@@ -17,6 +17,7 @@ import {
 import { useDashboard, useReadings, useChartData, useEnergyHistory, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
 import { adaptiveBucketMs, downsampleByStep } from '@/lib/time-window';
+import { computeTimeWindow } from '@/lib/time-window';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -142,26 +143,15 @@ const METRIC_OPTIONS = [
 ] as const;
 
 /* ── UnifiedLoadCurve (Courbe des points) ── */
-export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId, from: externalFrom, to: externalTo, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
+export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId }: { terrainId: string }) {
   const [period, setPeriod] = useState<string>('24h');
   const [offsetDays, setOffsetDays] = useState(0);
   const [metric, setMetric] = useState<string>('active_power_total');
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
 
-  // Sync with dashboard time selector
-  useEffect(() => {
-    if (dashboardPeriod && dashboardPeriod !== 'live') {
-      const match = LOAD_PERIODS.find(p => p.key === dashboardPeriod);
-      if (match) { setPeriod(match.key); setOffsetDays(0); }
-    }
-  }, [dashboardPeriod]);
-
   const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
-  const localFrom = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
-  const localTo = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
-  const useExternalWindow = dashboardPeriod === 'custom' && !!externalFrom && !!externalTo;
-  const from = useExternalWindow ? String(externalFrom) : localFrom;
-  const to = useExternalWindow ? String(externalTo) : localTo;
+  const from = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
+  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
 
   // Scale limit based on period to avoid data truncation
   const limit = periodMs <= 48 * 3600_000 ? 10000 : periodMs <= 7 * 86400_000 ? 30000 : 50000;
@@ -350,10 +340,17 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
 });
 
 /* ── PowerPeaksTable ── */
-export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, from, to }: { terrainId: string; from: string; to: string }) {
+export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId }: { terrainId: string }) {
   const [tab, setTab] = useState<'current' | 'history'>('current');
+  const [period, setPeriod] = useState<'24h' | '7d' | '30d' | 'custom'>('24h');
+  const [customDate, setCustomDate] = useState('');
+  const peaksWindow = useMemo(() => {
+    if (period === 'custom') return computeTimeWindow('custom', customDate || new Date().toISOString().slice(0, 10));
+    return computeTimeWindow(period, '');
+  }, [period, customDate]);
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data } = useReadings(terrainId, { from, to, cols: 'active_power_total' });
+  const peaksLimit = peaksWindow.durationMs <= 2 * 86400_000 ? 12000 : peaksWindow.durationMs <= 7 * 86400_000 ? 30000 : 50000;
+  const { data } = useReadings(terrainId, { from: peaksWindow.from, to: peaksWindow.to, cols: 'active_power_total', limit: peaksLimit });
   const { data: historyData } = usePowerPeaks(terrainId, 30);
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
@@ -396,12 +393,28 @@ export const PowerPeaksTable = React.memo(function PowerPeaksTable({ terrainId, 
   return (
     <Card>
       <CardHeader className="pb-2">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-2">
           <CardTitle className="text-base font-medium flex items-center gap-2">
             <TrendingUp className="w-4 h-4 text-primary" />
             Pics de puissance
           </CardTitle>
-          <div className="flex gap-1">
+          <div className="flex flex-wrap items-center gap-1">
+            <Button variant={period === '24h' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setPeriod('24h')}>24h</Button>
+            <Button variant={period === '7d' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setPeriod('7d')}>7j</Button>
+            <Button variant={period === '30d' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setPeriod('30d')}>30j</Button>
+            <Button variant={period === 'custom' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => {
+              setPeriod('custom');
+              if (!customDate) setCustomDate(new Date().toISOString().slice(0, 10));
+            }}>Date</Button>
+            {period === 'custom' && (
+              <input
+                type="date"
+                className="h-6 rounded border px-1.5 text-[10px] bg-background"
+                value={customDate}
+                onChange={e => setCustomDate(e.target.value)}
+                max={new Date().toISOString().slice(0, 10)}
+              />
+            )}
             <Button variant={tab === 'current' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setTab('current')}>Temps réel</Button>
             <Button variant={tab === 'history' ? 'default' : 'outline'} size="sm" className="h-6 text-[10px] px-2" onClick={() => setTab('history')}>Historique</Button>
           </div>
@@ -457,23 +470,15 @@ const COST_PERIODS = [
   { key: '365d', label: '1 an', days: 365 },
 ] as const;
 
-export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, from: externalFrom, to: externalTo, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
+export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
   const [period, setPeriod] = useState<string>('30d');
   const [offsetDays, setOffsetDays] = useState(0);
 
-  // Sync with dashboard time selector
-  useEffect(() => {
-    if (dashboardPeriod && dashboardPeriod !== 'live') {
-      const match = COST_PERIODS.find(p => p.key === dashboardPeriod);
-      if (match) { setPeriod(match.key); setOffsetDays(0); }
-    }
-  }, [dashboardPeriod]);
-
   const periodDays = COST_PERIODS.find(p => p.key === period)?.days ?? 30;
-  const from = useMemo(() => externalFrom ?? stableFrom((offsetDays + periodDays) * 86400_000), [externalFrom, periodDays, offsetDays]);
-  const to = useMemo(() => externalTo ?? stableFrom(offsetDays * 86400_000), [externalTo, offsetDays]);
+  const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
+  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
   
   // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
   const { data: historyResult } = useEnergyHistory(terrainId, { from, to });
@@ -586,22 +591,14 @@ const CARBON_PERIODS = [
   { key: '365d', label: '1 an', days: 365 },
 ] as const;
 
-export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, from: externalFrom, to: externalTo, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
+export const CarbonWidget = React.memo(function CarbonWidget({ terrainId }: { terrainId: string }) {
   const prefs = usePreferences();
   const [period, setPeriod] = useState<string>('30d');
   const [offsetDays, setOffsetDays] = useState(0);
 
-  // Sync with dashboard time selector
-  useEffect(() => {
-    if (dashboardPeriod && dashboardPeriod !== 'live') {
-      const match = CARBON_PERIODS.find(p => p.key === dashboardPeriod);
-      if (match) { setPeriod(match.key); setOffsetDays(0); }
-    }
-  }, [dashboardPeriod]);
-
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
-  const from = useMemo(() => externalFrom ?? stableFrom((offsetDays + periodDays) * 86400_000), [externalFrom, periodDays, offsetDays]);
-  const to = useMemo(() => externalTo ?? stableFrom(offsetDays * 86400_000), [externalTo, offsetDays]);
+  const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
+  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
   
   // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
   const { data: historyResult } = useEnergyHistory(terrainId, { from, to });

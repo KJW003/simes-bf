@@ -144,7 +144,7 @@ export default function History() {
     to: window.to,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     cols: readingsCols,
-    limit: range === '24h' ? 4000 : range === '7d' ? 12000 : 25000,
+    limit: range === '24h' ? 8000 : range === '7d' ? 25000 : 50000,
   });
 
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
@@ -157,6 +157,7 @@ export default function History() {
       to: compTo,
       point_id: selectedPoint === '_all' ? undefined : selectedPoint,
       cols: metric,
+      limit: range === '24h' ? 8000 : range === '7d' ? 25000 : 50000,
     } : undefined,
   );
   const compareReadings = (compareData?.readings ?? []) as Array<Record<string, unknown>>;

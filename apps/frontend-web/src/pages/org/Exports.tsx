@@ -12,6 +12,7 @@ import { FileText, Download, Loader2, CheckCircle, FileSpreadsheet, BarChart3, Z
 import { useAppContext } from '@/contexts/AppContext';
 import { useTerrainOverview, useReadings, stableFrom, stableNow } from '@/hooks/useApi';
 import api from '@/lib/api';
+import { computeTimeWindow } from '@/lib/time-window';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import {
   AreaChart, Area, BarChart, Bar, LineChart, Line,
@@ -270,11 +271,20 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
   const [imgChartType, setImgChartType] = useState<ChartType>('power');
   const [imgPoints, setImgPoints] = useState<Set<string>>(new Set());
   const [imgDays, setImgDays] = useState(7);
+  const [imgExactDate, setImgExactDate] = useState('');
   const currentChartOpt = CHART_OPTIONS.find(o => o.value === imgChartType)!;
 
   // Separate readings fetch for image export with its own time range
-  const imgFrom = useMemo(() => stableFrom(imgDays * 86400_000), [imgDays]);
-  const imgTo = useMemo(() => stableNow(), []);
+  const imgWindow = useMemo(() => {
+    if (imgExactDate) return computeTimeWindow('custom', imgExactDate);
+    return {
+      from: stableFrom(imgDays * 86400_000),
+      to: stableNow(),
+      durationMs: imgDays * 86400_000,
+    };
+  }, [imgDays, imgExactDate]);
+  const imgFrom = imgWindow.from;
+  const imgTo = imgWindow.to;
   const { data: imgReadingsData, isLoading: imgLoading } = useReadings(selectedTerrainId, { from: imgFrom, to: imgTo, limit: 25000 });
   const imgReadings = (imgReadingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
@@ -368,6 +378,14 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     return Array.from(keys);
   }, [imgChartData]);
 
+  const exportLegendNames = useMemo(() => {
+    if (imgSeriesNames.length) return imgSeriesNames;
+    if (imgChartType === 'daily-power') return ['Puissance moyenne', 'Puissance max'];
+    if (imgChartType === 'daily-cost') return [`Coût (${currSym})`, 'Cumulé'];
+    if (imgChartType === 'daily-co2') return ['CO2 journalier', 'CO2 cumule'];
+    return [] as string[];
+  }, [imgSeriesNames, imgChartType, currSym]);
+
   // Chart image export via SVG-to-canvas conversion
   const chartRef = useRef<HTMLDivElement>(null);
   const exportChartImage = useCallback(() => {
@@ -378,27 +396,69 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     const svgData = new XMLSerializer().serializeToString(svg);
     const canvas = document.createElement('canvas');
     const rect = svg.getBoundingClientRect();
-    canvas.width = rect.width * 2;
-    canvas.height = rect.height * 2;
+    const headerHeight = 72;
+    const legendRows = Math.max(1, Math.ceil(Math.min(exportLegendNames.length, 12) / 3));
+    const legendHeight = exportLegendNames.length ? (legendRows * 22 + 24) : 0;
+    canvas.width = Math.max(1, rect.width) * 2;
+    canvas.height = Math.max(1, rect.height + headerHeight + legendHeight) * 2;
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.scale(2, 2);
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(0, 0, rect.width, rect.height);
+    ctx.fillRect(0, 0, rect.width, rect.height + headerHeight + legendHeight);
+
+    const periodLabel = imgExactDate
+      ? new Date(`${imgExactDate}T00:00:00`).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' })
+      : `${imgDays}j`;
+    const pointsLabel = currentChartOpt.perPoint
+      ? (imgPoints.size > 0
+        ? Array.from(imgPoints).map(id => pointNameMap.get(id) ?? id).slice(0, 4).join(', ') + (imgPoints.size > 4 ? ` +${imgPoints.size - 4}` : '')
+        : `Tous (${points.length})`)
+      : 'Tous points';
+
+    ctx.fillStyle = '#0f172a';
+    ctx.font = 'bold 15px Segoe UI, Arial, sans-serif';
+    ctx.fillText(`SIMES - ${selectedTerrain?.name ?? terrainLabel}`, 14, 22);
+    ctx.font = '12px Segoe UI, Arial, sans-serif';
+    ctx.fillStyle = '#334155';
+    ctx.fillText(`Metrique: ${currentChartOpt.label}`, 14, 42);
+    ctx.fillText(`Periode: ${periodLabel}`, 14, 58);
+    ctx.fillText(`Points: ${pointsLabel}`, Math.max(280, rect.width * 0.42), 42);
+    ctx.fillText(`Genere le ${new Date().toLocaleString('fr-FR')}`, Math.max(280, rect.width * 0.42), 58);
+
     const img = new window.Image();
     img.onload = () => {
-      ctx.drawImage(img, 0, 0, rect.width, rect.height);
+      ctx.drawImage(img, 0, headerHeight, rect.width, rect.height);
+
+      if (exportLegendNames.length) {
+        const startY = headerHeight + rect.height + 18;
+        const colWidth = rect.width / 3;
+        exportLegendNames.slice(0, 12).forEach((name, idx) => {
+          const col = idx % 3;
+          const row = Math.floor(idx / 3);
+          const x = 14 + col * colWidth;
+          const y = startY + row * 22;
+          ctx.fillStyle = CHART_COLORS[idx % CHART_COLORS.length];
+          ctx.fillRect(x, y - 8, 12, 12);
+          ctx.fillStyle = '#334155';
+          ctx.font = '11px Segoe UI, Arial, sans-serif';
+          const shortName = name.length > 34 ? `${name.slice(0, 34)}...` : name;
+          ctx.fillText(shortName, x + 18, y + 2);
+        });
+      }
+
       const pngUrl = canvas.toDataURL('image/png');
       const a = document.createElement('a');
       a.href = pngUrl;
       const ptLabel = imgPoints.size === 1
         ? sanitize(pointNameMap.get(Array.from(imgPoints)[0]) ?? '')
         : imgPoints.size > 1 ? `${imgPoints.size}_points` : 'tous';
-      a.download = `${terrainLabel}_${imgChartType}_${ptLabel}_${imgDays}j.png`;
+      const periodToken = imgExactDate ? sanitize(imgExactDate) : `${imgDays}j`;
+      a.download = `${terrainLabel}_${imgChartType}_${ptLabel}_${periodToken}.png`;
       a.click();
     };
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
-  }, [terrainLabel, imgDays, imgChartType, imgPoints, pointNameMap]);
+  }, [terrainLabel, imgDays, imgExactDate, imgChartType, imgPoints, pointNameMap, exportLegendNames, currentChartOpt, points.length, selectedTerrain?.name]);
 
   // ── Per-point CSV export ──
   const handleExportPointCSV = useCallback((pointId: string) => {
@@ -578,11 +638,30 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
               <label className="text-xs font-medium text-muted-foreground">Période</label>
               <div className="flex gap-1">
                 {IMG_PERIODS.map(p => (
-                  <Button key={p.key} variant={imgDays === Number(p.key) ? 'default' : 'outline'} size="sm" className="h-7 text-xs px-2" onClick={() => setImgDays(Number(p.key))}>
+                  <Button
+                    key={p.key}
+                    variant={!imgExactDate && imgDays === Number(p.key) ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-7 text-xs px-2"
+                    onClick={() => {
+                      setImgDays(Number(p.key));
+                      setImgExactDate('');
+                    }}
+                  >
                     {p.label}
                   </Button>
                 ))}
               </div>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">Date précise (optionnel)</label>
+              <input
+                type="date"
+                value={imgExactDate}
+                onChange={e => setImgExactDate(e.target.value)}
+                className="h-9 rounded border px-2 text-sm bg-background"
+                max={new Date().toISOString().slice(0, 10)}
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs font-medium text-muted-foreground">Type de graphique</label>

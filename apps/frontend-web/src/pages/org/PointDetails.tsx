@@ -147,7 +147,7 @@ export default function PointDetails() {
     from: window.from,
     to: window.to,
     point_id: pointId,
-    limit: range === '24h' ? 4000 : range === '7d' ? 12000 : 25000,
+    limit: range === '24h' ? 10000 : range === '7d' ? 30000 : 50000,
     cols: 'active_power_total,active_power_a,active_power_b,active_power_c,reactive_power_total,reactive_power_a,reactive_power_b,reactive_power_c,apparent_power_total,apparent_power_a,apparent_power_b,apparent_power_c,voltage_a,voltage_b,voltage_c,voltage_ab,voltage_bc,voltage_ca,current_a,current_b,current_c,power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,energy_total',
   });
 

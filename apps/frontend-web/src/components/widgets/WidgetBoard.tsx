@@ -25,7 +25,6 @@ import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWid
 import { SiteMapWidget } from '@/components/widgets/SiteMapWidget';
 import { cn } from '@/lib/utils';
 import { METRIC_LABELS, METRIC_UNITS, ENERGY_SOURCE_LABELS } from '@/types/widget-engine';
-import { computeTimeWindow } from '@/lib/time-window';
 import {
   AreaChart,
   Area,
@@ -38,9 +37,6 @@ import {
   ResponsiveContainer,
   Legend,
 } from 'recharts';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
 import {
   Plus,
   GripVertical,
@@ -77,16 +73,6 @@ function fmtDateTime(ts: number): string {
   const d = new Date(ts);
   return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 }
-
-/** Time period options */
-const TIME_PERIOD_OPTIONS = [
-  { value: 'live', label: 'En direct', ms: 0 },
-  { value: '24h', label: '24 heures', ms: 24 * 60 * 60 * 1000 },
-  { value: '48h', label: '48 heures', ms: 48 * 60 * 60 * 1000 },
-  { value: '7d', label: '7 jours', ms: 7 * 24 * 60 * 60 * 1000 },
-  { value: '30d', label: '30 jours', ms: 30 * 24 * 60 * 60 * 1000 },
-  { value: 'custom', label: 'Date précise', ms: 0 },
-];
 
 // -------------------------
 // Unique instance ID generator
@@ -375,14 +361,14 @@ function renderWidgetContent(
   size: WidgetSize,
   data: ResolvedWidgetData,
   config: WidgetConfig,
-  ctx?: { terrainId?: string; from?: string; to?: string; timePeriod?: string },
+  ctx?: { terrainId?: string },
 ): React.ReactNode {
   switch (defId) {
     // ── Dashboard standalone sections (rendered without outer Card) ──
     case 'dashboard-kpis':
       return ctx?.terrainId ? <LiveKPIs terrainId={ctx.terrainId} /> : null;
     case 'dashboard-load-curve':
-      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.timePeriod === 'custom' ? ctx.from : undefined} to={ctx.timePeriod === 'custom' ? ctx.to : undefined} dashboardPeriod={ctx.timePeriod} /> : null;
+      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} /> : null;
     case 'dashboard-map':
       return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} size={size} /> : null;
     case 'dashboard-alarms':
@@ -390,11 +376,11 @@ function renderWidgetContent(
     case 'dashboard-alarm-config':
       return ctx?.terrainId ? <AlarmConfigPanel terrainId={ctx.terrainId} /> : null;
     case 'dashboard-daily-cost':
-      return ctx?.terrainId ? <DailyCostWidget terrainId={ctx.terrainId} from={ctx.timePeriod === 'custom' ? ctx.from : undefined} to={ctx.timePeriod === 'custom' ? ctx.to : undefined} dashboardPeriod={ctx.timePeriod} /> : null;
+      return ctx?.terrainId ? <DailyCostWidget terrainId={ctx.terrainId} /> : null;
     case 'dashboard-carbon':
-      return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} from={ctx.timePeriod === 'custom' ? ctx.from : undefined} to={ctx.timePeriod === 'custom' ? ctx.to : undefined} dashboardPeriod={ctx.timePeriod} /> : null;
+      return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} /> : null;
     case 'dashboard-power-peaks':
-      return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} from={ctx.from ?? stableFrom(86400_000)} to={ctx.to ?? stableNow()} /> : null;
+      return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} /> : null;
     case 'dashboard-anomalies':
       return ctx?.terrainId ? <AnomalyWidget terrainId={ctx.terrainId} /> : null;
 
@@ -932,18 +918,11 @@ export function WidgetBoard() {
     });
   }, [selectedTerrainId, overviewData, updateTerrainStats]);
 
-  // Time period selector for readings
-  const [timePeriod, setTimePeriod] = useState('live');
-  const [customDate, setCustomDate] = useState('');
-
   // Fetch historical readings for chart widgets
-  const readingsWindow = useMemo(
-    () => computeTimeWindow(timePeriod, customDate),
-    [timePeriod, customDate]
-  );
-  const readingsFrom = readingsWindow.from;
-  const readingsTo = readingsWindow.to;
-  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, to: readingsTo });
+  const readingsFrom = useMemo(() => stableFrom(24 * 60 * 60 * 1000), []);
+  const readingsTo = useMemo(() => stableNow(), []);
+  const readingsLimit = 12000;
+  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, to: readingsTo, limit: readingsLimit });
 
   // Fetch anomalies and ML forecast data for IA widgets
   const { data: anomaliesData } = useAnomalies(selectedTerrainId, 30);
@@ -1148,33 +1127,6 @@ export function WidgetBoard() {
           <p className="text-xs sm:text-sm text-muted-foreground hidden sm:block">Glissez-déposez, configurez et composez vos widgets.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select
-            value={timePeriod}
-            onValueChange={(value) => {
-              setTimePeriod(value);
-              if (value === 'custom' && !customDate) {
-                setCustomDate(new Date().toISOString().slice(0, 10));
-              }
-            }}
-          >
-            <SelectTrigger className="w-28 sm:w-36 h-8 text-xs">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {TIME_PERIOD_OPTIONS.map(o => (
-                <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {timePeriod === 'custom' && (
-            <input
-              type="date"
-              className="h-8 rounded border px-2 text-xs bg-background"
-              value={customDate}
-              onChange={e => setCustomDate(e.target.value)}
-              max={new Date().toISOString().slice(0, 10)}
-            />
-          )}
           <Button variant="outline" size="sm" onClick={() => setLibraryOpen(true)}>
             <Plus className="w-4 h-4 sm:mr-2" />
             <span className="hidden sm:inline">Ajouter widget</span>
@@ -1197,7 +1149,7 @@ export function WidgetBoard() {
           const state: WidgetRuntimeState = item.state ?? 'ready';
           const stateBadge = stateBadgeMap[state];
           const data = resolveData(item);
-          const dashCtx = { terrainId: selectedTerrainId, from: readingsFrom, to: readingsTo, timePeriod };
+          const dashCtx = { terrainId: selectedTerrainId };
 
           // ── Standalone dashboard widget (renders its own Card) ──
           if (def.standalone) {
@@ -1483,7 +1435,7 @@ export function WidgetBoard() {
           <div className="flex-1 overflow-auto min-h-0">
             {fullscreenItem && fullscreenDef && (
               <div className="p-6 h-full [&_.h-40]:h-[60vh] [&_.h-28]:h-[55vh] [&_.h-20]:h-[50vh] [&_.h-24]:h-[50vh] [&_.h-32]:h-[55vh]">
-                {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config, { terrainId: selectedTerrainId, from: readingsFrom, to: readingsTo, timePeriod })}
+                {renderWidgetContent(fullscreenItem.id, 'lg', resolveData(fullscreenItem), fullscreenItem.config, { terrainId: selectedTerrainId })}
               </div>
             )}
           </div>

@@ -30,6 +30,7 @@ async function runAggregate(payload = {}) {
   const siteId = payload.site_id || null;
   const terrainId = payload.terrain_id || null;
   const pointId = payload.point_id || null;
+  const includeDaily = payload.includeDaily === true;
 
   // filtre dynamique
   const where = [];
@@ -98,51 +99,54 @@ async function runAggregate(payload = {}) {
   log.info(`15m aggregation: ${r15.rowCount} rows affected`);
   // r15.rowCount = nombre de lignes insert/update
 
-  // 2) daily aggregation
-  const sqlDaily = `
-    INSERT INTO acrel_agg_daily (
-      day, org_id, site_id, terrain_id, point_id,
-      samples_count,
-      active_power_avg, active_power_max,
-      energy_import_delta, energy_export_delta, energy_total_delta,
-      reactive_energy_import_delta, power_factor_avg
-    )
-    SELECT
-      (time_bucket('1 day', time))::date AS day,
-      org_id, site_id, terrain_id, point_id,
-      COUNT(*)::int AS samples_count,
-      AVG(active_power_total) AS active_power_avg,
-      MAX(active_power_total) AS active_power_max,
-      (MAX(energy_import) - MIN(energy_import)) AS energy_import_delta,
-      (MAX(energy_export) - MIN(energy_export)) AS energy_export_delta,
-      (MAX(energy_total) - MIN(energy_total)) AS energy_total_delta,
-      (MAX(reactive_energy_import) - MIN(reactive_energy_import)) AS reactive_energy_import_delta,
-      AVG(power_factor_total) AS power_factor_avg
-    FROM acrel_readings
-    ${whereSql}
-    GROUP BY day, org_id, site_id, terrain_id, point_id
-    ON CONFLICT (point_id, day)
-    DO UPDATE SET
-      org_id = EXCLUDED.org_id,
-      site_id = EXCLUDED.site_id,
-      terrain_id = EXCLUDED.terrain_id,
-      samples_count = EXCLUDED.samples_count,
-      active_power_avg = EXCLUDED.active_power_avg,
-      active_power_max = EXCLUDED.active_power_max,
-      energy_import_delta = EXCLUDED.energy_import_delta,
-      energy_export_delta = EXCLUDED.energy_export_delta,
-      energy_total_delta = EXCLUDED.energy_total_delta,
-      reactive_energy_import_delta = EXCLUDED.reactive_energy_import_delta,
-      power_factor_avg = EXCLUDED.power_factor_avg
-  `;
+  let dailyRowCount = 0;
+  if (includeDaily) {
+    const sqlDaily = `
+      INSERT INTO acrel_agg_daily (
+        day, org_id, site_id, terrain_id, point_id,
+        samples_count,
+        active_power_avg, active_power_max,
+        energy_import_delta, energy_export_delta, energy_total_delta,
+        reactive_energy_import_delta, power_factor_avg
+      )
+      SELECT
+        (DATE_TRUNC('day', time AT TIME ZONE 'UTC'))::date AS day,
+        org_id, site_id, terrain_id, point_id,
+        COUNT(*)::int AS samples_count,
+        AVG(active_power_total) AS active_power_avg,
+        MAX(active_power_total) AS active_power_max,
+        GREATEST(MAX(energy_import) - MIN(energy_import), 0) AS energy_import_delta,
+        GREATEST(MAX(energy_export) - MIN(energy_export), 0) AS energy_export_delta,
+        GREATEST(MAX(energy_total) - MIN(energy_total), 0) AS energy_total_delta,
+        GREATEST(MAX(reactive_energy_import) - MIN(reactive_energy_import), 0) AS reactive_energy_import_delta,
+        AVG(power_factor_total) AS power_factor_avg
+      FROM acrel_readings
+      ${whereSql}
+      GROUP BY day, org_id, site_id, terrain_id, point_id
+      ON CONFLICT (point_id, day)
+      DO UPDATE SET
+        org_id = EXCLUDED.org_id,
+        site_id = EXCLUDED.site_id,
+        terrain_id = EXCLUDED.terrain_id,
+        samples_count = EXCLUDED.samples_count,
+        active_power_avg = EXCLUDED.active_power_avg,
+        active_power_max = EXCLUDED.active_power_max,
+        energy_import_delta = EXCLUDED.energy_import_delta,
+        energy_export_delta = EXCLUDED.energy_export_delta,
+        energy_total_delta = EXCLUDED.energy_total_delta,
+        reactive_energy_import_delta = EXCLUDED.reactive_energy_import_delta,
+        power_factor_avg = EXCLUDED.power_factor_avg
+    `;
 
-  const rDay = await telemetryDb.query(sqlDaily, params);
-  log.info(`Daily aggregation: ${rDay.rowCount} rows affected`);
+    const rDay = await telemetryDb.query(sqlDaily, params);
+    dailyRowCount = rDay.rowCount;
+    log.info(`Daily aggregation (runAggregate includeDaily=true): ${dailyRowCount} rows affected`);
+  }
 
   const result = {
     window: { from: from.toISOString(), to: to.toISOString() },
     filters: { site_id: siteId, terrain_id: terrainId, point_id: pointId },
-    upserted: { agg_15m: r15.rowCount, agg_daily: rDay.rowCount }
+    upserted: { agg_15m: r15.rowCount, agg_daily: dailyRowCount }
   };
   return result;
 }

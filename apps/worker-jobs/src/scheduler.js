@@ -90,7 +90,7 @@ if (!connection) {
 
       await telemetryQueue.add(
         "telemetry.aggregate",
-        { payload: {} },
+        { payload: { includeDaily: false } },
         {
           repeat: { pattern: "5 * * * *" }, // Every hour at :05
           removeOnComplete: 5,
