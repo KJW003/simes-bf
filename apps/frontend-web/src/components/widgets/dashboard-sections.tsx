@@ -173,13 +173,55 @@ const METRIC_OPTIONS = [
   { value: 'temp_n', label: 'Temperature N (degC)', unit: ' degC' },
 ] as const;
 
+const PHASE_GROUP_PRESETS = [
+  {
+    value: 'voltage_abc_group',
+    label: 'Tensions phases A/B/C (V)',
+    unit: ' V',
+    metrics: ['voltage_a', 'voltage_b', 'voltage_c'],
+    seriesLabels: ['Phase A', 'Phase B', 'Phase C'],
+  },
+  {
+    value: 'current_abc_group',
+    label: 'Courants phases A/B/C (A)',
+    unit: ' A',
+    metrics: ['current_a', 'current_b', 'current_c'],
+    seriesLabels: ['Phase A', 'Phase B', 'Phase C'],
+  },
+  {
+    value: 'active_power_abc_group',
+    label: 'Puissance active phases A/B/C (kW)',
+    unit: ' kW',
+    metrics: ['active_power_a', 'active_power_b', 'active_power_c'],
+    seriesLabels: ['Phase A', 'Phase B', 'Phase C'],
+  },
+  {
+    value: 'power_factor_abc_group',
+    label: 'Facteur puissance phases A/B/C',
+    unit: '',
+    metrics: ['power_factor_a', 'power_factor_b', 'power_factor_c'],
+    seriesLabels: ['Phase A', 'Phase B', 'Phase C'],
+  },
+] as const;
+
+const METRIC_PRESETS = [
+  ...PHASE_GROUP_PRESETS,
+  ...METRIC_OPTIONS.map((m) => ({
+    value: m.value,
+    label: m.label,
+    unit: m.unit,
+    metrics: [m.value],
+  })),
+] as const;
+
 /* ── UnifiedLoadCurve (Courbe des points) ── */
 export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId }: { terrainId: string }) {
   const [period, setPeriod] = useState<'24h' | '48h' | '7d' | '30d' | 'custom'>('24h');
   const [customDate, setCustomDate] = useState('');
   const [offsetDays, setOffsetDays] = useState(0);
-  const [metric, setMetric] = useState<string>('active_power_total');
+  const [metricPreset, setMetricPreset] = useState<string>('voltage_abc_group');
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
+  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
 
   const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
   const window = useMemo(() => {
@@ -193,11 +235,14 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
   // Raise limits to keep full selected windows even with many points.
   const limit = window.durationMs <= 2 * 86400_000 ? 120000 : window.durationMs <= 7 * 86400_000 ? 260000 : 450000;
 
-  const metricOpt = METRIC_OPTIONS.find(m => m.value === metric) ?? METRIC_OPTIONS[0];
+  const selectedPreset = useMemo(
+    () => METRIC_PRESETS.find((p) => p.value === metricPreset) ?? METRIC_PRESETS[0],
+    [metricPreset],
+  );
+  const cols = useMemo(() => Array.from(new Set(selectedPreset.metrics)).join(','), [selectedPreset]);
 
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data, isLoading } = useReadings(terrainId, { from: window.from, to: window.to, cols: metric, limit });
-  const [hiddenSeries, setHiddenSeries] = useState<Set<string>>(new Set());
+  const { data, isLoading } = useReadings(terrainId, { from: window.from, to: window.to, cols, limit });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
@@ -214,8 +259,12 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
     setSelectedPoints(prev => { const n = new Set(prev); if (n.has(id)) n.delete(id); else n.add(id); return n; });
   }, []);
 
-  const { chartData, pointNames, pointIdByName } = useMemo(() => {
-    if (!readings.length || !points.length) return { chartData: [], pointNames: [] as string[], pointIdByName: new Map<string, string>() };
+  useEffect(() => {
+    setHiddenSeries(new Set());
+  }, [metricPreset]);
+
+  const { chartData, seriesNames, pointIdByName } = useMemo(() => {
+    if (!readings.length || !points.length) return { chartData: [], seriesNames: [] as string[], pointIdByName: new Map<string, string>() };
 
     const pointMap = new Map(points.map(p => [String(p.id), String(p.name)]));
     const activePts = selectedPoints.size > 0 ? selectedPoints : new Set(points.map(p => String(p.id)));
@@ -232,14 +281,44 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
     const toTs = new Date(window.to).getTime();
     const bucketMs = adaptiveBucketMs(Math.max(1, toTs - fromTs));
     const buckets = new Map<number, Record<string, number | null>>();
-    for (const r of readings) {
-      const pid = String(r.point_id);
-      if (!activePts.has(pid)) continue;
-      const t = Math.floor(new Date(String(r.time)).getTime() / bucketMs) * bucketMs;
-      if (!buckets.has(t)) buckets.set(t, {});
-      const name = pointMap.get(pid) ?? pid;
-      const val = r[metric] != null ? Number(r[metric]) : null;
-      if (val != null) buckets.get(t)![name] = val;
+
+    if (selectedPreset.metrics.length === 1) {
+      const metricKey = selectedPreset.metrics[0];
+      for (const r of readings) {
+        const pid = String(r.point_id);
+        if (!activePts.has(pid)) continue;
+        const t = Math.floor(new Date(String(r.time)).getTime() / bucketMs) * bucketMs;
+        if (!buckets.has(t)) buckets.set(t, {});
+        const name = pointMap.get(pid) ?? pid;
+        const val = r[metricKey] != null ? Number(r[metricKey]) : null;
+        if (val != null) buckets.get(t)![name] = val;
+      }
+    } else {
+      const perBucket = new Map<number, Record<string, { sum: number; count: number }>>();
+      for (const r of readings) {
+        const pid = String(r.point_id);
+        if (!activePts.has(pid)) continue;
+        const t = Math.floor(new Date(String(r.time)).getTime() / bucketMs) * bucketMs;
+        if (!perBucket.has(t)) perBucket.set(t, {});
+        const agg = perBucket.get(t)!;
+
+        selectedPreset.metrics.forEach((metricKey, idx) => {
+          const seriesName = selectedPreset.seriesLabels?.[idx] ?? metricKey;
+          const val = r[metricKey] != null ? Number(r[metricKey]) : NaN;
+          if (Number.isNaN(val)) return;
+          if (!agg[seriesName]) agg[seriesName] = { sum: 0, count: 0 };
+          agg[seriesName].sum += val;
+          agg[seriesName].count += 1;
+        });
+      }
+
+      perBucket.forEach((seriesAgg, t) => {
+        const row: Record<string, number | null> = {};
+        Object.entries(seriesAgg).forEach(([seriesName, agg]) => {
+          row[seriesName] = agg.count > 0 ? agg.sum / agg.count : null;
+        });
+        buckets.set(t, row);
+      });
     }
 
     const sorted = Array.from(buckets.entries())
@@ -253,8 +332,36 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
     const maxPoints = periodMs <= 48 * 3600_000 ? 700 : periodMs <= 7 * 86400_000 ? 1000 : 1400;
     const sampled = downsampleByStep(sorted, maxPoints);
 
-    return { chartData: sampled, pointNames: pNames, pointIdByName: idByName };
-  }, [readings, points, metric, selectedPoints, window.from, window.to, periodMs]);
+    if (selectedPreset.metrics.length === 1) {
+      return { chartData: sampled, seriesNames: pNames, pointIdByName: idByName };
+    }
+
+    const groupedSeriesNames = selectedPreset.metrics.map((m, i) => selectedPreset.seriesLabels?.[i] ?? m);
+    return { chartData: sampled, seriesNames: groupedSeriesNames, pointIdByName: idByName };
+
+  }, [readings, points, selectedPreset, selectedPoints, window.from, window.to, periodMs]);
+
+  const yDomain = useMemo(() => {
+    if (!chartData.length) return ['auto', 'auto'] as const;
+    const vals: number[] = [];
+    for (const row of chartData as Array<Record<string, unknown>>) {
+      for (const series of seriesNames) {
+        if (hiddenSeries.has(series)) continue;
+        const v = row[series];
+        if (typeof v === 'number' && Number.isFinite(v)) vals.push(v);
+      }
+    }
+    if (!vals.length) return ['auto', 'auto'] as const;
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    if (min === max) {
+      const pad = Math.max(Math.abs(min) * 0.08, 1);
+      return [min - pad, max + pad] as const;
+    }
+    const span = max - min;
+    const pad = Math.max(span * 0.12, 0.5);
+    return [min - pad, max + pad] as const;
+  }, [chartData, seriesNames, hiddenSeries]);
 
   const handleLegendClick = useCallback((entry: any) => {
     const name = entry.value ?? entry.dataKey;
@@ -337,8 +444,13 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
         </div>
         {/* Metric selector + point chips */}
         <div className="flex flex-wrap items-center gap-2 mt-2">
-          <select value={metric} onChange={e => setMetric(e.target.value)} className="h-7 rounded border border-input bg-background px-2 text-xs">
-            {METRIC_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          <select value={metricPreset} onChange={e => setMetricPreset(e.target.value)} className="h-7 rounded border border-input bg-background px-2 text-xs">
+            <optgroup label="Groupes par phase">
+              {PHASE_GROUP_PRESETS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </optgroup>
+            <optgroup label="Mesures unitaires">
+              {METRIC_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </optgroup>
           </select>
           <div className="flex flex-wrap gap-1">
             {points.map(p => {
@@ -373,48 +485,79 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
       </CardHeader>
       <CardContent>
         {chartData.length > 0 ? (
-        <ResponsiveContainer width="100%" height={350}>
-          <LineChart data={chartData}>
-            <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-            <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
-            <YAxis tick={{ fontSize: 10 }} unit={metricOpt.unit} />
-            <Tooltip
-              contentStyle={{ fontSize: 12 }}
-              labelFormatter={(_l, payload) => {
-                if (!payload?.length) return '';
-                return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
-              }}
-              formatter={(v: number, name: string) => [v != null ? v.toFixed(2) + metricOpt.unit : '—', name]}
-            />
-            <Legend
-              wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
-              onClick={handleLegendClick}
-              formatter={(value: string) => (
-                <span style={{ color: hiddenSeries.has(value) ? '#999' : undefined, textDecoration: hiddenSeries.has(value) ? 'line-through' : undefined }}>
-                  {value}
-                </span>
-              )}
-            />
-            <Brush dataKey="label" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
-            {pointNames.map(name => {
-              const pid = pointIdByName.get(name) ?? '';
-              const color = pointColorMap.get(pid) ?? CHART_COLORS[0];
-              return (
-                <Line
-                  key={name}
-                  type="monotone"
-                  dataKey={name}
-                  stroke={color}
-                  dot={false}
-                  isAnimationActive={false}
-                  strokeWidth={hiddenSeries.has(name) ? 0 : 1.5}
-                  connectNulls
-                  hide={hiddenSeries.has(name)}
+          <>
+            <ResponsiveContainer width="100%" height={350}>
+              <LineChart data={chartData}>
+                <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                <XAxis dataKey="label" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 10 }} unit={selectedPreset.unit} domain={yDomain as any} />
+                <Tooltip
+                  contentStyle={{ fontSize: 12 }}
+                  labelFormatter={(_l, payload) => {
+                    if (!payload?.length) return '';
+                    return new Date(payload[0]?.payload?.time).toLocaleString('fr-FR');
+                  }}
+                  formatter={(v: number, name: string) => [v != null ? v.toFixed(2) + selectedPreset.unit : '—', name]}
                 />
-              );
-            })}
-          </LineChart>
-        </ResponsiveContainer>
+                <Legend
+                  wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
+                  onClick={handleLegendClick}
+                  formatter={(value: string) => (
+                    <span style={{ color: hiddenSeries.has(value) ? '#999' : undefined, textDecoration: hiddenSeries.has(value) ? 'line-through' : undefined }}>
+                      {value}
+                    </span>
+                  )}
+                />
+                <Brush dataKey="label" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
+                {seriesNames.map((name, idx) => {
+                  const pid = pointIdByName.get(name) ?? '';
+                  const color = selectedPreset.metrics.length === 1
+                    ? (pointColorMap.get(pid) ?? CHART_COLORS[0])
+                    : CHART_COLORS[idx % CHART_COLORS.length];
+                  return (
+                    <Line
+                      key={name}
+                      type="monotone"
+                      dataKey={name}
+                      stroke={color}
+                      dot={false}
+                      isAnimationActive={false}
+                      strokeWidth={hiddenSeries.has(name) ? 0 : 1.5}
+                      connectNulls
+                      hide={hiddenSeries.has(name)}
+                    />
+                  );
+                })}
+              </LineChart>
+            </ResponsiveContainer>
+            {selectedPreset.metrics.length > 1 && (
+              <div className="flex flex-wrap items-center justify-center gap-1.5 mt-3">
+                {seriesNames.map((seriesName, idx) => {
+                  const active = !hiddenSeries.has(seriesName);
+                  const color = CHART_COLORS[idx % CHART_COLORS.length];
+                  return (
+                    <button
+                      key={seriesName}
+                      onClick={() => {
+                        setHiddenSeries(prev => {
+                          const next = new Set(prev);
+                          if (next.has(seriesName)) next.delete(seriesName); else next.add(seriesName);
+                          return next;
+                        });
+                      }}
+                      className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                        active ? 'bg-primary/10 text-foreground' : 'border-muted-foreground/20 text-muted-foreground'
+                      }`}
+                      style={active ? { borderColor: color + '88', boxShadow: `0 0 0 1px ${color}44` } : undefined}
+                    >
+                      <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: color }} />
+                      {seriesName}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
         ) : (
           <div className="flex flex-col items-center justify-center py-10 text-muted-foreground gap-2">
             <Activity className="w-5 h-5 opacity-60" />

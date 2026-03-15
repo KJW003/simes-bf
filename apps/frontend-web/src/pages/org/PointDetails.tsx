@@ -114,29 +114,57 @@ const InteractiveLineChart = React.memo(function InteractiveLineChart({ data, li
   }
 
   return (
-    <ResponsiveContainer width="100%" height={height}>
-      <LineChart data={data}>
-        <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
-        <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
-        <YAxis tick={{ fontSize: 10 }} unit={unit ? ` ${unit}` : ''} domain={autoFitDomain} />
-        {lines.some(l => l.yAxisId) && <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} domain={[0, 1]} />}
-        <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number) => v?.toFixed(2)} />
-        <Legend
-          wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
-          onClick={handleLegendClick}
-          formatter={(value: string, entry: any) => (
-            <span style={{ color: hiddenSeries.has(entry.dataKey) ? '#9ca3af' : entry.color, textDecoration: hiddenSeries.has(entry.dataKey) ? 'line-through' : 'none' }}>{value}</span>
-          )}
-        />
-        {lines.map(l => (
-          <Line key={l.dataKey} type="monotone" dataKey={l.dataKey} stroke={l.stroke} dot={false}
-            isAnimationActive={false}
-            strokeWidth={l.strokeWidth ?? 1.5} name={l.name} yAxisId={l.yAxisId}
-            hide={hiddenSeries.has(l.dataKey)} />
-        ))}
-        <Brush dataKey="time" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
-      </LineChart>
-    </ResponsiveContainer>
+    <>
+      <ResponsiveContainer width="100%" height={height}>
+        <LineChart data={data}>
+          <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+          <XAxis dataKey="time" tick={{ fontSize: 9 }} interval="preserveStartEnd" />
+          <YAxis tick={{ fontSize: 10 }} unit={unit ? ` ${unit}` : ''} domain={autoFitDomain} />
+          {lines.some(l => l.yAxisId) && <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 10 }} domain={[0, 1]} />}
+          <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number) => v?.toFixed(2)} />
+          <Legend
+            wrapperStyle={{ fontSize: 11, cursor: 'pointer' }}
+            onClick={handleLegendClick}
+            formatter={(value: string, entry: any) => (
+              <span style={{ color: hiddenSeries.has(entry.dataKey) ? '#9ca3af' : entry.color, textDecoration: hiddenSeries.has(entry.dataKey) ? 'line-through' : 'none' }}>{value}</span>
+            )}
+          />
+          {lines.map(l => (
+            <Line key={l.dataKey} type="monotone" dataKey={l.dataKey} stroke={l.stroke} dot={false}
+              isAnimationActive={false}
+              strokeWidth={l.strokeWidth ?? 1.5} name={l.name} yAxisId={l.yAxisId}
+              hide={hiddenSeries.has(l.dataKey)} />
+          ))}
+          <Brush dataKey="time" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
+        </LineChart>
+      </ResponsiveContainer>
+      {lines.length > 1 && (
+        <div className="flex flex-wrap items-center justify-center gap-1.5 mt-3">
+          {lines.map((line) => {
+            const active = !hiddenSeries.has(line.dataKey);
+            return (
+              <button
+                key={line.dataKey}
+                onClick={() => {
+                  setHiddenSeries(prev => {
+                    const next = new Set(prev);
+                    if (next.has(line.dataKey)) next.delete(line.dataKey); else next.add(line.dataKey);
+                    return next;
+                  });
+                }}
+                className={`px-2 py-0.5 rounded-full text-xs border transition-colors ${
+                  active ? 'bg-primary/10 text-foreground' : 'border-muted-foreground/20 text-muted-foreground'
+                }`}
+                style={active ? { borderColor: line.stroke + '88', boxShadow: `0 0 0 1px ${line.stroke}44` } : undefined}
+              >
+                <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ backgroundColor: line.stroke }} />
+                {line.name}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </>
   );
 });
 
