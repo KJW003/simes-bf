@@ -36,7 +36,7 @@ import {
   useCreateSite, useUpdateSite, useDeleteSite,
   useCreateTerrain, useUpdateTerrain, useDeleteTerrain,
   useProvisionGateway, useMapGateway, useDeleteGateway,
-  useMapDevice, useCreatePoint, useUpdatePoint, useDeletePoint,
+  useMapDevice, useUnmapDevice, useCreatePoint, useUpdatePoint, useDeletePoint,
   useDeleteIncoming, useDeleteAllIncoming, useReconcileIncoming,
   useCreateUser, useUpdateUser, useDeleteUser,
   useCreateZone, useUpdateZone, useDeleteZone,
@@ -608,6 +608,7 @@ function GatewaysTab() {
 
   const provisionMut = useProvisionGateway();
   const mapMut = useMapGateway();
+  const unmapDeviceMut = useUnmapDevice();
   const deleteGwMut = useDeleteGateway();
 
   // Selected gateway (can be registered OR discovered)
@@ -709,6 +710,16 @@ function GatewaysTab() {
       await provisionMut.mutateAsync(gatewayId);
       toast.success("Auto-provisionnement réussi : les appareils ont été détectés et mappés automatiquement");
     } catch (err: any) { toast.error(err?.message || "Erreur provision"); }
+  };
+
+  const handleUnmapDevice = async (device: any) => {
+    if (!selectedTerrainId || !device?.device_key) return;
+    try {
+      await unmapDeviceMut.mutateAsync({ deviceKey: device.device_key, terrain_id: selectedTerrainId });
+      toast.success(`Appareil ${device.device_key} demappe`);
+    } catch (err: any) {
+      toast.error(err?.message || "Erreur lors du demapping");
+    }
   };
 
   const handleDeleteGateway = (gatewayId: string) => {
@@ -951,7 +962,18 @@ function GatewaysTab() {
                               <Link2 className="w-3 h-3 mr-1" /> Mapper
                             </Button>
                           ) : d.point_id ? (
-                            <span className="text-[10px] font-mono text-muted-foreground" title={d.point_id}>{d.point_id.slice(0, 8)}…</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono text-muted-foreground" title={d.point_id}>{d.point_id.slice(0, 8)}...</span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-[11px] text-amber-700"
+                                onClick={() => handleUnmapDevice(d)}
+                                disabled={unmapDeviceMut.isPending}
+                              >
+                                Demapper
+                              </Button>
+                            </div>
                           ) : (
                             <span className="text-[10px] text-muted-foreground italic">Mappez le GW d'abord</span>
                           )}
@@ -1169,6 +1191,7 @@ function DevicesTab() {
 
   const { data: allTerrains = [] } = useAllTerrains();
   const provisionMut = useProvisionGateway();
+  const unmapDeviceMut = useUnmapDevice();
 
   // Mapping dialog state (uses shared DeviceMappingDialog)
   const [mappingDevice, setMappingDevice] = useState<Record<string, any> | null>(null);
@@ -1179,6 +1202,16 @@ function DevicesTab() {
       await provisionMut.mutateAsync(selectedGw);
       toast.success("Auto-provisionnement terminé ! Les appareils ont été détectés et mappés automatiquement.");
     } catch (err: any) { toast.error(err?.message || "Erreur lors de l'auto-provisionnement"); }
+  };
+
+  const handleUnmap = async (device: any) => {
+    if (!selectedGw || !gatewayTerrainId || !device?.device_key) return;
+    try {
+      await unmapDeviceMut.mutateAsync({ deviceKey: device.device_key, terrain_id: gatewayTerrainId });
+      toast.success(`Appareil ${device.device_key} demappe`);
+    } catch (err: any) {
+      toast.error(err?.message || "Erreur lors du demapping");
+    }
   };
 
   const unmappedCount = devices.filter((d: any) => !d.point_id).length;
@@ -1312,7 +1345,18 @@ function DevicesTab() {
                               <Link2 className="w-3 h-3 mr-1" /> Mapper
                             </Button>
                           ) : (
-                            <span className="text-[10px] font-mono text-muted-foreground" title={d.point_id}>{d.point_id.slice(0, 8)}…</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-[10px] font-mono text-muted-foreground" title={d.point_id}>{d.point_id.slice(0, 8)}...</span>
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 text-[11px] text-amber-700"
+                                onClick={() => handleUnmap(d)}
+                                disabled={unmapDeviceMut.isPending}
+                              >
+                                Demapper
+                              </Button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -1342,8 +1386,14 @@ function DevicesTab() {
 
 function IncomingTab() {
   const [statusFilter, setStatusFilter] = useState("all");
+  const [includeProcessed, setIncludeProcessed] = useState(true);
+  const [deviceKeyFilter, setDeviceKeyFilter] = useState("");
   const actualFilter = statusFilter === "all" ? "" : statusFilter;
-  const { data: inData, isLoading, refetch } = useIncoming(actualFilter ? { status: actualFilter } : undefined);
+  const incomingParams: { status?: string; device_key?: string; include_processed?: boolean } = {};
+  if (actualFilter) incomingParams.status = actualFilter;
+  if (deviceKeyFilter.trim()) incomingParams.device_key = deviceKeyFilter.trim();
+  if (includeProcessed || actualFilter === "processed") incomingParams.include_processed = true;
+  const { data: inData, isLoading, refetch } = useIncoming(Object.keys(incomingParams).length ? incomingParams : undefined);
   const rows: Array<Record<string, any>> = (inData as any)?.rows ?? [];
 
   // Info dialog state
@@ -1411,13 +1461,24 @@ function IncomingTab() {
               <SelectItem value="all">Tous</SelectItem>
               <SelectItem value="unmapped">Non mappés</SelectItem>
               <SelectItem value="mapped">Mappés</SelectItem>
+                <SelectItem value="processed">Traités (mapped)</SelectItem>
             </SelectContent>
           </Select>
+          <Input
+            value={deviceKeyFilter}
+            onChange={(e) => setDeviceKeyFilter(e.target.value)}
+            placeholder="Filtrer device_key"
+            className="h-8 w-48 text-xs font-mono"
+          />
+          <div className="flex items-center gap-2 rounded-md border px-2 h-8">
+            <Switch checked={includeProcessed} onCheckedChange={setIncludeProcessed} />
+            <span className="text-[11px] text-muted-foreground">Inclure traites</span>
+          </div>
           <Button size="sm" variant="ghost" onClick={() => refetch()}><RefreshCw className="w-3.5 h-3.5" /></Button>
           <Button size="sm" variant="outline" className="h-8 text-xs" onClick={handleReconcile} disabled={reconcileMut.isPending} title="Resynchroniser les statuts des messages avec les mappings existants">
             {reconcileMut.isPending ? "Sync…" : "Resync statuts"}
           </Button>
-          {rows.length > 0 && (
+          {rows.length > 0 && statusFilter !== "processed" && (
             <Button size="sm" variant="destructive" className="h-8 text-xs" onClick={handlePurgeAll} disabled={deleteAllMut.isPending}>
               <Trash2 className="w-3.5 h-3.5 mr-1" />
               {deleteAllMut.isPending ? "Purge…" : `Purger (${rows.length})`}
@@ -1455,9 +1516,11 @@ function IncomingTab() {
                       <Button size="sm" variant="ghost" className="h-6 text-xs" onClick={() => setInfoMsg(msg)}>
                         <Info className="w-3 h-3 mr-1" />Détails
                       </Button>
-                      <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={() => handleDeleteOne(msg.id)} disabled={deleteMut.isPending}>
-                        <Trash2 className="w-3 h-3" />
-                      </Button>
+                      {msg.status !== "processed" && (
+                        <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={() => handleDeleteOne(msg.id)} disabled={deleteMut.isPending}>
+                          <Trash2 className="w-3 h-3" />
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>

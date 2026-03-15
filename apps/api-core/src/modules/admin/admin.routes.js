@@ -115,32 +115,130 @@ router.get("/admin/incoming", requireAuth, requireRole("platform_super_admin"), 
   try {
     const status = req.query.status || null; // unmapped|mapped|ignored
     const gatewayId = req.query.gateway_id || null;
+    const deviceKeyFilter = req.query.device_key || null;
+    const includeProcessed = String(req.query.include_processed || "").toLowerCase() === "true";
+    const limit = parseLastLines(req.query.limit, 200, 1, 1000);
 
-    const params = [];
-    const where = [];
+    const rows = [];
+    let incomingCount = 0;
+    let processedCount = 0;
 
-    if (status) {
-      params.push(status);
-      where.push(`status = $${params.length}`);
+    // 1) Buffered messages from core.incoming_messages
+    if (status !== "processed") {
+      const params = [];
+      const where = [];
+
+      if (status) {
+        params.push(status);
+        where.push(`status = $${params.length}`);
+      }
+      if (gatewayId) {
+        params.push(gatewayId);
+        where.push(`gateway_id = $${params.length}`);
+      }
+      if (deviceKeyFilter) {
+        params.push(deviceKeyFilter);
+        where.push(`device_key = $${params.length}`);
+      }
+
+      const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+      params.push(limit);
+
+      const incoming = await corePool.query(
+        `SELECT id, received_at, gateway_id, topic, device_key, modbus_addr, dev_eui, status,
+                mapped_terrain_id, mapped_point_id, payload_raw
+         FROM incoming_messages
+         ${whereSql}
+         ORDER BY received_at DESC
+         LIMIT $${params.length}`,
+        params
+      );
+
+      incomingCount = incoming.rows.length;
+      rows.push(...incoming.rows);
     }
-    if (gatewayId) {
-      params.push(gatewayId);
-      where.push(`gateway_id = $${params.length}`);
+
+    // 2) Processed packets from telemetry.acrel_readings for mapped devices
+    const shouldIncludeProcessed = status === "processed" || (includeProcessed && status !== "unmapped");
+    if (shouldIncludeProcessed && telemetryPool) {
+      const tParams = [];
+      const tWhere = [];
+
+      if (gatewayId) {
+        tParams.push(gatewayId);
+        tWhere.push(`COALESCE(raw->>'gateway_id', raw->'source'->>'gateway_id') = $${tParams.length}`);
+      }
+
+      const tWhereSql = tWhere.length ? `WHERE ${tWhere.join(" AND ")}` : "";
+      tParams.push(limit);
+
+      const processedRaw = await telemetryPool.query(
+        `SELECT time, point_id, raw,
+                COALESCE(raw->>'gateway_id', raw->'source'->>'gateway_id') AS gateway_id
+         FROM acrel_readings
+         ${tWhereSql}
+         ORDER BY time DESC
+         LIMIT $${tParams.length}`,
+        tParams
+      );
+
+      const pointIds = [...new Set(processedRaw.rows.map((r) => r.point_id).filter(Boolean))];
+      const pointMap = new Map();
+      if (pointIds.length > 0) {
+        const refs = await corePool.query(
+          `SELECT mp.id AS point_id,
+                  mp.terrain_id,
+                  mp.modbus_addr,
+                  mp.lora_dev_eui,
+                  dr.device_key
+           FROM measurement_points mp
+           LEFT JOIN device_registry dr ON dr.point_id = mp.id
+           WHERE mp.id = ANY($1)`,
+          [pointIds]
+        );
+        for (const ref of refs.rows) pointMap.set(ref.point_id, ref);
+      }
+
+      for (const pkt of processedRaw.rows) {
+        const raw = pkt.raw || {};
+        const ref = pointMap.get(pkt.point_id) || {};
+        const modbus = ref.modbus_addr ?? raw?.modbus_addr ?? raw?.device?.modbus_addr ?? null;
+        const devEui = ref.lora_dev_eui ?? raw?.dev_eui ?? raw?.lora_dev_eui ?? raw?.device?.lora_dev_eui ?? null;
+        const computedDeviceKey = makeDeviceKey({ modbus_addr: modbus, dev_eui: devEui });
+        const resolvedDeviceKey = ref.device_key || computedDeviceKey;
+        if (deviceKeyFilter && resolvedDeviceKey !== deviceKeyFilter) continue;
+        rows.push({
+          id: `processed:${pkt.point_id}:${new Date(pkt.time).getTime()}`,
+          received_at: pkt.time,
+          gateway_id: pkt.gateway_id || null,
+          topic: "telemetry/processed",
+          device_key: resolvedDeviceKey,
+          modbus_addr: modbus,
+          dev_eui: devEui,
+          status: "processed",
+          mapped_terrain_id: ref.terrain_id || null,
+          mapped_point_id: pkt.point_id,
+          payload_raw: raw,
+        });
+        processedCount++;
+      }
     }
 
-    const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
+    rows.sort((a, b) => {
+      const ta = new Date(a.received_at || 0).getTime();
+      const tb = new Date(b.received_at || 0).getTime();
+      return tb - ta;
+    });
 
-    const r = await corePool.query(
-      `SELECT id, received_at, gateway_id, topic, device_key, modbus_addr, dev_eui, status,
-              mapped_terrain_id, mapped_point_id, payload_raw
-       FROM incoming_messages
-       ${whereSql}
-       ORDER BY received_at DESC
-       LIMIT 200`,
-      params
-    );
-
-    res.json({ ok: true, rows: r.rows });
+    res.json({
+      ok: true,
+      rows: rows.slice(0, limit),
+      meta: {
+        incoming_count: incomingCount,
+        processed_count: processedCount,
+        include_processed: shouldIncludeProcessed,
+      },
+    });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
@@ -261,6 +359,66 @@ router.put("/admin/devices/:deviceKey/map", requireAuth, requireRole("platform_s
     res.json({ ok: true, device: up.rows[0] });
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// 4b) Unmap a device_key from its measurement_point
+// DELETE /admin/devices/:deviceKey/map?terrain_id=...
+router.delete("/admin/devices/:deviceKey/map", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
+  try {
+    const { deviceKey } = req.params;
+    const terrain_id = req.query.terrain_id || req.body?.terrain_id || null;
+
+    if (!terrain_id) {
+      return apiError(res, 400, "TERRAIN_ID_REQUIRED", "terrain_id is required");
+    }
+
+    const existing = await corePool.query(
+      `SELECT terrain_id, device_key, point_id
+       FROM device_registry
+       WHERE terrain_id = $1 AND device_key = $2`,
+      [terrain_id, deviceKey]
+    );
+
+    if (!existing.rows.length) {
+      return apiError(res, 404, "DEVICE_MAPPING_NOT_FOUND", "Device mapping not found");
+    }
+
+    const pointId = existing.rows[0].point_id;
+
+    await corePool.query(
+      `DELETE FROM device_registry
+       WHERE terrain_id = $1 AND device_key = $2`,
+      [terrain_id, deviceKey]
+    );
+
+    const reverted = await corePool.query(
+      `UPDATE incoming_messages
+       SET status = 'unmapped', mapped_terrain_id = NULL, mapped_point_id = NULL
+       WHERE device_key = $1
+         AND mapped_terrain_id = $2
+         AND mapped_point_id = $3`,
+      [deviceKey, terrain_id, pointId]
+    );
+
+    safeAudit('warn', 'api', `Device unmapped: ${deviceKey}`, {
+      device_key: deviceKey,
+      terrain_id,
+      point_id: pointId,
+      reverted_messages: reverted.rowCount ?? 0,
+    }, req.userId || null);
+
+    res.json({
+      ok: true,
+      unmapped: {
+        device_key: deviceKey,
+        terrain_id,
+        point_id: pointId,
+      },
+      reverted_messages: reverted.rowCount ?? 0,
+    });
+  } catch (e) {
+    apiError(res, 500, "DEVICE_UNMAP_FAILED", e.message);
   }
 });
 

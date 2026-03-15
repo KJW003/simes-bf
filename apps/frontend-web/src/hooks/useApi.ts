@@ -456,7 +456,7 @@ export function useGatewayDevices(gatewayId: string | null) {
   });
 }
 
-export function useIncoming(params?: { status?: string; gateway_id?: string }) {
+export function useIncoming(params?: { status?: string; gateway_id?: string; device_key?: string; include_processed?: boolean; limit?: number }) {
   return useQuery({
     queryKey: ['admin-incoming', params],
     queryFn: () => api.getIncoming(params),
@@ -687,6 +687,20 @@ export function useMapDevice() {
       qc.invalidateQueries({ queryKey: ['admin-gateway-devices'] });
       qc.invalidateQueries({ queryKey: ['admin-incoming'] });
       qc.invalidateQueries({ queryKey: ['admin-gateways'] });
+    },
+  });
+}
+
+export function useUnmapDevice() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: { deviceKey: string; terrain_id: string }) =>
+      api.unmapDevice(data.deviceKey, { terrain_id: data.terrain_id }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['admin-gateway-devices'] });
+      qc.invalidateQueries({ queryKey: ['admin-incoming'] });
+      qc.invalidateQueries({ queryKey: ['admin-gateways'] });
+      qc.invalidateQueries({ queryKey: ['points'] });
     },
   });
 }

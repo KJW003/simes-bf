@@ -425,10 +425,13 @@ export const api = {
       `/terrains/${terrainId}/power-peaks?days=${days}`,
     ),
 
-  getIncoming: (params?: { status?: string; gateway_id?: string }) => {
+  getIncoming: (params?: { status?: string; gateway_id?: string; device_key?: string; include_processed?: boolean; limit?: number }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.gateway_id) qs.set('gateway_id', params.gateway_id);
+    if (params?.device_key) qs.set('device_key', params.device_key);
+    if (params?.include_processed) qs.set('include_processed', 'true');
+    if (params?.limit) qs.set('limit', String(params.limit));
     const q = qs.toString();
     return request<{ ok: boolean; rows: Array<Record<string, unknown>> }>(`/admin/incoming${q ? `?${q}` : ''}`);
   },
@@ -532,6 +535,12 @@ export const api = {
     request<{ ok: boolean; device: Record<string, unknown> }>(
       `/admin/devices/${encodeURIComponent(deviceKey)}/map`,
       { method: 'PUT', body: JSON.stringify(data) },
+    ),
+
+  unmapDevice: (deviceKey: string, data: { terrain_id: string }) =>
+    request<{ ok: boolean; unmapped: Record<string, unknown>; reverted_messages: number }>(
+      `/admin/devices/${encodeURIComponent(deviceKey)}/map?terrain_id=${encodeURIComponent(data.terrain_id)}`,
+      { method: 'DELETE' },
     ),
 
   replayIncoming: async (id: string) => {
