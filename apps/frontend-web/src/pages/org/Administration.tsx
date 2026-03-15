@@ -2292,28 +2292,230 @@ function ZonesTab() {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 export default function Administration() {
+  const { data: gwData } = useGateways();
+  const gateways: Array<Record<string, any>> = (gwData as any)?.gateways ?? [];
+  const { data: incomingData } = useIncoming();
+  const incomingRows: Array<Record<string, any>> = (incomingData as any)?.rows ?? [];
+  const { data: users = [] } = useUsers();
+
+  const [flowView, setFlowView] = useState<"hub" | "setup" | "operations" | "maintenance" | "access">("hub");
+  const [setupStep, setSetupStep] = useState(1);
+  const [opsTab, setOpsTab] = useState<"topology" | "mapping" | "messages">("topology");
+  const [maintenanceTab, setMaintenanceTab] = useState<"points" | "zones">("points");
+
+  const mappedGateways = gateways.filter((g: any) => !!g.terrain_id).length;
+  const unmappedGateways = Math.max(0, gateways.length - mappedGateways);
+  const unmappedIncoming = incomingRows.filter((r: any) => r.status === "unmapped").length;
+  const uniqueUnmappedDevices = new Set(
+    incomingRows
+      .filter((r: any) => r.status === "unmapped" && r.device_key && r.device_key !== "unknown")
+      .map((r: any) => r.device_key)
+  ).size;
+
+  const setupSteps = [
+    { id: 1, label: "Structure", help: "Créer organisations, sites et terrains." },
+    { id: 2, label: "Concentrateurs", help: "Enregistrer et mapper les gateways." },
+    { id: 3, label: "Appareils", help: "Associer les devices aux points de mesure." },
+    { id: 4, label: "Messages", help: "Contrôler les flux entrants et corriger." },
+    { id: 5, label: "Publication", help: "Valider l'etat et passer en exploitation." },
+  ] as const;
+
+  const renderSetupStep = () => {
+    if (setupStep === 1) return <TabErrorBoundary name="Referentiel"><ReferentialTab /></TabErrorBoundary>;
+    if (setupStep === 2) return <TabErrorBoundary name="Concentrateurs"><GatewaysTab /></TabErrorBoundary>;
+    if (setupStep === 3) return <TabErrorBoundary name="Appareils"><DevicesTab /></TabErrorBoundary>;
+    if (setupStep === 4) return <TabErrorBoundary name="Messages"><IncomingTab /></TabErrorBoundary>;
+
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base font-semibold">Pret pour exploitation</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <p className="text-xs text-muted-foreground">Concentrateurs mappes</p>
+              <p className="text-xl font-semibold">{mappedGateways}/{gateways.length}</p>
+            </div>
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <p className="text-xs text-muted-foreground">Devices non mappes detectes</p>
+              <p className="text-xl font-semibold">{uniqueUnmappedDevices}</p>
+            </div>
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <p className="text-xs text-muted-foreground">Messages entrants non mappes</p>
+              <p className="text-xl font-semibold">{unmappedIncoming}</p>
+            </div>
+            <div className="rounded-lg border p-3 bg-muted/30">
+              <p className="text-xs text-muted-foreground">Utilisateurs actifs</p>
+              <p className="text-xl font-semibold">{users.length}</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 pt-2">
+            <Button onClick={() => { setFlowView("operations"); setOpsTab("mapping"); }}>
+              Passer en exploitation
+            </Button>
+            <Button variant="outline" onClick={() => { setFlowView("maintenance"); setMaintenanceTab("points"); }}>
+              Ouvrir maintenance
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
+
   return (
     <div className="p-4 space-y-4">
-      <h1 className="text-xl font-bold">Administration</h1>
-      <Tabs defaultValue="referential">
-        <TabsList>
-          <TabsTrigger value="referential" className="flex items-center gap-1"><Building2 className="w-3.5 h-3.5" /> Référentiel</TabsTrigger>
-          <TabsTrigger value="gateways" className="flex items-center gap-1"><Router className="w-3.5 h-3.5" /> Concentrateurs</TabsTrigger>
-          <TabsTrigger value="devices" className="flex items-center gap-1"><Cpu className="w-3.5 h-3.5" /> Appareils</TabsTrigger>
-          <TabsTrigger value="points" className="flex items-center gap-1"><Layers className="w-3.5 h-3.5" /> Points de mesure</TabsTrigger>
-          <TabsTrigger value="zones" className="flex items-center gap-1"><MapPin className="w-3.5 h-3.5" /> Zones</TabsTrigger>
-          <TabsTrigger value="incoming" className="flex items-center gap-1"><MessageSquare className="w-3.5 h-3.5" /> Messages</TabsTrigger>
-          <TabsTrigger value="users" className="flex items-center gap-1"><Users className="w-3.5 h-3.5" /> Utilisateurs</TabsTrigger>
-        </TabsList>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold">Configuration plateforme</h1>
+          <p className="text-sm text-muted-foreground">
+            Flux guide pour parametrage initial, exploitation quotidienne et maintenance.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button variant={flowView === "hub" ? "default" : "outline"} size="sm" onClick={() => setFlowView("hub")}>Accueil</Button>
+          <Button variant={flowView === "setup" ? "default" : "outline"} size="sm" onClick={() => setFlowView("setup")}>Setup guide</Button>
+          <Button variant={flowView === "operations" ? "default" : "outline"} size="sm" onClick={() => setFlowView("operations")}>Exploitation</Button>
+          <Button variant={flowView === "maintenance" ? "default" : "outline"} size="sm" onClick={() => setFlowView("maintenance")}>Maintenance</Button>
+          <Button variant={flowView === "access" ? "default" : "outline"} size="sm" onClick={() => setFlowView("access")}>Acces</Button>
+        </div>
+      </div>
 
-        <TabsContent value="referential"><TabErrorBoundary name="Référentiel"><ReferentialTab /></TabErrorBoundary></TabsContent>
-        <TabsContent value="gateways"><TabErrorBoundary name="Concentrateurs"><GatewaysTab /></TabErrorBoundary></TabsContent>
-        <TabsContent value="devices"><TabErrorBoundary name="Appareils"><DevicesTab /></TabErrorBoundary></TabsContent>
-        <TabsContent value="points"><TabErrorBoundary name="Points de mesure"><MeasurementPointsTab /></TabErrorBoundary></TabsContent>
-        <TabsContent value="zones"><TabErrorBoundary name="Zones"><ZonesTab /></TabErrorBoundary></TabsContent>
-        <TabsContent value="incoming"><TabErrorBoundary name="Messages"><IncomingTab /></TabErrorBoundary></TabsContent>
-        <TabsContent value="users"><TabErrorBoundary name="Utilisateurs"><UsersTab /></TabErrorBoundary></TabsContent>
-      </Tabs>
+      {flowView === "hub" && (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Topologie</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">{mappedGateways}/{gateways.length}</p>
+                <p className="text-xs text-muted-foreground">concentrateurs mappes</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Gateways a traiter</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">{unmappedGateways}</p>
+                <p className="text-xs text-muted-foreground">non mappes</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Devices en attente</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">{uniqueUnmappedDevices}</p>
+                <p className="text-xs text-muted-foreground">a mapper</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardHeader className="pb-2">
+                <CardTitle className="text-sm font-medium">Flux entrants</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-2xl font-semibold">{unmappedIncoming}</p>
+                <p className="text-xs text-muted-foreground">messages non mappes</p>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Actions recommandees</CardTitle>
+            </CardHeader>
+            <CardContent className="flex flex-wrap gap-2">
+              <Button onClick={() => { setFlowView("setup"); setSetupStep(1); }}>Continuer le setup</Button>
+              <Button variant="outline" onClick={() => { setFlowView("operations"); setOpsTab("mapping"); }}>Mapper les appareils</Button>
+              <Button variant="outline" onClick={() => { setFlowView("operations"); setOpsTab("messages"); }}>Traiter les messages</Button>
+              <Button variant="outline" onClick={() => { setFlowView("maintenance"); setMaintenanceTab("points"); }}>Maintenance donnees</Button>
+              <Button variant="outline" onClick={() => setFlowView("access")}>Gerer les acces</Button>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {flowView === "setup" && (
+        <div className="grid grid-cols-1 xl:grid-cols-4 gap-4">
+          <Card className="xl:col-span-1 h-fit">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Etapes de setup</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {setupSteps.map((step) => (
+                <button
+                  key={step.id}
+                  className={`w-full text-left rounded-md border px-3 py-2 transition-colors ${setupStep === step.id ? "border-primary bg-primary/5" : "hover:bg-muted/40"}`}
+                  onClick={() => setSetupStep(step.id)}
+                >
+                  <p className="text-xs text-muted-foreground">Etape {step.id}</p>
+                  <p className="text-sm font-medium">{step.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{step.help}</p>
+                </button>
+              ))}
+            </CardContent>
+          </Card>
+
+          <div className="xl:col-span-3 space-y-3">
+            <div className="flex items-center justify-between gap-2">
+              <div>
+                <h2 className="text-base font-semibold">Etape {setupStep}: {setupSteps[setupStep - 1].label}</h2>
+                <p className="text-xs text-muted-foreground">{setupSteps[setupStep - 1].help}</p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={setupStep === 1}
+                  onClick={() => setSetupStep((s) => Math.max(1, s - 1))}
+                >
+                  Precedent
+                </Button>
+                <Button
+                  size="sm"
+                  disabled={setupStep === 5}
+                  onClick={() => setSetupStep((s) => Math.min(5, s + 1))}
+                >
+                  Suivant
+                </Button>
+              </div>
+            </div>
+            {renderSetupStep()}
+          </div>
+        </div>
+      )}
+
+      {flowView === "operations" && (
+        <Tabs value={opsTab} onValueChange={(v) => setOpsTab(v as typeof opsTab)}>
+          <TabsList>
+            <TabsTrigger value="topology">Topologie</TabsTrigger>
+            <TabsTrigger value="mapping">Mapping Center</TabsTrigger>
+            <TabsTrigger value="messages">Message Center</TabsTrigger>
+          </TabsList>
+          <TabsContent value="topology"><TabErrorBoundary name="Topologie"><ReferentialTab /></TabErrorBoundary></TabsContent>
+          <TabsContent value="mapping"><TabErrorBoundary name="Mapping"><GatewaysTab /></TabErrorBoundary></TabsContent>
+          <TabsContent value="messages"><TabErrorBoundary name="Messages"><IncomingTab /></TabErrorBoundary></TabsContent>
+        </Tabs>
+      )}
+
+      {flowView === "maintenance" && (
+        <Tabs value={maintenanceTab} onValueChange={(v) => setMaintenanceTab(v as typeof maintenanceTab)}>
+          <TabsList>
+            <TabsTrigger value="points">Points de mesure</TabsTrigger>
+            <TabsTrigger value="zones">Zones</TabsTrigger>
+          </TabsList>
+          <TabsContent value="points"><TabErrorBoundary name="Points de mesure"><MeasurementPointsTab /></TabErrorBoundary></TabsContent>
+          <TabsContent value="zones"><TabErrorBoundary name="Zones"><ZonesTab /></TabErrorBoundary></TabsContent>
+        </Tabs>
+      )}
+
+      {flowView === "access" && (
+        <TabErrorBoundary name="Utilisateurs">
+          <UsersTab />
+        </TabErrorBoundary>
+      )}
     </div>
   );
 }
