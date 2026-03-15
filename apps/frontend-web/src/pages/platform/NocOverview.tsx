@@ -32,7 +32,8 @@ export default function NocOverview() {
   const totalOrgs = orgs?.length ?? 0;
   const totalTerrains = allTerrains?.length ?? 0;
   const gateways = (gwData?.gateways ?? []) as Array<Record<string, unknown>>;
-  const runs = (runsData?.runs ?? runsData ?? []) as Array<Record<string, unknown>>;
+  const runs = (runsData ?? []) as Array<Record<string, unknown>>;
+  const severityBreakdown = (incStats?.breakdown ?? []) as Array<{ severity: string; count: number }>;
 
   return (
     <div className="space-y-6">
@@ -83,7 +84,7 @@ export default function NocOverview() {
               <div className="rounded-md border px-3 py-2">
                 <div className="text-xs text-muted-foreground">Par sévérité</div>
                 <div className="flex gap-1 mt-1">
-                  {(incStats?.by_severity ?? []).map((s: any) => (
+                  {severityBreakdown.map((s) => (
                     <Badge key={s.severity} variant="outline" className={cn('text-[9px]',
                       s.severity === 'critical' ? 'text-red-600 bg-red-50' :
                       s.severity === 'warning' ? 'text-amber-600 bg-amber-50' :

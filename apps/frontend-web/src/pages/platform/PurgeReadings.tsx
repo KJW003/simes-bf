@@ -43,10 +43,7 @@ function StepNumber({ n, active, done }: { n: number; active: boolean; done: boo
    ═══════════════════════════════════════════════════════════════ */
 export default function PurgeReadings() {
   const { currentUser } = useAppContext();
-
-  if (currentUser.role !== 'platform_super_admin') {
-    return <Navigate to="/platform" replace />;
-  }
+  const isSuperAdmin = currentUser.role === 'platform_super_admin';
 
   // ── Step 1: cascading hierarchy ───────────────────────────
   const [selectedOrgId, setSelectedOrgId] = useState('');
@@ -66,12 +63,35 @@ export default function PurgeReadings() {
 
   // ── Purge state ───────────────────────────────────────────
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [purgeConfirmText, setPurgeConfirmText] = useState('');
   const [purging, setPurging] = useState(false);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+  const [purgeActionError, setPurgeActionError] = useState<string | null>(null);
+  const [previewRequested, setPreviewRequested] = useState(false);
+  const [previewTotals, setPreviewTotals] = useState<{ readings: number; agg_15m: number; agg_daily: number } | null>(null);
+  const [previewPointsFound, setPreviewPointsFound] = useState<number | null>(null);
+  const [previewPointsMissing, setPreviewPointsMissing] = useState<number | null>(null);
   const [result, setResult] = useState<{
     points_purged: number;
     details?: Array<{ point_id: string; point_name: string; deleted: { readings: number; agg_15m: number; agg_daily: number } }>;
     totals: { readings: number; agg_15m: number; agg_daily: number };
     range: { from: string | null; to: string | null };
+  } | null>(null);
+  const [globalFrom, setGlobalFrom] = useState('');
+  const [globalTo, setGlobalTo] = useState('');
+  const [globalIncludeReadings, setGlobalIncludeReadings] = useState(true);
+  const [globalPreviewLoading, setGlobalPreviewLoading] = useState(false);
+  const [globalPreviewError, setGlobalPreviewError] = useState<string | null>(null);
+  const [globalPreviewRequested, setGlobalPreviewRequested] = useState(false);
+  const [globalPreviewTotals, setGlobalPreviewTotals] = useState<{ readings: number; agg_15m: number; agg_daily: number } | null>(null);
+  const [globalConfirmOpen, setGlobalConfirmOpen] = useState(false);
+  const [globalConfirmText, setGlobalConfirmText] = useState('');
+  const [globalActionError, setGlobalActionError] = useState<string | null>(null);
+  const [globalPurging, setGlobalPurging] = useState(false);
+  const [globalResult, setGlobalResult] = useState<{
+    range: { from: string; to: string };
+    deleted: { readings: number; agg_15m: number; agg_daily: number };
   } | null>(null);
 
   // ── Referential data ─────────────────────────────────────
@@ -84,6 +104,13 @@ export default function PurgeReadings() {
   const [batches, setBatches] = useState<PurgeBatch[]>([]);
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [restoringBatchId, setRestoringBatchId] = useState<string | null>(null);
+  const [deletingBatchId, setDeletingBatchId] = useState<string | null>(null);
+  const [historyAction, setHistoryAction] = useState<
+    | { type: 'restore'; batch: PurgeBatch }
+    | { type: 'delete'; batch: PurgeBatch }
+    | null
+  >(null);
+  const [historyConfirmText, setHistoryConfirmText] = useState('');
 
   const loadBatches = useCallback(async () => {
     setLoadingBatches(true);
@@ -165,6 +192,7 @@ export default function PurgeReadings() {
   const handlePurge = async () => {
     if (selectedPointIds.size === 0) return;
     setPurging(true);
+    setPurgeActionError(null);
     setResult(null);
     try {
       const res = await api.batchPurgeReadings({
@@ -175,17 +203,168 @@ export default function PurgeReadings() {
       setResult(res);
       setSelectedPointIds(new Set());
       loadBatches();
+      setConfirmOpen(false);
+      setPurgeConfirmText('');
     } catch (e: any) {
-      alert('Erreur: ' + (e.message || 'Échec de la suppression'));
+      setPurgeActionError(e?.message || 'Échec de la suppression');
     } finally {
       setPurging(false);
-      setConfirmOpen(false);
     }
+  };
+
+  const requiredPurgeKeyword = useRange ? 'CONFIRM-PURGE-POINTS' : 'CONFIRM-PURGE-ALL-POINTS';
+  const canConfirmPurge = purgeConfirmText.trim().toUpperCase() === requiredPurgeKeyword;
+
+  const loadPurgePreview = useCallback(async () => {
+    if (!confirmOpen || selectedPointIds.size === 0) {
+      setPreviewTotals(null);
+      setPreviewPointsFound(null);
+      setPreviewPointsMissing(null);
+      setPreviewError(null);
+      return;
+    }
+
+    setPreviewLoading(true);
+    setPreviewError(null);
+    try {
+      const data = await api.batchPurgePreview({
+        pointIds: Array.from(selectedPointIds),
+        from: useRange && dateFrom ? new Date(dateFrom).toISOString() : undefined,
+        to: useRange && dateTo ? new Date(dateTo).toISOString() : undefined,
+      });
+      setPreviewTotals(data.totals);
+      setPreviewPointsFound(data.points_found);
+      setPreviewPointsMissing(data.points_missing);
+    } catch (e: any) {
+      setPreviewTotals(null);
+      setPreviewPointsFound(null);
+      setPreviewPointsMissing(null);
+      setPreviewError(e?.message || 'Impossible de calculer l\'impact');
+    } finally {
+      setPreviewLoading(false);
+    }
+  }, [confirmOpen, selectedPointIds, useRange, dateFrom, dateTo]);
+
+  useEffect(() => {
+    if (!confirmOpen || !previewRequested) return;
+    const id = setTimeout(() => {
+      loadPurgePreview();
+    }, 350);
+    return () => clearTimeout(id);
+  }, [confirmOpen, previewRequested, useRange, dateFrom, dateTo, selectedPointIds, loadPurgePreview]);
+
+  const openHistoryAction = (action: NonNullable<typeof historyAction>) => {
+    setHistoryConfirmText('');
+    setHistoryAction(action);
+  };
+
+  const closeHistoryAction = () => {
+    setHistoryConfirmText('');
+    setHistoryAction(null);
+  };
+
+  const requiredHistoryKeyword = historyAction?.type === 'restore' ? 'CONFIRM-RESTORE' : historyAction?.type === 'delete' ? 'CONFIRM-DELETE' : '';
+  const canConfirmHistoryAction = requiredHistoryKeyword !== '' && historyConfirmText.trim().toUpperCase() === requiredHistoryKeyword;
+
+  const executeHistoryAction = async () => {
+    if (!historyAction) return;
+
+    if (historyAction.type === 'restore') {
+      setRestoringBatchId(historyAction.batch.id);
+      try {
+        const r = await api.restorePurgeBatch(historyAction.batch.id);
+        toast.success(`Restauration : ${r.restored.readings} readings, ${r.restored.agg_15m} agg15m, ${r.restored.agg_daily} daily`);
+        loadBatches();
+      } catch (e: any) {
+        toast.error(e.message || 'Erreur de restauration');
+      } finally {
+        setRestoringBatchId(null);
+      }
+      closeHistoryAction();
+      return;
+    }
+
+    setDeletingBatchId(historyAction.batch.id);
+    try {
+      await api.deletePurgeBatch(historyAction.batch.id);
+      toast.success('Sauvegarde supprimée');
+      loadBatches();
+    } catch (e: any) {
+      toast.error(e.message || 'Échec de la suppression de la sauvegarde');
+    } finally {
+      setDeletingBatchId(null);
+    }
+    closeHistoryAction();
   };
 
   const rangeLabel = useRange && (dateFrom || dateTo)
     ? `${dateFrom ? new Date(dateFrom).toLocaleDateString('fr-FR') : '∞'} → ${dateTo ? new Date(dateTo).toLocaleDateString('fr-FR') : '∞'}`
     : 'Depuis le début — tout supprimer';
+
+  const globalRangeLabel = globalFrom && globalTo
+    ? `${new Date(globalFrom).toLocaleDateString('fr-FR')} → ${new Date(globalTo).toLocaleDateString('fr-FR')}`
+    : 'Sélectionnez une plage de dates';
+
+  const canRequestGlobalPreview = !!globalFrom && !!globalTo;
+  const requiredGlobalKeyword = globalPreviewError ? 'CONFIRM-PURGE-RANGE-FORCE' : 'CONFIRM-PURGE-RANGE';
+  const canConfirmGlobalPurge = globalConfirmText.trim().toUpperCase() === requiredGlobalKeyword;
+
+  const loadGlobalPreview = useCallback(async () => {
+    if (!canRequestGlobalPreview) {
+      setGlobalPreviewTotals(null);
+      setGlobalPreviewError(null);
+      return;
+    }
+
+    setGlobalPreviewLoading(true);
+    setGlobalPreviewError(null);
+    try {
+      const r = await api.purgeByRangePreview({
+        from: globalFrom,
+        to: globalTo,
+        includeReadings: globalIncludeReadings,
+      });
+      setGlobalPreviewTotals(r.totals);
+    } catch (e: any) {
+      setGlobalPreviewTotals(null);
+      setGlobalPreviewError(e?.message || 'Impossible de calculer la prévisualisation globale');
+    } finally {
+      setGlobalPreviewLoading(false);
+    }
+  }, [canRequestGlobalPreview, globalFrom, globalTo, globalIncludeReadings]);
+
+  const handleGlobalPurge = useCallback(async () => {
+    if (!canRequestGlobalPreview) return;
+    setGlobalPurging(true);
+    setGlobalActionError(null);
+    try {
+      const r = await api.purgeByRange({
+        from: globalFrom,
+        to: globalTo,
+        includeReadings: globalIncludeReadings,
+      });
+      setGlobalResult({ range: r.range, deleted: r.deleted });
+      toast.success('Purge globale exécutée avec succès');
+      loadBatches();
+      setGlobalConfirmOpen(false);
+      setGlobalConfirmText('');
+      loadGlobalPreview();
+    } catch (e: any) {
+      const message = e?.message || 'Échec de la purge globale';
+      setGlobalActionError(message);
+      toast.error(message);
+    } finally {
+      setGlobalPurging(false);
+    }
+  }, [canRequestGlobalPreview, globalFrom, globalTo, globalIncludeReadings, loadBatches, loadGlobalPreview]);
+
+  useEffect(() => {
+    if (!globalPreviewRequested) return;
+    const id = setTimeout(() => {
+      loadGlobalPreview();
+    }, 350);
+    return () => clearTimeout(id);
+  }, [globalPreviewRequested, globalFrom, globalTo, globalIncludeReadings, loadGlobalPreview]);
 
   // ── Back handlers ─────────────────────────────────────────
   const goBackToTerrains = () => {
@@ -198,6 +377,10 @@ export default function PurgeReadings() {
   /* ═══════════════════════════════════════════════════════════
      RENDER
      ═══════════════════════════════════════════════════════════ */
+  if (!isSuperAdmin) {
+    return <Navigate to="/platform" replace />;
+  }
+
   return (
     <div className="space-y-6">
       <PageHeader
@@ -482,7 +665,18 @@ export default function PurgeReadings() {
                     <Button
                       variant="destructive"
                       className="w-full h-10"
-                      onClick={() => { setResult(null); setConfirmOpen(true); }}
+                      onClick={() => {
+                        setResult(null);
+                        setPurgeActionError(null);
+                        setPurgeConfirmText('');
+                        setPreviewTotals(null);
+                        setPreviewPointsFound(null);
+                        setPreviewPointsMissing(null);
+                        setPreviewError(null);
+                        setPreviewRequested(true);
+                        setConfirmOpen(true);
+                        loadPurgePreview();
+                      }}
                     >
                       <Trash2 className="w-4 h-4 mr-2" />
                       Purger {selectedPointIds.size} point{selectedPointIds.size > 1 ? 's' : ''}
@@ -517,15 +711,15 @@ export default function PurgeReadings() {
 
             <div className="grid grid-cols-3 gap-3">
               <div className="p-3 rounded-lg bg-white border text-center">
-                <div className="text-[10px] text-muted-foreground">Readings</div>
+                <div className="text-xs text-muted-foreground">Readings</div>
                 <div className="text-xl font-bold text-emerald-700">{result.totals.readings.toLocaleString()}</div>
               </div>
               <div className="p-3 rounded-lg bg-white border text-center">
-                <div className="text-[10px] text-muted-foreground">Agg 15min</div>
+                <div className="text-xs text-muted-foreground">Agg 15min</div>
                 <div className="text-xl font-bold text-emerald-700">{result.totals.agg_15m.toLocaleString()}</div>
               </div>
               <div className="p-3 rounded-lg bg-white border text-center">
-                <div className="text-[10px] text-muted-foreground">Agg Daily</div>
+                <div className="text-xs text-muted-foreground">Agg Daily</div>
                 <div className="text-xl font-bold text-emerald-700">{result.totals.agg_daily.toLocaleString()}</div>
               </div>
             </div>
@@ -545,6 +739,129 @@ export default function PurgeReadings() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      <Card className="border-red-200/60 bg-gradient-to-br from-red-50/30 to-orange-50/20">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-600" /> Purge globale par plage de dates
+          </CardTitle>
+          <CardDescription>
+            Supprime les données de toutes les entités sur la période choisie. Utilisez uniquement pour incidents majeurs.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Du</label>
+              <Input type="date" value={globalFrom} onChange={(e) => setGlobalFrom(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Au</label>
+              <Input type="date" value={globalTo} onChange={(e) => setGlobalTo(e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">Options</label>
+              <div className="h-10 border rounded-md px-3 flex items-center gap-2 bg-background">
+                <Checkbox
+                  checked={globalIncludeReadings}
+                  onCheckedChange={(v) => setGlobalIncludeReadings(Boolean(v))}
+                  id="global-include-readings"
+                />
+                <label htmlFor="global-include-readings" className="text-xs">Inclure les readings bruts</label>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-xl border p-4 space-y-2.5 text-sm bg-background">
+            <div className="flex items-center justify-between">
+              <span className="text-muted-foreground">Période</span>
+              <span className="font-medium text-xs">{globalRangeLabel}</span>
+            </div>
+            {!globalPreviewRequested ? (
+              <div className="text-xs text-muted-foreground">Cliquez sur "Calculer l'impact" pour estimer la purge.</div>
+            ) : globalPreviewLoading ? (
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" /> Calcul de l'impact global…
+              </div>
+            ) : globalPreviewError ? (
+              <div className="text-xs text-red-600">{globalPreviewError}</div>
+            ) : (
+              <>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Readings</span>
+                  <span className="font-bold tabular-nums">{(globalPreviewTotals?.readings ?? 0).toLocaleString('fr-FR')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Agg 15m</span>
+                  <span className="font-bold tabular-nums">{(globalPreviewTotals?.agg_15m ?? 0).toLocaleString('fr-FR')}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Agg Daily</span>
+                  <span className="font-bold tabular-nums">{(globalPreviewTotals?.agg_daily ?? 0).toLocaleString('fr-FR')}</span>
+                </div>
+              </>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              variant="outline"
+              disabled={!canRequestGlobalPreview || globalPreviewLoading}
+              onClick={() => {
+                setGlobalPreviewRequested(true);
+                loadGlobalPreview();
+              }}
+            >
+              {globalPreviewLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Activity className="w-4 h-4 mr-2" />}
+              Calculer l'impact
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={!canRequestGlobalPreview || globalPreviewLoading}
+              onClick={() => {
+                setGlobalConfirmText('');
+                setGlobalActionError(null);
+                setGlobalPreviewRequested(true);
+                setGlobalConfirmOpen(true);
+                loadGlobalPreview();
+              }}
+            >
+              <Trash2 className="w-4 h-4 mr-2" />
+              Lancer la purge globale
+            </Button>
+          </div>
+          {globalPreviewError && (
+            <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-800 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>Prévisualisation indisponible:</strong> vous pouvez continuer en mode forcé avec mot-clé renforcé.
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {globalResult && (
+        <Card className="border-emerald-200 bg-emerald-50/50 animate-fade-in">
+          <CardContent className="pt-5 grid grid-cols-1 md:grid-cols-4 gap-3">
+            <div className="md:col-span-4 text-sm font-semibold text-emerald-800">
+              Purge globale effectuée: {new Date(globalResult.range.from).toLocaleDateString('fr-FR')} → {new Date(globalResult.range.to).toLocaleDateString('fr-FR')}
+            </div>
+            <div className="p-3 rounded-lg bg-white border text-center">
+              <div className="text-xs text-muted-foreground">Readings</div>
+              <div className="text-xl font-bold text-emerald-700">{globalResult.deleted.readings.toLocaleString('fr-FR')}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white border text-center">
+              <div className="text-xs text-muted-foreground">Agg 15min</div>
+              <div className="text-xl font-bold text-emerald-700">{globalResult.deleted.agg_15m.toLocaleString('fr-FR')}</div>
+            </div>
+            <div className="p-3 rounded-lg bg-white border text-center">
+              <div className="text-xs text-muted-foreground">Agg Daily</div>
+              <div className="text-xl font-bold text-emerald-700">{globalResult.deleted.agg_daily.toLocaleString('fr-FR')}</div>
+            </div>
           </CardContent>
         </Card>
       )}
@@ -570,6 +887,18 @@ export default function PurgeReadings() {
                 <span className="text-muted-foreground">Points</span>
                 <span className="font-bold">{selectedPointIds.size}</span>
               </div>
+              {previewPointsFound !== null && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Points valides</span>
+                  <span className="font-medium">{previewPointsFound}</span>
+                </div>
+              )}
+              {(previewPointsMissing ?? 0) > 0 && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Points introuvables</span>
+                  <span className="font-medium text-orange-700">{previewPointsMissing}</span>
+                </div>
+              )}
               <div className="flex justify-between">
                 <span className="text-muted-foreground">Terrain</span>
                 <span className="font-medium">{terrain?.name}</span>
@@ -578,6 +907,34 @@ export default function PurgeReadings() {
                 <span className="text-muted-foreground">Période</span>
                 <span className="font-medium text-xs">{rangeLabel}</span>
               </div>
+            </div>
+
+            <div className="rounded-xl border p-4 space-y-2.5 text-sm bg-background">
+              <div className="text-xs font-semibold text-muted-foreground">Impact estimé (dry-run)</div>
+              {!previewRequested ? (
+                <div className="text-xs text-muted-foreground">Cliquez sur "Calculer l'impact" pour générer l'estimation.</div>
+              ) : previewLoading ? (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Calcul en cours…
+                </div>
+              ) : previewError ? (
+                <div className="text-xs text-red-600">{previewError}</div>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Readings</span>
+                    <span className="font-bold tabular-nums">{(previewTotals?.readings ?? 0).toLocaleString('fr-FR')}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Agg 15m</span>
+                    <span className="font-bold tabular-nums">{(previewTotals?.agg_15m ?? 0).toLocaleString('fr-FR')}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Agg Daily</span>
+                    <span className="font-bold tabular-nums">{(previewTotals?.agg_daily ?? 0).toLocaleString('fr-FR')}</span>
+                  </div>
+                </>
+              )}
             </div>
 
             {/* Selected points list preview */}
@@ -594,11 +951,33 @@ export default function PurgeReadings() {
                 <span><strong>Attention:</strong> TOUTES les mesures historiques seront supprimées définitivement.</span>
               </div>
             )}
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">
+                Tapez <strong>{requiredPurgeKeyword}</strong> pour confirmer
+              </label>
+              <Input
+                value={purgeConfirmText}
+                onChange={(e) => setPurgeConfirmText(e.target.value)}
+                placeholder={requiredPurgeKeyword}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Format attendu: <strong>{requiredPurgeKeyword}</strong>
+              </p>
+              {purgeActionError && <p className="text-xs text-red-600">{purgeActionError}</p>}
+            </div>
+
+            <div>
+              <Button variant="outline" size="sm" onClick={loadPurgePreview} disabled={previewLoading}>
+                {previewLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-2" /> : <Activity className="w-3.5 h-3.5 mr-2" />}
+                Calculer l'impact
+              </Button>
+            </div>
           </div>
 
           <DialogFooter className="gap-2 pt-2">
-            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={purging}>Annuler</Button>
-            <Button variant="destructive" onClick={handlePurge} disabled={purging}>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)} disabled={purging || previewLoading}>Annuler</Button>
+            <Button variant="destructive" onClick={handlePurge} disabled={purging || previewLoading || !canConfirmPurge}>
               {purging ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
               Confirmer
             </Button>
@@ -639,6 +1018,7 @@ export default function PurgeReadings() {
                 const counts = b.counts || { readings: 0, agg_15m: 0, agg_daily: 0 };
                 const isRestored = !!b.restored_at;
                 const isRestoring = restoringBatchId === b.id;
+                const isDeleting = deletingBatchId === b.id;
                 const total = (counts.readings || 0) + (counts.agg_15m || 0) + (counts.agg_daily || 0);
                 return (
                   <div key={b.id} className={cn(
@@ -673,19 +1053,7 @@ export default function PurgeReadings() {
                           size="sm"
                           className="h-7 gap-1.5 text-xs text-emerald-700 border-emerald-300 hover:bg-emerald-50"
                           disabled={isRestoring}
-                          onClick={async () => {
-                            if (!confirm(`Restaurer ${total.toLocaleString()} enregistrements ?`)) return;
-                            setRestoringBatchId(b.id);
-                            try {
-                              const r = await api.restorePurgeBatch(b.id);
-                              toast.success(`Restauration : ${r.restored.readings} readings, ${r.restored.agg_15m} agg15m, ${r.restored.agg_daily} daily`);
-                              loadBatches();
-                            } catch (e: any) {
-                              toast.error(e.message || 'Erreur de restauration');
-                            } finally {
-                              setRestoringBatchId(null);
-                            }
-                          }}
+                          onClick={() => openHistoryAction({ type: 'restore', batch: b })}
                         >
                           {isRestoring ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
                           Restaurer
@@ -695,18 +1063,10 @@ export default function PurgeReadings() {
                         variant="ghost"
                         size="sm"
                         className="h-7 w-7 p-0 text-muted-foreground hover:text-destructive"
-                        onClick={async () => {
-                          if (!confirm('Supprimer définitivement cette sauvegarde ?')) return;
-                          try {
-                            await api.deletePurgeBatch(b.id);
-                            toast.success('Sauvegarde supprimée');
-                            loadBatches();
-                          } catch (e: any) {
-                            toast.error(e.message || 'Erreur');
-                          }
-                        }}
+                        disabled={isDeleting}
+                        onClick={() => openHistoryAction({ type: 'delete', batch: b })}
                       >
-                        <X className="w-3.5 h-3.5" />
+                        {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <X className="w-3.5 h-3.5" />}
                       </Button>
                     </div>
                   </div>
@@ -716,6 +1076,146 @@ export default function PurgeReadings() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!historyAction} onOpenChange={(open) => { if (!open) closeHistoryAction(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" />
+              {historyAction?.type === 'restore' ? 'Confirmer la restauration du lot' : 'Confirmer la suppression définitive'}
+            </DialogTitle>
+            <DialogDescription>
+              {historyAction?.type === 'restore'
+                ? 'La restauration réinjecte les données sauvegardées dans les tables de production (les doublons sont ignorés).'
+                : 'La suppression retire définitivement la sauvegarde de corbeille. Cette action est irréversible.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {historyAction?.batch && (
+            <div className="rounded-xl border p-4 space-y-2.5 text-sm bg-muted/30">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Lot</span>
+                <span className="font-mono text-xs">{historyAction.batch.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Readings</span>
+                <span className="font-medium">{(historyAction.batch.counts?.readings || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Agg 15m</span>
+                <span className="font-medium">{(historyAction.batch.counts?.agg_15m || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Agg daily</span>
+                <span className="font-medium">{(historyAction.batch.counts?.agg_daily || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Points concernés</span>
+                <span className="font-medium">{(historyAction.batch.point_ids?.length || 0).toLocaleString('fr-FR')}</span>
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <label className="text-xs font-medium text-muted-foreground">
+              Tapez <strong>{requiredHistoryKeyword}</strong> pour confirmer
+            </label>
+            <Input
+              value={historyConfirmText}
+              onChange={(e) => setHistoryConfirmText(e.target.value)}
+              placeholder={requiredHistoryKeyword}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Format attendu: <strong>{requiredHistoryKeyword}</strong>
+            </p>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={closeHistoryAction}>Annuler</Button>
+            <Button
+              variant={historyAction?.type === 'restore' ? 'default' : 'destructive'}
+              disabled={!canConfirmHistoryAction || !!restoringBatchId || !!deletingBatchId}
+              onClick={executeHistoryAction}
+            >
+              {(!!restoringBatchId || !!deletingBatchId) && <Loader2 className="w-4 h-4 animate-spin mr-2" />}
+              Confirmer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={globalConfirmOpen} onOpenChange={setGlobalConfirmOpen}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-5 h-5" /> Confirmer la purge globale
+            </DialogTitle>
+            <DialogDescription>
+              Cette action touche toutes les entités sur la plage choisie et peut supprimer un volume massif de données.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 py-2">
+            <div className="rounded-xl border p-4 space-y-2.5 text-sm bg-muted/30">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Période</span>
+                <span className="font-medium text-xs">{globalRangeLabel}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Prévisualisation</span>
+                <span className={cn('font-medium text-xs', globalPreviewError ? 'text-amber-700' : 'text-emerald-700')}>
+                  {globalPreviewError ? 'Indisponible (mode forcé)' : 'Disponible'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Readings</span>
+                <span className="font-bold tabular-nums">{(globalPreviewTotals?.readings ?? 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Agg 15m</span>
+                <span className="font-bold tabular-nums">{(globalPreviewTotals?.agg_15m ?? 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Agg Daily</span>
+                <span className="font-bold tabular-nums">{(globalPreviewTotals?.agg_daily ?? 0).toLocaleString('fr-FR')}</span>
+              </div>
+            </div>
+
+            <div className="flex items-start gap-2 p-2.5 rounded-lg bg-red-50 border border-red-200 text-red-700 text-xs">
+              <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />
+              <span><strong>Attention:</strong> opération globale et irréversible hors mécanisme de corbeille.</span>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="text-xs font-medium text-muted-foreground">
+                Tapez <strong>{requiredGlobalKeyword}</strong> pour confirmer
+              </label>
+              <Input
+                value={globalConfirmText}
+                onChange={(e) => setGlobalConfirmText(e.target.value)}
+                placeholder={requiredGlobalKeyword}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Format attendu: <strong>{requiredGlobalKeyword}</strong>
+              </p>
+              {globalPreviewError && (
+                <p className="text-xs text-amber-700">
+                  Mode forcé activé car la prévisualisation a échoué. Vérifiez soigneusement la période avant confirmation.
+                </p>
+              )}
+              {globalActionError && <p className="text-xs text-red-600">{globalActionError}</p>}
+            </div>
+          </div>
+
+          <DialogFooter className="gap-2 pt-2">
+            <Button variant="outline" onClick={() => setGlobalConfirmOpen(false)} disabled={globalPurging}>Annuler</Button>
+            <Button variant="destructive" onClick={handleGlobalPurge} disabled={globalPurging || !canConfirmGlobalPurge || globalPreviewLoading || !canRequestGlobalPreview}>
+              {globalPurging ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : <Trash2 className="w-4 h-4 mr-2" />}
+              Confirmer la purge globale
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

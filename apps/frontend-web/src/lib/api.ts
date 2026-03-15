@@ -62,6 +62,17 @@ async function request<T>(path: string, init?: RequestInit, timeoutMs: number = 
   }
 }
 
+async function logUiAction(action: string, metadata?: Record<string, unknown>, level: 'info' | 'warn' | 'error' = 'info') {
+  try {
+    await request<{ ok: boolean }>('/logs/ui', {
+      method: 'POST',
+      body: JSON.stringify({ action, level, metadata: metadata ?? {} }),
+    }, 8000);
+  } catch {
+    // Do not break UX if audit call fails.
+  }
+}
+
 // ─── Referential ───────────────────────────────────────────
 
 export interface ApiOrg {
@@ -151,6 +162,8 @@ export const api = {
     }, 60000),  // 60s timeout for bcrypt verification
 
   me: () => request<{ ok: boolean; user: ApiUser }>('/auth/me'),
+
+  logout: () => request<{ ok: boolean; message: string }>('/auth/logout', { method: 'POST' }),
 
   // ── User Settings (server-side persistence) ──
   getSettings: () => request<{ ok: boolean; settings: Record<string, unknown> }>('/auth/settings'),
@@ -317,15 +330,37 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 
-  submitJob: (type: string, payload?: Record<string, unknown>) =>
-    request<{ id: string; type: string; status: string; created_at: string }>(`/jobs/${type}`, {
-      method: 'POST',
-      body: JSON.stringify(payload ?? {}),
-    }),
+  submitJob: async (type: string, payload?: Record<string, unknown>) => {
+    try {
+      const result = await request<{ id: string; type: string; status: string; created_at: string }>(`/jobs/${type}`, {
+        method: 'POST',
+        body: JSON.stringify(payload ?? {}),
+      });
+      await logUiAction('job.submit', { type, runId: result.id });
+      return result;
+    } catch (e: any) {
+      await logUiAction('job.submit.failed', { type, error: e?.message }, 'warn');
+      throw e;
+    }
+  },
 
   // ── Runs ──
   getRuns: () =>
     request<Array<{ id: string; type: string; status: string; payload: Record<string, unknown>; result: Record<string, unknown> | null; error: string | null; created_at: string; started_at: string | null; finished_at: string | null }>>('/runs'),
+
+  cancelJob: async (jobId: string) => {
+    try {
+      const result = await request<{ ok: boolean; jobId: string; cancelled: boolean; queueJobRemoved: boolean }>(
+        `/jobs/cancel/${encodeURIComponent(jobId)}`,
+        { method: 'POST' },
+      );
+      await logUiAction('job.cancel', { jobId, queueJobRemoved: result.queueJobRemoved }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('job.cancel.failed', { jobId, error: e?.message }, 'error');
+      throw e;
+    }
+  },
 
   // ── Results ──
   getResult: (type: string, runId?: string) => {
@@ -401,6 +436,72 @@ export const api = {
   getGatewayDevices: (gatewayId: string) =>
     request<{ ok: boolean; devices: Array<Record<string, unknown>> }>(`/admin/gateways/${gatewayId}/devices`),
 
+  postSandboxIncoming: async (payload: {
+    topic?: string;
+    gateway_id?: string | null;
+    modbus_addr?: number | null;
+    dev_eui?: string | null;
+    time?: string | null;
+    metrics?: Record<string, unknown>;
+    source?: Record<string, unknown>;
+    device?: Record<string, unknown>;
+    raw?: Record<string, unknown>;
+  }) => {
+    try {
+      const result = await request<{ ok: boolean; count: number; messages: Array<Record<string, unknown>> }>(
+        '/admin/incoming/sandbox',
+        { method: 'POST', body: JSON.stringify(payload) },
+      );
+      await logUiAction('incoming.sandbox.inject', { count: result.count, gateway_id: payload.gateway_id }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.sandbox.inject.failed', { error: e?.message, gateway_id: payload.gateway_id }, 'error');
+      throw e;
+    }
+  },
+
+  processHistoricalMessages: async (terrainId: string, deviceKey: string) => {
+    try {
+      const result = await request<{
+        ok: boolean;
+        summary?: { total: number; processed: number; failed: number };
+        message?: string;
+      }>(
+        `/admin/devices/${encodeURIComponent(terrainId)}/${encodeURIComponent(deviceKey)}/process-historical`,
+        { method: 'POST' },
+      );
+      await logUiAction('incoming.process_historical', { terrainId, deviceKey }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.process_historical.failed', { terrainId, deviceKey, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+
+  processUnmappedIncoming: async () => {
+    try {
+      const result = await request<{ ok: boolean; processed: number; enqueued: number; failed: number }>(
+        '/incoming/process-unmapped',
+        { method: 'POST' },
+      );
+      await logUiAction('incoming.process_unmapped', { processed: result.processed, enqueued: result.enqueued }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.process_unmapped.failed', { error: e?.message }, 'error');
+      throw e;
+    }
+  },
+
+  getCleanupLogs: (last = 50) =>
+    request<{ ok: boolean; total_lines?: number; returned?: number; logs: string[]; message?: string }>(
+      `/logs/cleanup?last=${last}`,
+    ),
+
+  getSchedulerLogs: (last = 50) =>
+    request<{ ok: boolean; total_lines?: number; returned?: number; logs: string[]; message?: string }>(
+      `/logs/scheduler?last=${last}`,
+    ),
+
   setTerrainContract: (terrainId: string, data: {
     tariff_plan_id: string;
     subscribed_power_kw: number;
@@ -433,31 +534,62 @@ export const api = {
       { method: 'PUT', body: JSON.stringify(data) },
     ),
 
-  replayIncoming: (id: string) =>
-    request<{ ok: boolean; replayed: boolean; ingest: Record<string, unknown> }>(
-      `/admin/incoming/${id}/replay`,
-      { method: 'POST' },
-    ),
+  replayIncoming: async (id: string) => {
+    try {
+      const result = await request<{ ok: boolean; replayed: boolean; ingest: Record<string, unknown> }>(
+        `/admin/incoming/${id}/replay`,
+        { method: 'POST' },
+      );
+      await logUiAction('incoming.replay', { id });
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.replay.failed', { id, error: e?.message }, 'warn');
+      throw e;
+    }
+  },
 
-  deleteIncoming: (id: string) =>
-    request<{ ok: boolean; deleted: string }>(
-      `/admin/incoming/${id}`,
-      { method: 'DELETE' },
-    ),
+  deleteIncoming: async (id: string) => {
+    try {
+      const result = await request<{ ok: boolean; deleted: string }>(
+        `/admin/incoming/${id}`,
+        { method: 'DELETE' },
+      );
+      await logUiAction('incoming.delete', { id });
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.delete.failed', { id, error: e?.message }, 'warn');
+      throw e;
+    }
+  },
 
-  deleteAllIncoming: (params?: { status?: string; gateway_id?: string }) => {
+  deleteAllIncoming: async (params?: { status?: string; gateway_id?: string }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set('status', params.status);
     if (params?.gateway_id) qs.set('gateway_id', params.gateway_id);
     const q = qs.toString();
-    return request<{ ok: boolean; deleted_count: number }>(
-      `/admin/incoming${q ? `?${q}` : ''}`,
-      { method: 'DELETE' },
-    );
+    try {
+      const result = await request<{ ok: boolean; deleted_count: number }>(
+        `/admin/incoming${q ? `?${q}` : ''}`,
+        { method: 'DELETE' },
+      );
+      await logUiAction('incoming.delete_all', { ...params, deleted_count: result.deleted_count });
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.delete_all.failed', { ...params, error: e?.message }, 'warn');
+      throw e;
+    }
   },
 
-  reconcileIncoming: () =>
-    request<{ ok: boolean; reconciled: number }>('/admin/incoming/reconcile', { method: 'POST' }),
+  reconcileIncoming: async () => {
+    try {
+      const result = await request<{ ok: boolean; reconciled: number }>('/admin/incoming/reconcile', { method: 'POST' });
+      await logUiAction('incoming.reconcile', { reconciled: result.reconciled });
+      return result;
+    } catch (e: any) {
+      await logUiAction('incoming.reconcile.failed', { error: e?.message }, 'warn');
+      throw e;
+    }
+  },
 
   createPoint: (terrainId: string, data: { name: string; device: string; measure_category?: string; lora_dev_eui?: string | null; modbus_addr?: number | null; zone_id?: string | null; ct_ratio?: number }) =>
     request<ApiMeasurementPoint>(`/terrains/${terrainId}/points`, {
@@ -521,8 +653,34 @@ export const api = {
   },
 
   // ── Batch purge multiple points ──
-  batchPurgeReadings: (data: { pointIds: string[]; from?: string; to?: string }) =>
-    request<{
+  batchPurgePreview: async (data: { pointIds: string[]; from?: string; to?: string }) => {
+    try {
+      const result = await request<{
+        ok: boolean;
+        points_requested: number;
+        points_found: number;
+        points_missing: number;
+        point_ids: string[];
+        point_names: string[];
+        totals: { readings: number; agg_15m: number; agg_daily: number };
+        range: { from: string | null; to: string | null };
+      }>('/admin/readings/batch-purge-preview', { method: 'POST', body: JSON.stringify(data) });
+      await logUiAction('readings.batch_purge.preview', {
+        pointsCount: data.pointIds.length,
+        from: data.from,
+        to: data.to,
+        totals: result.totals,
+      }, 'info');
+      return result;
+    } catch (e: any) {
+      await logUiAction('readings.batch_purge.preview.failed', { pointsCount: data.pointIds.length, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+
+  batchPurgeReadings: async (data: { pointIds: string[]; from?: string; to?: string }) => {
+    try {
+      const result = await request<{
       ok: boolean;
       points_purged: number;
       details: Array<{
@@ -532,37 +690,124 @@ export const api = {
       }>;
       totals: { readings: number; agg_15m: number; agg_daily: number };
       range: { from: string | null; to: string | null };
-    }>('/admin/readings/batch-purge', { method: 'POST', body: JSON.stringify(data) }),
+      }>('/admin/readings/batch-purge', { method: 'POST', body: JSON.stringify(data) });
+      await logUiAction('readings.batch_purge', {
+        pointsCount: data.pointIds.length,
+        from: data.from,
+        to: data.to,
+        deleted: result.totals,
+      }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('readings.batch_purge.failed', { pointsCount: data.pointIds.length, error: e?.message }, 'error');
+      throw e;
+    }
+  },
 
   // ── Purge by date range (all points) ──
-  purgeByRange: (data: { from: string; to: string; includeReadings?: boolean }) =>
-    request<{ ok: boolean; range: { from: string; to: string }; purge_batch_id: string; deleted: { readings: number; agg_15m: number; agg_daily: number } }>(
-      '/admin/readings/purge-range', { method: 'POST', body: JSON.stringify(data) }
-    ),
+  purgeByRangePreview: async (data: { from: string; to: string; includeReadings?: boolean }) => {
+    try {
+      const result = await request<{
+        ok: boolean;
+        includeReadings: boolean;
+        range: { from: string; to: string };
+        normalized_range: { from: string; to: string };
+        totals: { readings: number; agg_15m: number; agg_daily: number };
+      }>(
+        '/admin/readings/purge-range-preview', { method: 'POST', body: JSON.stringify(data) }
+      );
+      await logUiAction('readings.purge_range.preview', { ...data, totals: result.totals }, 'info');
+      return result;
+    } catch (e: any) {
+      await logUiAction('readings.purge_range.preview.failed', { ...data, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+
+  purgeByRange: async (data: { from: string; to: string; includeReadings?: boolean }) => {
+    try {
+      const result = await request<{ ok: boolean; range: { from: string; to: string }; purge_batch_id: string; deleted: { readings: number; agg_15m: number; agg_daily: number } }>(
+        '/admin/readings/purge-range', { method: 'POST', body: JSON.stringify(data) }
+      );
+      await logUiAction('readings.purge_range', { ...data, deleted: result.deleted }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('readings.purge_range.failed', { ...data, error: e?.message }, 'error');
+      throw e;
+    }
+  },
 
   // ── Purge batches (trash / restore) ──
   getPurgeBatches: () =>
     request<{ ok: boolean; batches: Array<{ id: string; deleted_at: string; deleted_by: string | null; point_ids: string[]; date_from: string | null; date_to: string | null; counts: { readings: number; agg_15m: number; agg_daily: number }; restored_at: string | null }> }>(
       '/admin/purge-batches'
     ),
-  restorePurgeBatch: (batchId: string) =>
-    request<{ ok: boolean; purge_batch_id: string; restored: { readings: number; agg_15m: number; agg_daily: number } }>(
-      `/admin/purge-batches/${encodeURIComponent(batchId)}/restore`, { method: 'POST' }
-    ),
-  deletePurgeBatch: (batchId: string) =>
-    request<{ ok: boolean }>(
-      `/admin/purge-batches/${encodeURIComponent(batchId)}`, { method: 'DELETE' }
-    ),
+  restorePurgeBatch: async (batchId: string) => {
+    try {
+      const result = await request<{ ok: boolean; purge_batch_id: string; restored: { readings: number; agg_15m: number; agg_daily: number } }>(
+        `/admin/purge-batches/${encodeURIComponent(batchId)}/restore`, { method: 'POST' }
+      );
+      await logUiAction('purge_batch.restore', { batchId, restored: result.restored }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('purge_batch.restore.failed', { batchId, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+  deletePurgeBatch: async (batchId: string) => {
+    try {
+      const result = await request<{ ok: boolean }>(
+        `/admin/purge-batches/${encodeURIComponent(batchId)}`, { method: 'DELETE' }
+      );
+      await logUiAction('purge_batch.delete', { batchId }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('purge_batch.delete.failed', { batchId, error: e?.message }, 'error');
+      throw e;
+    }
+  },
 
   // ── Pipeline Repair Actions ──
-  repairAggregations: (data: { from: string; to: string; point_id?: string; terrain_id?: string; site_id?: string }) =>
-    request<{ ok: boolean; message: string }>('/admin/pipeline/repair-aggregations', { method: 'POST', body: JSON.stringify(data) }),
-  retryFailedJobs: (queue?: string, limit?: number) =>
-    request<{ ok: boolean; queue: string; retried: number; total_failed: number }>('/admin/pipeline/retry-failed-jobs', { method: 'POST', body: JSON.stringify({ queue, limit }) }),
-  flushFailedJobs: (queue?: string) =>
-    request<{ ok: boolean; queue: string; removed: number }>('/admin/pipeline/flush-failed-jobs', { method: 'POST', body: JSON.stringify({ queue }) }),
-  reprocessUnmapped: (limit?: number) =>
-    request<{ ok: boolean; message: string }>('/admin/pipeline/reprocess-unmapped', { method: 'POST', body: JSON.stringify({ limit }) }),
+  repairAggregations: async (data: { from: string; to: string; point_id?: string; terrain_id?: string; site_id?: string }) => {
+    try {
+      const result = await request<{ ok: boolean; message: string }>('/admin/pipeline/repair-aggregations', { method: 'POST', body: JSON.stringify(data) });
+      await logUiAction('pipeline.repair_aggregations', data, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('pipeline.repair_aggregations.failed', { ...data, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+  retryFailedJobs: async (queue?: string, limit?: number) => {
+    try {
+      const result = await request<{ ok: boolean; queue: string; retried: number; total_failed: number }>('/admin/pipeline/retry-failed-jobs', { method: 'POST', body: JSON.stringify({ queue, limit }) });
+      await logUiAction('pipeline.retry_failed_jobs', { queue: result.queue, retried: result.retried, total_failed: result.total_failed }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('pipeline.retry_failed_jobs.failed', { queue, limit, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+  flushFailedJobs: async (queue?: string) => {
+    try {
+      const result = await request<{ ok: boolean; queue: string; removed: number }>('/admin/pipeline/flush-failed-jobs', { method: 'POST', body: JSON.stringify({ queue }) });
+      await logUiAction('pipeline.flush_failed_jobs', { queue: result.queue, removed: result.removed }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('pipeline.flush_failed_jobs.failed', { queue, error: e?.message }, 'error');
+      throw e;
+    }
+  },
+  reprocessUnmapped: async (limit?: number) => {
+    try {
+      const result = await request<{ ok: boolean; message: string }>('/admin/pipeline/reprocess-unmapped', { method: 'POST', body: JSON.stringify({ limit }) });
+      await logUiAction('pipeline.reprocess_unmapped', { limit }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('pipeline.reprocess_unmapped.failed', { limit, error: e?.message }, 'error');
+      throw e;
+    }
+  },
 
   // ── Disk Recovery ──
   getDiskStats: () =>
@@ -582,8 +827,9 @@ export const api = {
         error?: string;
       }>;
     }>('/admin/disk-stats'),
-  runDiskRecovery: (opts?: { trash_max_age_days?: number; vacuum?: boolean; dry_run?: boolean }) =>
-    request<{
+  runDiskRecovery: async (opts?: { trash_max_age_days?: number; vacuum?: boolean; dry_run?: boolean }) => {
+    try {
+      const result = await request<{
       ok: boolean;
       dry_run: boolean;
       trash_batches_removed: number;
@@ -594,7 +840,14 @@ export const api = {
       recovered_human: string;
       db_size_before_human: string;
       db_size_after_human: string;
-    }>('/admin/disk-recovery', { method: 'POST', body: JSON.stringify(opts ?? {}) }),
+      }>('/admin/disk-recovery', { method: 'POST', body: JSON.stringify(opts ?? {}) });
+      await logUiAction('disk.recovery.run', { ...opts, recovered_human: result.recovered_human }, 'warn');
+      return result;
+    } catch (e: any) {
+      await logUiAction('disk.recovery.run.failed', { ...opts, error: e?.message }, 'error');
+      throw e;
+    }
+  },
 
   /** Base URL for raw fetch calls (e.g. file downloads) */
   baseURL: BASE,

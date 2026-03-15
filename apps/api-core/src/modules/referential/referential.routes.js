@@ -1,16 +1,111 @@
 const express = require("express");
 const router = express.Router();
 const {corePool: db} = require("../../config/db");
+const { requireAuth, requireRole } = require("../../shared/auth-middleware");
 const { validate } = require("../../shared/validate");
 const { nameSchema, siteSchema, terrainSchema, zoneSchema, createPointSchema, updatePointSchema, assignZoneSchema } = require("../../shared/schemas");
+const { auditLog } = require("../../shared/audit-log");
 
 // Helpers
 function bad(res, message) {
   return res.status(400).json({ ok: false, error: message });
 }
 
+// ── Middleware: Verify user is org_admin of orgId ──
+async function verifyOrgOwnership(req, res, next) {
+  try {
+    const { orgId } = req.params;
+    if (!orgId) return res.status(400).json({ ok: false, error: "Missing orgId" });
+    
+    // platform_super_admin can do anything
+    if (req.userRole === "platform_super_admin") return next();
+    
+    // org_admin must belong to this org
+    if (req.userRole !== "org_admin") {
+      return res.status(403).json({ ok: false, error: "Only org_admin can manage orgs" });
+    }
+    
+    const result = await db.query(
+      `SELECT id FROM users WHERE id = $1 AND organization_id = $2`,
+      [req.userId, orgId]
+    );
+    
+    if (!result.rows.length) {
+      auditLog('warn', 'api', `Unauthorized org access attempt for org ${orgId}`, { orgId }, req.userId);
+      return res.status(403).json({ ok: false, error: "Access denied: you do not own this organization" });
+    }
+    
+    next();
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Access check failed", detail: e.message });
+  }
+}
+
+// ── Middleware: Verify user owns the site's organization ──
+async function verifySiteOwnership(req, res, next) {
+  try {
+    const { siteId } = req.params;
+    if (!siteId) return res.status(400).json({ ok: false, error: "Missing siteId" });
+
+    if (req.userRole === "platform_super_admin") return next();
+    if (req.userRole !== "org_admin") {
+      return res.status(403).json({ ok: false, error: "Only org_admin can manage sites" });
+    }
+
+    const result = await db.query(
+      `SELECT s.id
+       FROM sites s
+       JOIN users u ON u.organization_id = s.organization_id
+       WHERE s.id = $1 AND u.id = $2
+       LIMIT 1`,
+      [siteId, req.userId]
+    );
+
+    if (!result.rows.length) {
+      auditLog('warn', 'api', `Unauthorized site access attempt for site ${siteId}`, { siteId }, req.userId);
+      return res.status(403).json({ ok: false, error: "Access denied: you do not own this site" });
+    }
+
+    next();
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Access check failed", detail: e.message });
+  }
+}
+
+// ── Middleware: Verify user owns the terrain's organization ──
+async function verifyTerrainOwnership(req, res, next) {
+  try {
+    const { terrainId } = req.params;
+    if (!terrainId) return res.status(400).json({ ok: false, error: "Missing terrainId" });
+
+    if (req.userRole === "platform_super_admin") return next();
+    if (req.userRole !== "org_admin") {
+      return res.status(403).json({ ok: false, error: "Only org_admin can manage terrains" });
+    }
+
+    const result = await db.query(
+      `SELECT t.id
+       FROM terrains t
+       JOIN sites s ON s.id = t.site_id
+       JOIN users u ON u.organization_id = s.organization_id
+       WHERE t.id = $1 AND u.id = $2
+       LIMIT 1`,
+      [terrainId, req.userId]
+    );
+
+    if (!result.rows.length) {
+      auditLog('warn', 'api', `Unauthorized terrain access attempt for terrain ${terrainId}`, { terrainId }, req.userId);
+      return res.status(403).json({ ok: false, error: "Access denied: you do not own this terrain" });
+    }
+
+    next();
+  } catch (e) {
+    res.status(500).json({ ok: false, error: "Access check failed", detail: e.message });
+  }
+}
+
 /** ORGS **/
-router.post("/orgs", validate(nameSchema), async (req, res) => {
+router.post("/orgs", requireAuth, requireRole("platform_super_admin"), validate(nameSchema), async (req, res) => {
   try {
     const { name } = req.body;
 
@@ -21,13 +116,14 @@ router.post("/orgs", validate(nameSchema), async (req, res) => {
       [name.trim()]
     );
 
+    auditLog('info', 'api', `Organization created: ${name}`, { name }, req.userId);
     res.status(201).json(r.rows[0]);
   } catch (e) {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-router.get("/orgs", async (req, res) => {
+router.get("/orgs", requireAuth, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT id, name, created_at
@@ -42,7 +138,7 @@ router.get("/orgs", async (req, res) => {
 });
 
 /** ALL SITES (platform view) **/
-router.get("/sites", async (req, res) => {
+router.get("/sites", requireAuth, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT s.id, s.organization_id, s.name, s.location, s.created_at, o.name AS org_name
@@ -54,7 +150,7 @@ router.get("/sites", async (req, res) => {
 });
 
 /** ALL TERRAINS (platform view) **/
-router.get("/terrains", async (req, res) => {
+router.get("/terrains", requireAuth, async (req, res) => {
   try {
     const r = await db.query(
       `SELECT t.id, t.site_id, t.name, t.gateway_model, t.gateway_id, t.created_at,
@@ -68,7 +164,7 @@ router.get("/terrains", async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.put("/orgs/:orgId", validate(nameSchema), async (req, res) => {
+router.put("/orgs/:orgId", requireAuth, requireRole("platform_super_admin"), validate(nameSchema), async (req, res) => {
   try {
     const { orgId } = req.params;
     const { name } = req.body;
@@ -77,21 +173,23 @@ router.put("/orgs/:orgId", validate(nameSchema), async (req, res) => {
       [orgId, name.trim()]
     );
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "org not found" });
+    auditLog('info', 'api', `Organization updated: ${orgId}`, { orgId, name }, req.userId);
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.delete("/orgs/:orgId", async (req, res) => {
+router.delete("/orgs/:orgId", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { orgId } = req.params;
     const r = await db.query(`DELETE FROM organizations WHERE id = $1 RETURNING id`, [orgId]);
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "org not found" });
+    auditLog('warn', 'api', `Organization deleted: ${orgId}`, { orgId }, req.userId);
     res.json({ ok: true, deleted: r.rows[0].id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 /** SITES **/
-router.post("/orgs/:orgId/sites", validate(siteSchema), async (req, res) => {
+router.post("/orgs/:orgId/sites", requireAuth, requireRole("platform_super_admin", "org_admin"), verifyOrgOwnership, validate(siteSchema), async (req, res) => {
   try {
     const { orgId } = req.params;
     const { name, location } = req.body;
@@ -109,7 +207,7 @@ router.post("/orgs/:orgId/sites", validate(siteSchema), async (req, res) => {
   }
 });
 
-router.get("/orgs/:orgId/sites", async (req, res) => {
+router.get("/orgs/:orgId/sites", requireAuth, async (req, res) => {
   try {
     const { orgId } = req.params;
     const r = await db.query(
@@ -125,7 +223,7 @@ router.get("/orgs/:orgId/sites", async (req, res) => {
   }
 });
 
-router.put("/sites/:siteId", validate(siteSchema), async (req, res) => {
+router.put("/sites/:siteId", requireAuth, requireRole("platform_super_admin", "org_admin"), verifySiteOwnership, validate(siteSchema), async (req, res) => {
   try {
     const { siteId } = req.params;
     const { name, location } = req.body;
@@ -135,20 +233,22 @@ router.put("/sites/:siteId", validate(siteSchema), async (req, res) => {
       [siteId, name.trim(), location ?? null]
     );
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "site not found" });
+    auditLog('info', 'api', `Site updated: ${siteId}`, { siteId, name }, req.userId);
     res.json(r.rows[0]);
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.delete("/sites/:siteId", async (req, res) => {
+router.delete("/sites/:siteId", requireAuth, requireRole("platform_super_admin", "org_admin"), verifySiteOwnership, async (req, res) => {
   try {
     const { siteId } = req.params;
     const r = await db.query(`DELETE FROM sites WHERE id = $1 RETURNING id`, [siteId]);
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "site not found" });
+    auditLog('warn', 'api', `Site deleted: ${siteId}`, { siteId }, req.userId);
     res.json({ ok: true, deleted: r.rows[0].id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.get("/sites/:siteId/tree", async (req, res) => {
+router.get("/sites/:siteId/tree", requireAuth, async (req, res) => {
   try {
     const { siteId } = req.params;
 
@@ -222,7 +322,7 @@ router.get("/sites/:siteId/tree", async (req, res) => {
 });
 
 /** TERRAINS **/
-router.post("/sites/:siteId/terrains", validate(terrainSchema), async (req, res) => {
+router.post("/sites/:siteId/terrains", requireAuth, requireRole("platform_super_admin", "org_admin"), verifySiteOwnership, validate(terrainSchema), async (req, res) => {
   try {
     const { siteId } = req.params;
     const { name, gateway_model, gateway_id } = req.body;
@@ -240,7 +340,7 @@ router.post("/sites/:siteId/terrains", validate(terrainSchema), async (req, res)
   }
 });
 
-router.get("/sites/:siteId/terrains", async (req, res) => {
+router.get("/sites/:siteId/terrains", requireAuth, async (req, res) => {
   try {
     const { siteId } = req.params;
     const r = await db.query(
@@ -256,7 +356,7 @@ router.get("/sites/:siteId/terrains", async (req, res) => {
   }
 });
 
-router.put("/terrains/:terrainId", validate(terrainSchema), async (req, res) => {
+router.put("/terrains/:terrainId", requireAuth, requireRole("platform_super_admin", "org_admin"), verifyTerrainOwnership, validate(terrainSchema), async (req, res) => {
   try {
     const { terrainId } = req.params;
     const { name, gateway_model, gateway_id } = req.body;
@@ -270,7 +370,7 @@ router.put("/terrains/:terrainId", validate(terrainSchema), async (req, res) => 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.delete("/terrains/:terrainId", async (req, res) => {
+router.delete("/terrains/:terrainId", requireAuth, requireRole("platform_super_admin", "org_admin"), verifyTerrainOwnership, async (req, res) => {
   try {
     const { terrainId } = req.params;
 
@@ -290,7 +390,7 @@ router.delete("/terrains/:terrainId", async (req, res) => {
 });
 
 /** ZONES **/
-router.post("/terrains/:terrainId/zones", validate(zoneSchema), async (req, res) => {
+router.post("/terrains/:terrainId/zones", requireAuth, requireRole("platform_super_admin", "org_admin"), verifyTerrainOwnership, validate(zoneSchema), async (req, res) => {
   try {
     const { terrainId } = req.params;
     const { name, description } = req.body;
@@ -308,7 +408,7 @@ router.post("/terrains/:terrainId/zones", validate(zoneSchema), async (req, res)
   }
 });
 
-router.get("/terrains/:terrainId/zones", async (req, res) => {
+router.get("/terrains/:terrainId/zones", requireAuth, async (req, res) => {
   try {
     const { terrainId } = req.params;
     const r = await db.query(
@@ -324,7 +424,7 @@ router.get("/terrains/:terrainId/zones", async (req, res) => {
   }
 });
 
-router.put("/zones/:zoneId", validate(zoneSchema), async (req, res) => {
+router.put("/zones/:zoneId", requireAuth, requireRole("platform_super_admin", "org_admin"), validate(zoneSchema), async (req, res) => {
   try {
     const { zoneId } = req.params;
     const { name, description } = req.body;
@@ -338,7 +438,7 @@ router.put("/zones/:zoneId", validate(zoneSchema), async (req, res) => {
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.delete("/zones/:zoneId", async (req, res) => {
+router.delete("/zones/:zoneId", requireAuth, requireRole("platform_super_admin", "org_admin"), async (req, res) => {
   try {
     const { zoneId } = req.params;
     // Unassign points from this zone first
@@ -350,7 +450,7 @@ router.delete("/zones/:zoneId", async (req, res) => {
 });
 
 /** MEASUREMENT POINTS **/
-router.post("/terrains/:terrainId/points", validate(createPointSchema), async (req, res) => {
+router.post("/terrains/:terrainId/points", requireAuth, requireRole("platform_super_admin", "org_admin"), validate(createPointSchema), async (req, res) => {
   try {
     const { terrainId } = req.params;
     const {
@@ -390,7 +490,7 @@ router.post("/terrains/:terrainId/points", validate(createPointSchema), async (r
   }
 });
 
-router.get("/terrains/:terrainId/points", async (req, res) => {
+router.get("/terrains/:terrainId/points", requireAuth, async (req, res) => {
   try {
     const { terrainId } = req.params;
     const r = await db.query(
@@ -406,7 +506,7 @@ router.get("/terrains/:terrainId/points", async (req, res) => {
   }
 });
 
-router.put("/points/:pointId", validate(updatePointSchema), async (req, res) => {
+router.put("/points/:pointId", requireAuth, requireRole("platform_super_admin", "org_admin"), validate(updatePointSchema), async (req, res) => {
   try {
     const { pointId } = req.params;
     const { name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, zone_id } = req.body;
@@ -425,7 +525,7 @@ router.put("/points/:pointId", validate(updatePointSchema), async (req, res) => 
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
-router.delete("/points/:pointId", async (req, res) => {
+router.delete("/points/:pointId", requireAuth, requireRole("platform_super_admin", "org_admin"), async (req, res) => {
   try {
     const { pointId } = req.params;
 

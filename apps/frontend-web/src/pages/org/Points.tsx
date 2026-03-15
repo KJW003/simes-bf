@@ -75,6 +75,29 @@ export default function Points({ embedded }: { embedded?: boolean }) {
     return map;
   }, [allReadingsData]);
 
+  const points = (data?.points ?? []) as Array<Record<string, unknown>>;
+  const zones = (data?.zones ?? []) as Array<Record<string, unknown>>;
+  const categories = [...new Set(points.map(p => String((p as any).measure_category ?? 'autre')))];
+
+  // Filter → search → sort (solar/PV to bottom)
+  const filteredPoints = useMemo(() => {
+    let pts = filter === '_all' ? points : points.filter(p => String((p as any).measure_category) === filter);
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      pts = pts.filter(p =>
+        String(p.name).toLowerCase().includes(q) ||
+        String((p as any).measure_category ?? '').toLowerCase().includes(q) ||
+        String((p as any).device ?? '').toLowerCase().includes(q)
+      );
+    }
+    // Sort: solar/PV points to bottom
+    return [...pts].sort((a, b) => {
+      const aIsPV = String((a as any).measure_category ?? '').toLowerCase() === 'pv' ? 1 : 0;
+      const bIsPV = String((b as any).measure_category ?? '').toLowerCase() === 'pv' ? 1 : 0;
+      return aIsPV - bIsPV;
+    });
+  }, [points, filter, searchQuery]);
+
   const handleRename = async (pointId: string) => {
     if (!renameValue.trim()) return;
     await updatePoint.mutateAsync({ pointId, name: renameValue.trim() });
@@ -135,29 +158,6 @@ export default function Points({ embedded }: { embedded?: boolean }) {
       </div>
     );
   }
-
-  const points = (data?.points ?? []) as Array<Record<string, unknown>>;
-  const zones = (data?.zones ?? []) as Array<Record<string, unknown>>;
-  const categories = [...new Set(points.map(p => String((p as any).measure_category ?? 'autre')))];
-
-  // Filter → search → sort (solar/PV to bottom)
-  const filteredPoints = useMemo(() => {
-    let pts = filter === '_all' ? points : points.filter(p => String((p as any).measure_category) === filter);
-    if (searchQuery.trim()) {
-      const q = searchQuery.toLowerCase();
-      pts = pts.filter(p =>
-        String(p.name).toLowerCase().includes(q) ||
-        String((p as any).measure_category ?? '').toLowerCase().includes(q) ||
-        String((p as any).device ?? '').toLowerCase().includes(q)
-      );
-    }
-    // Sort: solar/PV points to bottom
-    return [...pts].sort((a, b) => {
-      const aIsPV = String((a as any).measure_category ?? '').toLowerCase() === 'pv' ? 1 : 0;
-      const bIsPV = String((b as any).measure_category ?? '').toLowerCase() === 'pv' ? 1 : 0;
-      return aIsPV - bIsPV;
-    });
-  }, [points, filter, searchQuery]);
 
   // Helper: get point status info
   const getPointStatus = (p: Record<string, unknown>) => {

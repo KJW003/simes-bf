@@ -40,6 +40,15 @@ interface WeatherData {
   icon: string;
 }
 
+interface SiteMapPointMarker {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  status: 'online' | 'stale' | 'offline';
+  r: Record<string, unknown> | null;
+}
+
 const STORAGE_KEY_PREFIX = 'simes-map-config';
 
 function storageKey(terrainId?: string) {
@@ -384,9 +393,9 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
 
 
   // Compute point positions — only show points with explicit coordinates
-  const pointMarkers = useMemo(() => {
+  const pointMarkers = useMemo<SiteMapPointMarker[]>(() => {
     if (!points || !Array.isArray(points) || !config) return [];
-    return points.map((p) => {
+    return points.map((p): SiteMapPointMarker | null => {
       if (!p) return null;
       const custom = config.pointLocations?.[String(p.id)];
       if (!custom) return null; // no position set → don't show on map
@@ -398,9 +407,16 @@ export const SiteMapWidget = React.memo(function SiteMapWidget({ terrainId, size
         if (minutesAgo < (config.staleThresholdMin ?? 15)) status = 'online';
         else if (minutesAgo < (config.offlineThresholdMin ?? 60)) status = 'stale';
       }
-      const r = p.readings;
-      return { ...p, lat: custom.lat, lng: custom.lng, status, r };
-    }).filter(Boolean);
+      const r = (p.readings as Record<string, unknown> | undefined) ?? null;
+      return {
+        id: String(p.id ?? ''),
+        name: String(p.name ?? 'Point'),
+        lat: custom.lat,
+        lng: custom.lng,
+        status,
+        r,
+      };
+    }).filter((p): p is SiteMapPointMarker => p !== null && p.id.length > 0);
   }, [points, config]);
 
   // Points that have no position yet

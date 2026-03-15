@@ -268,7 +268,14 @@ export interface TerrainOverviewData {
 export function useTerrainOverview(terrainId: string | null) {
   return useQuery<TerrainOverviewData, Error, TerrainOverviewData>({
     queryKey: ['terrain-overview', terrainId],
-    queryFn: () => api.getTerrainOverview(terrainId!),
+    queryFn: async () => {
+      const r = await api.getTerrainOverview(terrainId!);
+      return {
+        ...r,
+        points_count: Array.isArray(r.points) ? r.points.length : 0,
+        zones_count: Array.isArray(r.zones) ? r.zones.length : 0,
+      };
+    },
     enabled: !!terrainId,
     refetchInterval: 60_000,
     staleTime: 2 * 60_000,

@@ -162,6 +162,9 @@ export function AuthProvider({
   }, [failedAttempts, lockedUntil, loginSuccessInternal]);
 
   const logout = useCallback(() => {
+    // Best effort server-side audit for explicit logout actions.
+    api.logout().catch(() => undefined);
+
     setIsAuthenticated(false);
     setFailedAttempts(0);
     setLockedUntil(null);

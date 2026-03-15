@@ -39,8 +39,10 @@ const Gateways = React.lazy(() => import("./pages/platform/Gateways"));
 const Devices = React.lazy(() => import("./pages/platform/Devices"));
 const PipelineHealth = React.lazy(() => import("./pages/platform/PipelineHealth"));
 const Logs = React.lazy(() => import("./pages/platform/Logs"));
+const IngestionLab = React.lazy(() => import("./pages/platform/IngestionLab"));
 const PurgeReadings = React.lazy(() => import("./pages/platform/PurgeReadings"));
 const Jobs = React.lazy(() => import("./pages/platform/Jobs"));
+const TariffPlans = React.lazy(() => import("./pages/admin/TariffPlans"));
 
 import NotFound from "./pages/NotFound";
 
@@ -83,6 +85,8 @@ function AppRoutes() {
             <Route path="/platform/pipeline" element={<ErrorBoundary><PipelineHealth /></ErrorBoundary>} />
             <Route path="/platform/logs" element={<ErrorBoundary><Logs /></ErrorBoundary>} />
             <Route path="/platform/jobs" element={<ErrorBoundary><Jobs /></ErrorBoundary>} />
+            {isPlatformUser && <Route path="/platform/ingestion" element={<ErrorBoundary><IngestionLab /></ErrorBoundary>} />}
+            {isPlatformUser && <Route path="/platform/tariffs" element={<ErrorBoundary><TariffPlans /></ErrorBoundary>} />}
             {isPlatformUser && <Route path="/platform/purge" element={<ErrorBoundary><PurgeReadings /></ErrorBoundary>} />}
             <Route path="/platform/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />
           </>

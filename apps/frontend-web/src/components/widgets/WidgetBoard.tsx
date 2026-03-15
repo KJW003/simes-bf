@@ -609,6 +609,24 @@ function MultiMetricWidget({
   // Clamp activeTab to valid index (metrics.length = "all" overlay tab)
   const clampedTab = activeTab === metrics.length ? activeTab : Math.min(activeTab, Math.max(0, metrics.length - 1));
 
+  // Build merged overlay chart data for multi-curve display
+  const overlayData = useMemo(() => {
+    const tsSet = new Set<number>();
+    metrics.forEach(m => (data.series?.[m] ?? []).forEach(pt => tsSet.add(pt.ts)));
+    const allTs = Array.from(tsSet).sort((a, b) => a - b);
+    const lookup: Record<string, Map<number, number>> = {};
+    metrics.forEach(m => {
+      const map = new Map<number, number>();
+      (data.series?.[m] ?? []).forEach(pt => map.set(pt.ts, pt.value));
+      lookup[m] = map;
+    });
+    return allTs.map(ts => {
+      const row: Record<string, number | undefined> = { ts };
+      metrics.forEach(m => { row[m] = lookup[m].get(ts); });
+      return row;
+    });
+  }, [data.series, metrics]);
+
   // If no metrics → placeholder
   if (metrics.length === 0) {
     return (
@@ -676,24 +694,6 @@ function MultiMetricWidget({
       </div>
     );
   }
-
-  // Build merged overlay chart data for multi-curve display
-  const overlayData = useMemo(() => {
-    const tsSet = new Set<number>();
-    metrics.forEach(m => (data.series?.[m] ?? []).forEach(pt => tsSet.add(pt.ts)));
-    const allTs = Array.from(tsSet).sort((a, b) => a - b);
-    const lookup: Record<string, Map<number, number>> = {};
-    metrics.forEach(m => {
-      const map = new Map<number, number>();
-      (data.series?.[m] ?? []).forEach(pt => map.set(pt.ts, pt.value));
-      lookup[m] = map;
-    });
-    return allTs.map(ts => {
-      const row: Record<string, number | undefined> = { ts };
-      metrics.forEach(m => { row[m] = lookup[m].get(ts); });
-      return row;
-    });
-  }, [data.series, metrics]);
 
   // TABS mode (default, also fallback for SMALL_MULTIPLES on non-lg sizes)
   const currentMetric = metrics[clampedTab] ?? metrics[0];
@@ -988,8 +988,21 @@ export function WidgetBoard() {
       points: overviewPoints,
       zones: overviewZones,
       readings: (readingsData?.readings ?? []) as Array<Record<string, unknown>>,
-      anomalies: (anomaliesData?.anomalies ?? []) as Array<Record<string, unknown>>,
-      forecast: (forecastData?.forecast ?? []) as Array<Record<string, unknown>>,
+      anomalies: (anomaliesData?.anomalies ?? []) as Array<{
+        anomaly_type: string;
+        severity: 'critical' | 'warning' | 'info';
+        score: number;
+        expected_kwh?: number;
+        actual_kwh?: number;
+        deviation_pct?: number;
+        description?: string;
+      }>,
+      forecast: (forecastData?.forecast ?? []) as Array<{
+        day: string;
+        predicted_kwh: number;
+        lower: number;
+        upper: number;
+      }>,
     }),
     [selectedTerrainId, overviewPoints, overviewZones, readingsData, anomaliesData, forecastData]
   );

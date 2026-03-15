@@ -4,6 +4,10 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
+import { Input } from '@/components/ui/input';
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from '@/components/ui/dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -48,6 +52,16 @@ export default function Jobs() {
   const [loadingBatches, setLoadingBatches] = useState(false);
   const [restoringId, setRestoringId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [cancellingId, setCancellingId] = useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = useState<
+    | { type: 'restore-batch'; batch: any }
+    | { type: 'delete-trash'; batch: any }
+    | { type: 'disk-recovery' }
+    | { type: 'cancel-job'; job: { id: string; type: string; status: string } }
+    | null
+  >(null);
+  const [confirmKeyword, setConfirmKeyword] = useState('');
+  const [confirmActionError, setConfirmActionError] = useState<string | null>(null);
 
   const loadDiskStats = useCallback(async () => {
     setLoadingStats(true);
@@ -81,7 +95,6 @@ export default function Jobs() {
   }, [loadPurgeBatches, loadDiskStats]);
 
   const handleDeleteTrash = useCallback(async (batchId: string) => {
-    if (!window.confirm('Supprimer définitivement ce lot ? Les données ne pourront plus être restaurées.')) return;
     setDeletingId(batchId);
     try {
       await api.deletePurgeBatch(batchId);
@@ -98,18 +111,69 @@ export default function Jobs() {
     setRecovering(true);
     try {
       await api.runDiskRecovery({ trash_max_age_days: 7, vacuum: true });
-      toast.success('Job de récupération disque mis en file d\'attente — consultez l\'historique des jobs');
-      setTimeout(() => { loadDiskStats(); refetch(); }, 3000);
+      toast.success('Job de récupération disque mis en attente — consultez l\'historique des jobs');
+      refetch();
+      loadDiskStats();
     } catch { toast.error('Échec de la récupération disque'); }
     setRecovering(false);
   }, [loadDiskStats, refetch]);
+
+  const openConfirm = useCallback((action: NonNullable<typeof confirmAction>) => {
+    setConfirmKeyword('');
+    setConfirmActionError(null);
+    setConfirmAction(action);
+  }, []);
+
+  const closeConfirm = useCallback(() => {
+    setConfirmKeyword('');
+    setConfirmActionError(null);
+    setConfirmAction(null);
+  }, []);
+
+  const requiredKeyword =
+    confirmAction?.type === 'restore-batch'
+      ? 'CONFIRM-RESTORE'
+      : confirmAction?.type === 'delete-trash'
+        ? 'CONFIRM-DELETE'
+        : confirmAction?.type === 'disk-recovery'
+          ? 'CONFIRM-RECOVER'
+          : confirmAction?.type === 'cancel-job'
+            ? 'CONFIRM-CANCEL'
+          : '';
+
+  const canConfirmAction = requiredKeyword.length > 0 && confirmKeyword.trim().toUpperCase() === requiredKeyword;
+
+  const executeConfirmedAction = useCallback(async () => {
+    if (!confirmAction) return;
+
+    if (confirmAction.type === 'restore-batch') {
+      await handleRestore(confirmAction.batch.id);
+      closeConfirm();
+      return;
+    }
+
+    if (confirmAction.type === 'delete-trash') {
+      await handleDeleteTrash(confirmAction.batch.id);
+      closeConfirm();
+      return;
+    }
+
+    if (confirmAction.type === 'cancel-job') {
+      const cancelled = await handleCancelJob(confirmAction.job.id);
+      if (cancelled) closeConfirm();
+      return;
+    }
+
+    await handleDiskRecovery();
+    closeConfirm();
+  }, [closeConfirm, confirmAction, handleDeleteTrash, handleDiskRecovery, handleRestore]);
 
   const handleSubmit = useCallback(async () => {
     setSubmitting(selectedJob);
     try {
       await api.submitJob(selectedJob);
       toast.success(`Job "${selectedJob}" soumis`);
-      setTimeout(() => refetch(), 1500);
+      refetch();
     } catch { toast.error('Échec de soumission'); }
     setSubmitting(null);
   }, [selectedJob, refetch]);
@@ -119,20 +183,51 @@ export default function Jobs() {
     try {
       await api.submitJob('forecast');
       toast.success('Entraînement ML lancé — vérifiez les résultats ci-dessous');
-      setTimeout(() => refetch(), 2000);
+      refetch();
     } catch { toast.error('Échec du lancement ML'); }
     setTrainingML(false);
+  }, [refetch]);
+
+  useEffect(() => {
+    const hasActiveRuns = (runs as any[]).some((r: any) => r.status === 'queued' || r.status === 'running');
+    if (!hasActiveRuns) return;
+
+    const pollId = setInterval(() => {
+      refetch();
+    }, 5000);
+
+    return () => clearInterval(pollId);
+  }, [runs, refetch]);
+
+  const handleCancelJob = useCallback(async (jobId: string) => {
+    setCancellingId(jobId);
+    try {
+      const result = await api.cancelJob(jobId);
+      toast.success(result.queueJobRemoved ? 'Job annulé et retiré de la file d\'attente' : 'Job annulé');
+      refetch();
+      return true;
+    } catch (e: any) {
+      const message = e?.message || 'Échec de l\'annulation du job';
+      setConfirmActionError(message);
+      toast.error(message);
+      return false;
+    } finally {
+      setCancellingId(null);
+    }
   }, [refetch]);
 
   const statusBadge = (s: string) => {
     switch (s) {
       case 'success': return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300"><CheckCircle className="w-3 h-3 mr-1" />Succès</Badge>;
       case 'failed': return <Badge variant="destructive"><XCircle className="w-3 h-3 mr-1" />Échoué</Badge>;
+      case 'cancelled': return <Badge variant="secondary"><XCircle className="w-3 h-3 mr-1" />Annulé</Badge>;
       case 'running': return <Badge className="bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-300"><Loader2 className="w-3 h-3 mr-1 animate-spin" />En cours</Badge>;
-      case 'queued': return <Badge variant="outline"><Clock className="w-3 h-3 mr-1" />En file</Badge>;
+      case 'queued': return <Badge variant="outline"><Clock className="w-3 h-3 mr-1" />En attente</Badge>;
       default: return <Badge variant="secondary">{s}</Badge>;
     }
   };
+
+  const canCancel = (status: string) => status === 'queued' || status === 'running';
 
   const mlRuns = (runs as any[]).filter((r: any) => r.type === 'forecast' || r.type === 'ai.retrain_forecasts');
   const lastMLRun = mlRuns[0];
@@ -278,7 +373,7 @@ export default function Jobs() {
                                 variant="default"
                                 className="h-7 text-xs bg-green-600 hover:bg-green-700"
                                 disabled={restoringId === b.id}
-                                onClick={() => handleRestore(b.id)}
+                                onClick={() => openConfirm({ type: 'restore-batch', batch: b })}
                               >
                                 {restoringId === b.id ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : <RotateCcw className="w-3 h-3 mr-1" />}
                                 Restaurer
@@ -289,7 +384,7 @@ export default function Jobs() {
                               variant="ghost"
                               className="h-7 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-900/20"
                               disabled={deletingId === b.id}
-                              onClick={() => handleDeleteTrash(b.id)}
+                              onClick={() => openConfirm({ type: 'delete-trash', batch: b })}
                             >
                               {deletingId === b.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
                             </Button>
@@ -356,7 +451,7 @@ export default function Jobs() {
           )}
 
           <div className="flex flex-wrap items-center gap-3">
-            <Button size="sm" variant="destructive" onClick={handleDiskRecovery} disabled={recovering}>
+            <Button size="sm" variant="destructive" onClick={() => openConfirm({ type: 'disk-recovery' })} disabled={recovering}>
               {recovering ? <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" /> : <HardDrive className="w-3.5 h-3.5 mr-1" />}
               {recovering ? 'Récupération en cours…' : 'Lancer la récupération maintenant'}
             </Button>
@@ -364,7 +459,7 @@ export default function Jobs() {
         </CardContent>
       </Card>
 
-      {/* Runs Table */}
+      {/* Jobs Table */}
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
@@ -386,6 +481,7 @@ export default function Jobs() {
                     <th className="py-2 px-3">Créé</th>
                     <th className="py-2 px-3">Durée</th>
                     <th className="py-2 px-3">Détails</th>
+                    <th className="py-2 px-3 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -397,7 +493,7 @@ export default function Jobs() {
                       <td className="py-2 px-3 text-xs">{duration(run.started_at, run.finished_at)}</td>
                       <td className="py-2 px-3">
                         {expandedRun === run.id ? (
-                          <div className="space-y-1 text-[10px] max-w-md">
+                          <div className="space-y-1 text-xs max-w-md">
                             {run.payload && Object.keys(run.payload).length > 0 && (
                               <div><span className="font-semibold">Payload:</span> <code className="bg-muted px-1 rounded break-all">{JSON.stringify(run.payload)}</code></div>
                             )}
@@ -412,6 +508,29 @@ export default function Jobs() {
                           <span className="text-xs text-muted-foreground">{run.error ? '⚠️ ' + run.error.slice(0, 60) : run.result ? '✓' : '—'}</span>
                         )}
                       </td>
+                      <td className="py-2 px-3 text-right">
+                        {canCancel(run.status) ? (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs"
+                            disabled={cancellingId === run.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openConfirm({ type: 'cancel-job', job: { id: run.id, type: run.type, status: run.status } });
+                            }}
+                          >
+                            {cancellingId === run.id ? (
+                              <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                            ) : (
+                              <XCircle className="w-3 h-3 mr-1" />
+                            )}
+                            Annuler
+                          </Button>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -420,6 +539,111 @@ export default function Jobs() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!confirmAction} onOpenChange={(open) => { if (!open) closeConfirm(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-red-600">
+              <AlertTriangle className="w-4 h-4" />
+              {confirmAction?.type === 'restore-batch' && 'Confirmer la restauration'}
+              {confirmAction?.type === 'delete-trash' && 'Confirmer la suppression définitive'}
+              {confirmAction?.type === 'disk-recovery' && 'Confirmer la récupération disque'}
+              {confirmAction?.type === 'cancel-job' && 'Confirmer l\'annulation du job'}
+            </DialogTitle>
+            <DialogDescription>
+              {confirmAction?.type === 'restore-batch' && 'Cette action restaure les mesures sauvegardées dans le lot sélectionné.'}
+              {confirmAction?.type === 'delete-trash' && 'Cette action supprime définitivement les sauvegardes du lot. Aucune restauration ne sera possible.'}
+              {confirmAction?.type === 'disk-recovery' && 'Cette action supprime les lots anciens puis exécute VACUUM FULL. Elle peut dégrader les performances temporairement.'}
+              {confirmAction?.type === 'cancel-job' && 'Cette action tente d\'annuler le job en attente ou en cours d\'exécution.'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {(confirmAction?.type === 'restore-batch' || confirmAction?.type === 'delete-trash') && (
+            <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Lot</span>
+                <span className="font-mono">{confirmAction.batch.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Readings</span>
+                <span className="font-medium">{(confirmAction.batch.counts?.readings || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Agg 15m</span>
+                <span className="font-medium">{(confirmAction.batch.counts?.agg_15m || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Agg daily</span>
+                <span className="font-medium">{(confirmAction.batch.counts?.agg_daily || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Points</span>
+                <span className="font-medium">{(confirmAction.batch.point_ids?.length || 0).toLocaleString('fr-FR')}</span>
+              </div>
+            </div>
+          )}
+
+          {confirmAction?.type === 'cancel-job' && (
+            <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Job ID</span>
+                <span className="font-mono">{confirmAction.job.id}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Type</span>
+                <span className="font-medium">{confirmAction.job.type}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Statut actuel</span>
+                <span className="font-medium">{confirmAction.job.status}</span>
+              </div>
+            </div>
+          )}
+
+          {confirmAction?.type === 'disk-recovery' && (
+            <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1.5">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Base actuelle</span>
+                <span className="font-medium">{diskStats?.database_size_human || '—'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Lots trash</span>
+                <span className="font-medium">{(diskStats?.trash_batches || 0).toLocaleString('fr-FR')}</span>
+              </div>
+              <div className="text-muted-foreground pt-1">
+                Impact attendu: cleanup des trash &gt; 7 jours et compactage des tables de télémétrie.
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-1.5">
+            <Label className="text-xs">
+              Tapez <strong>{requiredKeyword}</strong> pour confirmer
+            </Label>
+            <Input
+              value={confirmKeyword}
+              onChange={(e) => setConfirmKeyword(e.target.value)}
+              placeholder={requiredKeyword}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Format attendu: <strong>{requiredKeyword}</strong>
+            </p>
+            {confirmActionError && <p className="text-xs text-red-600">{confirmActionError}</p>}
+          </div>
+
+          <DialogFooter className="gap-2">
+            <Button variant="outline" onClick={closeConfirm}>Annuler</Button>
+            <Button
+              variant={confirmAction?.type === 'restore-batch' ? 'default' : 'destructive'}
+              onClick={executeConfirmedAction}
+              disabled={!canConfirmAction || !!restoringId || !!deletingId || recovering || !!cancellingId}
+            >
+              {(!!restoringId || !!deletingId || recovering || !!cancellingId) && <Loader2 className="w-3.5 h-3.5 animate-spin mr-1" />}
+              Confirmer
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

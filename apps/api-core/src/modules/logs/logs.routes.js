@@ -2,9 +2,29 @@ const express = require('express');
 const router = express.Router();
 const { corePool: db } = require('../../config/db');
 const log = require("../../config/logger");
+const { auditLog } = require('../../shared/audit-log');
+const { requireRole } = require('../../shared/auth-middleware');
+
+// POST /logs/ui — record frontend UI actions as audit entries
+router.post('/logs/ui', async (req, res) => {
+  try {
+    const { action, level = 'info', metadata = {} } = req.body || {};
+    if (!action || typeof action !== 'string') {
+      return res.status(400).json({ ok: false, error: 'action is required' });
+    }
+
+    const safeLevel = ['info', 'warn', 'error'].includes(level) ? level : 'info';
+    await auditLog(safeLevel, 'ui', action.trim(), metadata, req.userId || null);
+
+    return res.json({ ok: true });
+  } catch (e) {
+    log.error({ err: e.message }, "[logs/ui] create error:");
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // GET /logs — list audit logs with filters
-router.get('/logs', async (req, res) => {
+router.get('/logs', requireRole('platform_super_admin'), async (req, res) => {
   try {
     const { level, source, search, limit = 100, offset = 0 } = req.query;
     const conditions = [];
@@ -38,7 +58,7 @@ router.get('/logs', async (req, res) => {
 });
 
 // GET /logs/stats — counts by level
-router.get('/logs/stats', async (req, res) => {
+router.get('/logs/stats', requireRole('platform_super_admin'), async (req, res) => {
   try {
     const { rows } = await db.query(`
       SELECT level, count(*)::int AS count

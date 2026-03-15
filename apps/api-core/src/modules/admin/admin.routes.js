@@ -2,14 +2,41 @@ const express = require("express");
 const router = express.Router();
 const {corePool, telemetryPool} = require("../../config/db");
 const { makeDeviceKey } = require("../../shared/acrel");
-const { requireAuth } = require("../../shared/auth-middleware");
+const { requireAuth, requireRole } = require("../../shared/auth-middleware");
 const { telemetryQueue } = require("../../jobs/queues");
 const { auditLog } = require("../../shared/audit-log");
 const JobTypes = require("../../jobs/jobTypes");
 const log = require("../../config/logger");
 
+function parseLastLines(input, fallback = 50, min = 1, max = 500) {
+  const n = Number.parseInt(String(input ?? fallback), 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+function safeAudit(level, source, message, metadata, userId) {
+  try {
+    Promise.resolve(auditLog(level, source, message, metadata, userId)).catch((err) => {
+      log.warn({ err: err?.message || String(err) }, 'audit log failed');
+    });
+  } catch (err) {
+    log.warn({ err: err?.message || String(err) }, 'audit log failed');
+  }
+}
+
+function apiError(res, status, code, error, extra = {}) {
+  return res.status(status).json({ ok: false, code, error, ...extra });
+}
+
+function requireAdminAccess(req, res, next) {
+  if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
+    return apiError(res, 403, "ADMIN_ACCESS_REQUIRED", "Forbidden: admin access required");
+  }
+  next();
+}
+
 // 1) Inject a fake "MQTT" message (for tomorrow tests / UI dev)
-router.post("/admin/incoming/sandbox", requireAuth, async (req, res) => {
+router.post("/admin/incoming/sandbox", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const {
       topic = "sandbox/topic",
@@ -84,7 +111,7 @@ router.post("/admin/incoming/sandbox", requireAuth, async (req, res) => {
 });
 
 // 2) List incoming stream (admin view)
-router.get("/admin/incoming", requireAuth, async (req, res) => {
+router.get("/admin/incoming", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const status = req.query.status || null; // unmapped|mapped|ignored
     const gatewayId = req.query.gateway_id || null;
@@ -120,7 +147,7 @@ router.get("/admin/incoming", requireAuth, async (req, res) => {
 });
 
 // 3) Map a gateway to a terrain (1 Gateway = 1 Terrain, 1 Terrain = 1 Gateway)
-router.put("/admin/gateways/:gatewayId/map", requireAuth, async (req, res) => {
+router.put("/admin/gateways/:gatewayId/map", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { gatewayId } = req.params;
     const { terrain_id, meta = {} } = req.body || {};
@@ -160,7 +187,7 @@ router.put("/admin/gateways/:gatewayId/map", requireAuth, async (req, res) => {
 // 4) Map a device_key to a measurement_point
 // This is the ONLY way a message becomes 'mapped'.
 // body: { terrain_id, point_id, modbus_addr?, dev_eui? }
-router.put("/admin/devices/:deviceKey/map", requireAuth, async (req, res) => {
+router.put("/admin/devices/:deviceKey/map", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { deviceKey } = req.params;
     const { terrain_id, point_id, modbus_addr = null, dev_eui = null } = req.body || {};
@@ -239,7 +266,7 @@ router.put("/admin/devices/:deviceKey/map", requireAuth, async (req, res) => {
 
 // 5) Replay a raw message into /ingest/acrel (only if mapped)
 // Uses internal HTTP call to api-core itself (works local and VPS)
-router.post("/admin/incoming/:id/replay", requireAuth, async (req, res) => {
+router.post("/admin/incoming/:id/replay", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -318,7 +345,7 @@ router.post("/admin/incoming/:id/replay", requireAuth, async (req, res) => {
 // 5b) Process historical messages: replay all incoming_messages for a mapped device
 // POST /admin/devices/:terrain_id/:device_key/process-historical
 // Transforms unmapped/buffered messages into acrel_readings after device is mapped
-router.post("/admin/devices/:terrain_id/:device_key/process-historical", requireAuth, async (req, res) => {
+router.post("/admin/devices/:terrain_id/:device_key/process-historical", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { terrain_id: terrainId, device_key: deviceKey } = req.params;
 
@@ -439,7 +466,7 @@ router.post("/admin/devices/:terrain_id/:device_key/process-historical", require
 // ─────────────────────────────────────────────────────────────
 // 6) List registered gateways
 // ─────────────────────────────────────────────────────────────
-router.get("/admin/gateways", requireAuth, async (req, res) => {
+router.get("/admin/gateways", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const r = await corePool.query(
       `SELECT gr.gateway_id, gr.terrain_id, gr.meta, gr.created_at, gr.updated_at,
@@ -459,7 +486,7 @@ router.get("/admin/gateways", requireAuth, async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // 7) List discovered devices for a gateway (from incoming_messages)
 // ─────────────────────────────────────────────────────────────
-router.get("/admin/gateways/:gatewayId/devices", requireAuth, async (req, res) => {
+router.get("/admin/gateways/:gatewayId/devices", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { gatewayId } = req.params;
 
@@ -501,7 +528,7 @@ router.get("/admin/gateways/:gatewayId/devices", requireAuth, async (req, res) =
 //
 // Body: { terrain_id?, device_model?, default_category? }
 // ─────────────────────────────────────────────────────────────
-router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res) => {
+router.post("/admin/gateways/:gatewayId/provision", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { gatewayId } = req.params;
     const {
@@ -693,19 +720,22 @@ router.post("/admin/gateways/:gatewayId/provision", requireAuth, async (req, res
 });
 
 // 9) Delete a single incoming message
-router.delete("/admin/incoming/:id", requireAuth, async (req, res) => {
+router.delete("/admin/incoming/:id", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { id } = req.params;
     const r = await corePool.query(`DELETE FROM incoming_messages WHERE id = $1 RETURNING id`, [id]);
-    if (!r.rows.length) return res.status(404).json({ ok: false, error: "Message not found" });
+    if (!r.rows.length) return apiError(res, 404, "INCOMING_NOT_FOUND", "Message not found");
+    safeAudit('warn', 'api', `Incoming message deleted: ${r.rows[0].id}`, {
+      incoming_message_id: r.rows[0].id,
+    }, req.userId || null);
     res.json({ ok: true, deleted: r.rows[0].id });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "INCOMING_DELETE_FAILED", e.message);
   }
 });
 
 // 10) Delete incoming messages (bulk – by status or all)
-router.delete("/admin/incoming", requireAuth, async (req, res) => {
+router.delete("/admin/incoming", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const status = req.query.status || null;
     const gateway_id = req.query.gateway_id || null;
@@ -715,16 +745,21 @@ router.delete("/admin/incoming", requireAuth, async (req, res) => {
     if (gateway_id) { params.push(gateway_id); where.push(`gateway_id = $${params.length}`); }
     const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
     const r = await corePool.query(`DELETE FROM incoming_messages ${whereSql}`, params);
+    safeAudit('warn', 'api', `Incoming messages bulk deleted: ${r.rowCount ?? 0}`, {
+      deleted_count: r.rowCount ?? 0,
+      status: status || null,
+      gateway_id: gateway_id || null,
+    }, req.userId || null);
     res.json({ ok: true, deleted_count: r.rowCount ?? 0 });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "INCOMING_BULK_DELETE_FAILED", e.message);
   }
 });
 
 // 8) Delete a gateway
-router.delete("/admin/gateways/:gatewayId", requireAuth, async (req, res) => {
+router.delete("/admin/gateways/:gatewayId", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
-    if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
+    if (!corePool) return apiError(res, 503, "CORE_DB_UNAVAILABLE", "Database unavailable");
     const { gatewayId } = req.params;
 
     // Get terrain_id before deleting (needed to revert messages)
@@ -747,18 +782,24 @@ router.delete("/admin/gateways/:gatewayId", requireAuth, async (req, res) => {
       );
     }
 
+    safeAudit('warn', 'api', `Gateway deleted: ${gatewayId}`, {
+      gateway_id: gatewayId,
+      terrain_id: gwTerrainId || null,
+      rows_deleted: result.rowCount || 0,
+    }, req.userId || null);
+
     res.json({
       ok: true,
       deleted: gatewayId,
       rowsDeleted: result.rowCount || 0
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "GATEWAY_DELETE_FAILED", e.message);
   }
 });
 
 // 11) Reconcile: re-sync incoming_messages status based on actual gateway_registry + device_registry
-router.post("/admin/incoming/reconcile", requireAuth, async (req, res) => {
+router.post("/admin/incoming/reconcile", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     // A) Mark as 'mapped' messages that SHOULD be mapped (gateway + device both registered)
     const mapped = await corePool.query(
@@ -786,20 +827,25 @@ router.post("/admin/incoming/reconcile", requireAuth, async (req, res) => {
          )`
     );
 
+    safeAudit('info', 'api', 'Incoming messages reconciled', {
+      reconciled_mapped: mapped.rowCount ?? 0,
+      reconciled_unmapped: unmapped.rowCount ?? 0,
+    }, req.userId || null);
+
     res.json({
       ok: true,
       reconciled_mapped: mapped.rowCount ?? 0,
       reconciled_unmapped: unmapped.rowCount ?? 0,
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "INCOMING_RECONCILE_FAILED", e.message);
   }
 });
 
 // POST /admin/incoming/process-unmapped
 // Process all unmapped messages that now have mapped devices
 // This catches historical messages from before the mapping feature was implemented
-router.post("/incoming/process-unmapped", async (req, res) => {
+router.post("/incoming/process-unmapped", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     // Find unmapped messages whose devices are now mapped
     // device_registry has point_id directly
@@ -866,6 +912,12 @@ router.post("/incoming/process-unmapped", async (req, res) => {
       }
     }
 
+    safeAudit('warn', 'api', 'Process unmapped incoming executed', {
+      processed: messages.rows.length,
+      enqueued,
+      failed,
+    }, req.userId || null);
+
     res.json({
       ok: true,
       processed: messages.rows.length,
@@ -874,21 +926,27 @@ router.post("/incoming/process-unmapped", async (req, res) => {
       errors: errors.length > 0 ? errors.slice(0, 10) : undefined,
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "PROCESS_UNMAPPED_FAILED", e.message);
   }
 });
 
 // POST /admin/cleanup-unmapped-messages
 // Immediately trigger cleanup of mapped messages without readings
-router.post("/cleanup-unmapped-messages", async (req, res) => {
+router.post("/cleanup-unmapped-messages", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { telemetryQueue } = require("../../jobs/queues");
+    const limit = parseLastLines(req.body?.limit, 1000, 1, 5000);
 
     const job = await telemetryQueue.add(
       "telemetry.cleanup_unmapped_messages",
-      { payload: { limit: 1000 } },
+      { payload: { limit } },
       { priority: 10 }
     );
+
+    safeAudit('warn', 'api', 'Cleanup unmapped job enqueued', {
+      job_id: job.id,
+      limit,
+    }, req.userId || null);
 
     res.json({
       ok: true,
@@ -897,16 +955,15 @@ router.post("/cleanup-unmapped-messages", async (req, res) => {
       queue: "telemetry",
     });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "CLEANUP_JOB_ENQUEUE_FAILED", e.message);
   }
 });
 
 // GET /admin/logs/cleanup
 // View worker cleanup logs (for troubleshooting)
-router.get("/logs/cleanup", requireAuth, async (req, res) => {
+router.get("/logs/cleanup", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const fs = require("fs");
-    const path = require("path");
     const logFile = "/app/logs/cleanup.log";
 
     if (!fs.existsSync(logFile)) {
@@ -919,7 +976,7 @@ router.get("/logs/cleanup", requireAuth, async (req, res) => {
 
     const content = fs.readFileSync(logFile, "utf-8");
     const lines = content.split("\n").filter(line => line.trim());
-    const lastN = parseInt(req.query.last || "50", 10);
+    const lastN = parseLastLines(req.query.last, 50, 1, 500);
     const recent = lines.slice(Math.max(0, lines.length - lastN));
 
     res.json({
@@ -935,7 +992,7 @@ router.get("/logs/cleanup", requireAuth, async (req, res) => {
 
 // GET /admin/logs/scheduler
 // View scheduler logs
-router.get("/logs/scheduler", requireAuth, async (req, res) => {
+router.get("/logs/scheduler", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const fs = require("fs");
     const logFile = "/app/logs/scheduler.log";
@@ -950,7 +1007,7 @@ router.get("/logs/scheduler", requireAuth, async (req, res) => {
 
     const content = fs.readFileSync(logFile, "utf-8");
     const lines = content.split("\n").filter(line => line.trim());
-    const lastN = parseInt(req.query.last || "50", 10);
+    const lastN = parseLastLines(req.query.last, 50, 1, 500);
     const recent = lines.slice(Math.max(0, lines.length - lastN));
 
     res.json({
@@ -967,12 +1024,12 @@ router.get("/logs/scheduler", requireAuth, async (req, res) => {
 // ─── DELETE readings for a specific point (with optional date range) ────
 // DELETE /admin/readings/:pointId?from=...&to=...
 // Backs up data to trash tables before deletion for recovery
-router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
+router.delete("/admin/readings/:pointId", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   const { pointId } = req.params;
   const { from, to } = req.query;
 
-  if (!pointId) return res.status(400).json({ ok: false, error: "pointId is required" });
-  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+  if (!pointId) return apiError(res, 400, "POINT_ID_REQUIRED", "pointId is required");
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
 
   const client = await telemetryPool.connect();
   try {
@@ -982,8 +1039,7 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
       [pointId]
     );
     if (pointCheck.rows.length === 0) {
-      client.release();
-      return res.status(404).json({ ok: false, error: "Point not found" });
+      return apiError(res, 404, "POINT_NOT_FOUND", "Point not found");
     }
     const pointName = pointCheck.rows[0].name;
 
@@ -1041,7 +1097,7 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
     await client.query('COMMIT');
 
     log.info({ point: pointName, pointId, batchId, from: from || 'ALL', to: to || 'ALL', ...counts }, 'purge completed (backed up)');
-    auditLog('warn', 'api', `Purge données: ${pointName} (${counts.readings} readings, ${counts.agg_15m} agg15m, ${counts.agg_daily} daily) — batch ${batchId}`, {
+    safeAudit('warn', 'api', `Purge données: ${pointName} (${counts.readings} readings, ${counts.agg_15m} agg15m, ${counts.agg_daily} daily) — batch ${batchId}`, {
       point_id: pointId, point_name: pointName, purge_batch_id: batchId,
       from: from || null, to: to || null, deleted: counts,
     }, req.userId || null);
@@ -1056,9 +1112,74 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'purge error');
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "POINT_PURGE_FAILED", e.message);
   } finally {
     client.release();
+  }
+});
+
+// ─── BATCH DELETE readings for multiple points (with optional date range) ────
+// POST /admin/readings/batch-purge-preview
+// Body: { pointIds: string[], from?: string, to?: string }
+// Returns estimated impacted rows without mutating data
+router.post("/admin/readings/batch-purge-preview", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
+  const { pointIds = [], from, to } = req.body || {};
+
+  if (!Array.isArray(pointIds) || pointIds.length === 0) {
+    return apiError(res, 400, "POINT_IDS_REQUIRED", "pointIds array is required and non-empty");
+  }
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
+
+  try {
+    const pointCheck = await corePool.query(
+      `SELECT id, name FROM measurement_points WHERE id = ANY($1)`,
+      [pointIds]
+    );
+    const foundPoints = pointCheck.rows;
+    if (foundPoints.length === 0) {
+      return apiError(res, 404, "POINTS_NOT_FOUND", "No valid points found");
+    }
+    const ids = foundPoints.map(p => p.id);
+
+    const readingsConds = ['point_id = ANY($1)'];
+    const readingsParams = [ids];
+    let pIdx = 2;
+    if (from) { readingsConds.push(`time >= $${pIdx}`); readingsParams.push(from); pIdx++; }
+    if (to) { readingsConds.push(`time <= $${pIdx}`); readingsParams.push(to); pIdx++; }
+    const readingsWhere = readingsConds.join(' AND ');
+    const agg15Where = readingsConds.map(c => c.replace(/\btime\b/g, 'bucket_start')).join(' AND ');
+
+    const dayConds = ['point_id = ANY($1)'];
+    const dayParams = [ids];
+    let dIdx = 2;
+    if (from) { dayConds.push(`day >= ($${dIdx})::date`); dayParams.push(from); dIdx++; }
+    if (to) { dayConds.push(`day <= ($${dIdx})::date`); dayParams.push(to); dIdx++; }
+    const dayWhere = dayConds.join(' AND ');
+
+    const [readingsCount, agg15Count, aggDailyCount] = await Promise.all([
+      telemetryPool.query(`SELECT count(*)::int AS count FROM acrel_readings WHERE ${readingsWhere}`, readingsParams),
+      telemetryPool.query(`SELECT count(*)::int AS count FROM acrel_agg_15m WHERE ${agg15Where}`, readingsParams),
+      telemetryPool.query(`SELECT count(*)::int AS count FROM acrel_agg_daily WHERE ${dayWhere}`, dayParams),
+    ]);
+
+    const totals = {
+      readings: readingsCount.rows[0]?.count ?? 0,
+      agg_15m: agg15Count.rows[0]?.count ?? 0,
+      agg_daily: aggDailyCount.rows[0]?.count ?? 0,
+    };
+
+    res.json({
+      ok: true,
+      points_requested: pointIds.length,
+      points_found: foundPoints.length,
+      points_missing: pointIds.length - foundPoints.length,
+      point_ids: ids,
+      point_names: foundPoints.map(p => p.name),
+      totals,
+      range: { from: from || null, to: to || null },
+    });
+  } catch (e) {
+    apiError(res, 500, "BATCH_PURGE_PREVIEW_FAILED", e.message);
   }
 });
 
@@ -1066,13 +1187,13 @@ router.delete("/admin/readings/:pointId", requireAuth, async (req, res) => {
 // POST /admin/readings/batch-purge
 // Body: { pointIds: string[], from?: string, to?: string }
 // Backs up data to trash tables before deletion for recovery
-router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
+router.post("/admin/readings/batch-purge", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   const { pointIds = [], from, to } = req.body || {};
 
   if (!Array.isArray(pointIds) || pointIds.length === 0) {
-    return res.status(400).json({ ok: false, error: "pointIds array is required and non-empty" });
+    return apiError(res, 400, "POINT_IDS_REQUIRED", "pointIds array is required and non-empty");
   }
-  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
 
   const client = await telemetryPool.connect();
   try {
@@ -1083,8 +1204,7 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
     );
     const foundPoints = pointCheck.rows;
     if (foundPoints.length === 0) {
-      client.release();
-      return res.status(404).json({ ok: false, error: "No valid points found" });
+      return apiError(res, 404, "POINTS_NOT_FOUND", "No valid points found");
     }
     const ids = foundPoints.map(p => p.id);
 
@@ -1140,7 +1260,7 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
 
     await client.query('COMMIT');
 
-    auditLog('warn', 'api', `Batch purge ${ids.length} points: ${totals.readings} readings, ${totals.agg_15m} agg15m, ${totals.agg_daily} daily — batch ${batchId}`, {
+    safeAudit('warn', 'api', `Batch purge ${ids.length} points: ${totals.readings} readings, ${totals.agg_15m} agg15m, ${totals.agg_daily} daily — batch ${batchId}`, {
       point_ids: ids, purge_batch_id: batchId, from: from || null, to: to || null,
     }, req.userId || null);
 
@@ -1157,9 +1277,62 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'batch-purge error');
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "BATCH_PURGE_FAILED", e.message);
   } finally {
     client.release();
+  }
+});
+
+// ─── DELETE aggregation + readings for a date range (all points) ────
+// POST /admin/readings/purge-range-preview
+// Body: { from: "2025-03-07", to: "2025-03-07", includeReadings?: boolean }
+// Returns estimated impacted rows without mutating data
+router.post("/admin/readings/purge-range-preview", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
+  const { from, to, includeReadings = true } = req.body || {};
+  if (!from || !to) return apiError(res, 400, "PURGE_RANGE_REQUIRED", "from and to are required");
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
+
+  try {
+    const fromDate = new Date(from);
+    const toDate = new Date(to);
+    toDate.setHours(23, 59, 59, 999);
+    const fromISO = fromDate.toISOString();
+    const toISO = toDate.toISOString();
+
+    const readingsPromise = includeReadings
+      ? telemetryPool.query(
+        `SELECT count(*)::int AS count FROM acrel_readings WHERE time >= $1 AND time <= $2`,
+        [fromISO, toISO]
+      )
+      : Promise.resolve({ rows: [{ count: 0 }] });
+
+    const [readingsCount, agg15Count, aggDailyCount] = await Promise.all([
+      readingsPromise,
+      telemetryPool.query(
+        `SELECT count(*)::int AS count FROM acrel_agg_15m WHERE bucket_start >= $1 AND bucket_start <= $2`,
+        [fromISO, toISO]
+      ),
+      telemetryPool.query(
+        `SELECT count(*)::int AS count FROM acrel_agg_daily WHERE day >= ($1)::date AND day <= ($2)::date`,
+        [from, to]
+      ),
+    ]);
+
+    const totals = {
+      readings: readingsCount.rows[0]?.count ?? 0,
+      agg_15m: agg15Count.rows[0]?.count ?? 0,
+      agg_daily: aggDailyCount.rows[0]?.count ?? 0,
+    };
+
+    res.json({
+      ok: true,
+      includeReadings,
+      range: { from, to },
+      normalized_range: { from: fromISO, to: toISO },
+      totals,
+    });
+  } catch (e) {
+    apiError(res, 500, "PURGE_RANGE_PREVIEW_FAILED", e.message);
   }
 });
 
@@ -1167,10 +1340,10 @@ router.post("/admin/readings/batch-purge", requireAuth, async (req, res) => {
 // POST /admin/readings/purge-range
 // Body: { from: "2025-03-07", to: "2025-03-07", includeReadings?: boolean }
 // Backs up data to trash tables before deletion for recovery
-router.post("/admin/readings/purge-range", requireAuth, async (req, res) => {
+router.post("/admin/readings/purge-range", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   const { from, to, includeReadings = true } = req.body || {};
-  if (!from || !to) return res.status(400).json({ ok: false, error: "from and to are required" });
-  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+  if (!from || !to) return apiError(res, 400, "PURGE_RANGE_REQUIRED", "from and to are required");
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
 
   const client = await telemetryPool.connect();
   try {
@@ -1227,7 +1400,7 @@ router.post("/admin/readings/purge-range", requireAuth, async (req, res) => {
     await client.query('COMMIT');
 
     log.info({ from, to, batchId, ...deleted }, 'purge-range completed (backed up)');
-    auditLog('warn', 'api', `Purge range ${from} → ${to}: ${deleted.readings} readings, ${deleted.agg_15m} agg15m, ${deleted.agg_daily} daily — batch ${batchId}`, {
+    safeAudit('warn', 'api', `Purge range ${from} → ${to}: ${deleted.readings} readings, ${deleted.agg_15m} agg15m, ${deleted.agg_daily} daily — batch ${batchId}`, {
       from, to, purge_batch_id: batchId, deleted
     }, req.userId || null);
 
@@ -1235,7 +1408,7 @@ router.post("/admin/readings/purge-range", requireAuth, async (req, res) => {
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'purge-range error');
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "PURGE_RANGE_FAILED", e.message);
   } finally {
     client.release();
   }
@@ -1246,8 +1419,8 @@ router.post("/admin/readings/purge-range", requireAuth, async (req, res) => {
 // ═══════════════════════════════════════════════════════════════
 
 // GET /admin/purge-batches — List recent purge batches
-router.get("/admin/purge-batches", requireAuth, async (req, res) => {
-  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+router.get("/admin/purge-batches", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
   try {
     const r = await telemetryPool.query(
       `SELECT id, deleted_at, deleted_by, point_ids, date_from, date_to, counts, restored_at
@@ -1255,14 +1428,14 @@ router.get("/admin/purge-batches", requireAuth, async (req, res) => {
     );
     res.json({ ok: true, batches: r.rows });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "PURGE_BATCHES_LIST_FAILED", e.message);
   }
 });
 
 // POST /admin/purge-batches/:batchId/restore — Restore purged data from trash
-router.post("/admin/purge-batches/:batchId/restore", requireAuth, async (req, res) => {
+router.post("/admin/purge-batches/:batchId/restore", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   const { batchId } = req.params;
-  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
 
   const client = await telemetryPool.connect();
   try {
@@ -1271,12 +1444,10 @@ router.post("/admin/purge-batches/:batchId/restore", requireAuth, async (req, re
       `SELECT id, counts, restored_at FROM purge_batches WHERE id = $1`, [batchId]
     );
     if (batchCheck.rows.length === 0) {
-      client.release();
-      return res.status(404).json({ ok: false, error: "Batch not found" });
+      return apiError(res, 404, "PURGE_BATCH_NOT_FOUND", "Batch not found");
     }
     if (batchCheck.rows[0].restored_at) {
-      client.release();
-      return res.status(400).json({ ok: false, error: "Batch already restored" });
+      return apiError(res, 400, "PURGE_BATCH_ALREADY_RESTORED", "Batch already restored");
     }
 
     await client.query('BEGIN');
@@ -1342,7 +1513,7 @@ router.post("/admin/purge-batches/:batchId/restore", requireAuth, async (req, re
 
     const restored = { readings: rReadings.rowCount, agg_15m: r15m.rowCount, agg_daily: rDay.rowCount };
     log.info({ batchId, ...restored }, 'purge restore completed');
-    auditLog('info', 'api', `Restauration purge batch ${batchId}: ${restored.readings} readings, ${restored.agg_15m} agg15m, ${restored.agg_daily} daily`, {
+    safeAudit('info', 'api', `Restauration purge batch ${batchId}: ${restored.readings} readings, ${restored.agg_15m} agg15m, ${restored.agg_daily} daily`, {
       purge_batch_id: batchId, restored
     }, req.userId || null);
 
@@ -1350,24 +1521,27 @@ router.post("/admin/purge-batches/:batchId/restore", requireAuth, async (req, re
   } catch (e) {
     await client.query('ROLLBACK').catch(() => {});
     log.error({ err: e.message }, 'purge restore error');
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "PURGE_BATCH_RESTORE_FAILED", e.message);
   } finally {
     client.release();
   }
 });
 
 // DELETE /admin/purge-batches/:batchId — Permanently delete trash data (no recovery)
-router.delete("/admin/purge-batches/:batchId", requireAuth, async (req, res) => {
+router.delete("/admin/purge-batches/:batchId", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   const { batchId } = req.params;
-  if (!telemetryPool) return res.status(503).json({ ok: false, error: "Telemetry database not available" });
+  if (!telemetryPool) return apiError(res, 503, "TELEMETRY_DB_UNAVAILABLE", "Telemetry database not available");
 
   try {
     // CASCADE will delete from trash tables too
     const r = await telemetryPool.query(`DELETE FROM purge_batches WHERE id = $1`, [batchId]);
-    if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "Batch not found" });
+    if (r.rowCount === 0) return apiError(res, 404, "PURGE_BATCH_NOT_FOUND", "Batch not found");
+    safeAudit('warn', 'api', `Purge batch permanently deleted: ${batchId}`, {
+      purge_batch_id: batchId,
+    }, req.userId || null);
     res.json({ ok: true });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "PURGE_BATCH_DELETE_FAILED", e.message);
   }
 });
 
@@ -1376,11 +1550,11 @@ router.delete("/admin/purge-batches/:batchId", requireAuth, async (req, res) => 
 // ═══════════════════════════════════════════════════════════════
 
 // POST /admin/pipeline/repair-aggregations — force re-aggregation for a time window
-router.post("/admin/pipeline/repair-aggregations", requireAuth, async (req, res) => {
+router.post("/admin/pipeline/repair-aggregations", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { from, to, point_id, terrain_id, site_id } = req.body || {};
     if (!from || !to) {
-      return res.status(400).json({ ok: false, error: "from and to are required (ISO dates)" });
+      return apiError(res, 400, "REPAIR_RANGE_REQUIRED", "from and to are required (ISO dates)");
     }
 
     const jobData = {
@@ -1388,23 +1562,24 @@ router.post("/admin/pipeline/repair-aggregations", requireAuth, async (req, res)
     };
 
     await telemetryQueue.add("telemetry.aggregate", jobData, { attempts: 1 });
-    auditLog('info', 'api', `Réagrégation lancée: ${from} → ${to}`, jobData.payload, req.userId || null);
+    safeAudit('info', 'api', `Réagrégation lancée: ${from} → ${to}`, jobData.payload, req.userId || null);
 
     res.json({ ok: true, message: "Aggregation job queued", job: jobData.payload });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "REPAIR_AGGREGATIONS_FAILED", e.message);
   }
 });
 
 // POST /admin/pipeline/retry-failed-jobs — clean failed jobs from BullMQ queue
-router.post("/admin/pipeline/retry-failed-jobs", requireAuth, async (req, res) => {
+router.post("/admin/pipeline/retry-failed-jobs", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
-    const { queue = "telemetry", limit = 50 } = req.body || {};
+    const { queue = "telemetry" } = req.body || {};
+    const limit = parseLastLines(req.body?.limit, 50, 1, 1000);
 
     // Get failed jobs and retry them
     const { Queue } = require("bullmq");
     const redis = require("../../config/redis");
-    if (!redis) return res.status(503).json({ ok: false, error: "Redis not available" });
+    if (!redis) return apiError(res, 503, "REDIS_UNAVAILABLE", "Redis not available");
 
     const q = new Queue(queue, { connection: redis });
     const failed = await q.getFailed(0, limit);
@@ -1419,25 +1594,26 @@ router.post("/admin/pipeline/retry-failed-jobs", requireAuth, async (req, res) =
       }
     }
 
-    auditLog('info', 'api', `Retry ${retried}/${failed.length} failed jobs in queue "${queue}"`, { queue, retried, total: failed.length }, req.userId || null);
+    safeAudit('info', 'api', `Retry ${retried}/${failed.length} failed jobs in queue "${queue}"`, { queue, retried, total: failed.length }, req.userId || null);
 
     res.json({ ok: true, queue, retried, total_failed: failed.length });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "RETRY_FAILED_JOBS_FAILED", e.message);
   }
 });
 
 // POST /admin/pipeline/flush-failed-jobs — remove all failed jobs from a queue
-router.post("/admin/pipeline/flush-failed-jobs", requireAuth, async (req, res) => {
+router.post("/admin/pipeline/flush-failed-jobs", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { queue = "telemetry" } = req.body || {};
+    const scanLimit = parseLastLines(req.body?.limit, 1000, 1, 5000);
 
     const { Queue } = require("bullmq");
     const redis = require("../../config/redis");
-    if (!redis) return res.status(503).json({ ok: false, error: "Redis not available" });
+    if (!redis) return apiError(res, 503, "REDIS_UNAVAILABLE", "Redis not available");
 
     const q = new Queue(queue, { connection: redis });
-    const failed = await q.getFailed(0, 1000);
+    const failed = await q.getFailed(0, scanLimit);
 
     let removed = 0;
     for (const job of failed) {
@@ -1447,18 +1623,18 @@ router.post("/admin/pipeline/flush-failed-jobs", requireAuth, async (req, res) =
       } catch (e) { /* ignore */ }
     }
 
-    auditLog('warn', 'api', `Flushed ${removed} failed jobs from queue "${queue}"`, { queue, removed }, req.userId || null);
+    safeAudit('warn', 'api', `Flushed ${removed} failed jobs from queue "${queue}"`, { queue, removed, scanned: failed.length }, req.userId || null);
 
     res.json({ ok: true, queue, removed });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "FLUSH_FAILED_JOBS_FAILED", e.message);
   }
 });
 
 // POST /admin/pipeline/reprocess-unmapped — trigger cleanup of unmapped messages now
-router.post("/admin/pipeline/reprocess-unmapped", requireAuth, async (req, res) => {
+router.post("/admin/pipeline/reprocess-unmapped", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
-    const { limit = 500 } = req.body || {};
+    const limit = parseLastLines(req.body?.limit, 500, 1, 5000);
 
     await telemetryQueue.add(
       "telemetry.cleanup_unmapped_messages",
@@ -1466,11 +1642,11 @@ router.post("/admin/pipeline/reprocess-unmapped", requireAuth, async (req, res) 
       { attempts: 1 }
     );
 
-    auditLog('info', 'api', `Reprocess unmapped messages lancé (limit=${limit})`, { limit }, req.userId || null);
+    safeAudit('info', 'api', `Reprocess unmapped messages lancé (limit=${limit})`, { limit }, req.userId || null);
 
     res.json({ ok: true, message: "Cleanup job queued", limit });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "REPROCESS_UNMAPPED_FAILED", e.message);
   }
 });
 
@@ -1479,7 +1655,7 @@ router.post("/admin/pipeline/reprocess-unmapped", requireAuth, async (req, res) 
 // ══════════════════════════════════════════════════════════
 
 // GET /admin/disk-stats — per-table disk usage
-router.get("/admin/disk-stats", requireAuth, async (req, res) => {
+router.get("/admin/disk-stats", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     // Tables in telemetry DB
     const telemetryTables = [
@@ -1548,14 +1724,15 @@ router.get("/admin/disk-stats", requireAuth, async (req, res) => {
 });
 
 // POST /admin/disk-recovery — dispatch as async BullMQ job (VACUUM FULL is too slow for HTTP)
-router.post("/admin/disk-recovery", requireAuth, async (req, res) => {
+router.post("/admin/disk-recovery", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { trash_max_age_days = 7, vacuum = true } = req.body || {};
     await telemetryQueue.add(JobTypes.DISK_RECOVERY, { trash_max_age_days, vacuum }, { attempts: 1 });
+    safeAudit('warn', 'api', 'Disk recovery job queued', { trash_max_age_days, vacuum }, req.userId || null);
     log.info({ trash_max_age_days, vacuum }, 'Disk recovery job queued');
     res.json({ ok: true, message: 'Job de récupération disque mis en file d\'attente' });
   } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
+    apiError(res, 500, "DISK_RECOVERY_ENQUEUE_FAILED", e.message);
   }
 });
 
@@ -1577,12 +1754,7 @@ function formatBytes(bytes) {
  */
 router.get("/admin/tariff-plans",
   requireAuth,
-  (req, res, next) => {
-    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
-      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
-    }
-    next();
-  },
+  requireAdminAccess,
   async (req, res) => {
     try {
       const { group_code, active_only } = req.query;
@@ -1610,7 +1782,7 @@ router.get("/admin/tariff-plans",
       });
     } catch (e) {
       console.error("GET /admin/tariff-plans error:", e);
-      res.status(500).json({ ok: false, error: e.message });
+      apiError(res, 500, "TARIFF_PLANS_LIST_FAILED", e.message);
     }
   }
 );
@@ -1621,12 +1793,7 @@ router.get("/admin/tariff-plans",
  */
 router.get("/admin/tariff-plans/:id",
   requireAuth,
-  (req, res, next) => {
-    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
-      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
-    }
-    next();
-  },
+  requireAdminAccess,
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -1637,7 +1804,7 @@ router.get("/admin/tariff-plans/:id",
       );
 
       if (!result.rows.length) {
-        return res.status(404).json({ ok: false, error: "Plan not found" });
+        return apiError(res, 404, "TARIFF_PLAN_NOT_FOUND", "Plan not found");
       }
 
       res.json({
@@ -1646,7 +1813,7 @@ router.get("/admin/tariff-plans/:id",
       });
     } catch (e) {
       console.error("GET /admin/tariff-plans/:id error:", e);
-      res.status(500).json({ ok: false, error: e.message });
+      apiError(res, 500, "TARIFF_PLAN_GET_FAILED", e.message);
     }
   }
 );
@@ -1657,12 +1824,7 @@ router.get("/admin/tariff-plans/:id",
  */
 router.post("/admin/tariff-plans",
   requireAuth,
-  (req, res, next) => {
-    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
-      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
-    }
-    next();
-  },
+  requireAdminAccess,
   async (req, res) => {
     try {
       const {
@@ -1677,10 +1839,7 @@ router.post("/admin/tariff-plans",
 
       // Validate required fields
       if (!group_code || !plan_code || !name) {
-        return res.status(400).json({
-          ok: false,
-          error: "group_code, plan_code, and name are required",
-        });
+        return apiError(res, 400, "TARIFF_PLAN_REQUIRED_FIELDS", "group_code, plan_code, and name are required");
       }
 
       const result = await corePool.query(
@@ -1705,13 +1864,20 @@ router.post("/admin/tariff-plans",
         ]
       );
 
+      safeAudit('info', 'api', `Tariff plan created: ${plan_code}`, {
+        planId: result.rows[0].id,
+        group_code,
+        plan_code,
+        name,
+      }, req.userId || null);
+
       res.status(201).json({
         ok: true,
         plan: result.rows[0],
       });
     } catch (e) {
       console.error("POST /admin/tariff-plans error:", e);
-      res.status(500).json({ ok: false, error: e.message });
+      apiError(res, 500, "TARIFF_PLAN_CREATE_FAILED", e.message);
     }
   }
 );
@@ -1722,12 +1888,7 @@ router.post("/admin/tariff-plans",
  */
 router.put("/admin/tariff-plans/:id",
   requireAuth,
-  (req, res, next) => {
-    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
-      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
-    }
-    next();
-  },
+  requireAdminAccess,
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -1756,10 +1917,7 @@ router.put("/admin/tariff-plans/:id",
       }
 
       if (setClause.length === 0) {
-        return res.status(400).json({
-          ok: false,
-          error: "No valid fields to update",
-        });
+        return apiError(res, 400, "TARIFF_PLAN_NO_VALID_FIELDS", "No valid fields to update");
       }
 
       params.push(id);
@@ -1771,8 +1929,13 @@ router.put("/admin/tariff-plans/:id",
       );
 
       if (!result.rows.length) {
-        return res.status(404).json({ ok: false, error: "Plan not found" });
+        return apiError(res, 404, "TARIFF_PLAN_NOT_FOUND", "Plan not found");
       }
+
+      safeAudit('info', 'api', `Tariff plan updated: ${id}`, {
+        planId: id,
+        updatedFields: Object.keys(updates || {}),
+      }, req.userId || null);
 
       res.json({
         ok: true,
@@ -1780,7 +1943,7 @@ router.put("/admin/tariff-plans/:id",
       });
     } catch (e) {
       console.error("PUT /admin/tariff-plans/:id error:", e);
-      res.status(500).json({ ok: false, error: e.message });
+      apiError(res, 500, "TARIFF_PLAN_UPDATE_FAILED", e.message);
     }
   }
 );
@@ -1791,12 +1954,7 @@ router.put("/admin/tariff-plans/:id",
  */
 router.delete("/admin/tariff-plans/:id",
   requireAuth,
-  (req, res, next) => {
-    if (!req.userRole || !["platform_super_admin", "admin"].includes(req.userRole)) {
-      return res.status(403).json({ ok: false, error: "Forbidden: admin access required" });
-    }
-    next();
-  },
+  requireAdminAccess,
   async (req, res) => {
     try {
       const { id } = req.params;
@@ -1809,10 +1967,7 @@ router.delete("/admin/tariff-plans/:id",
       );
 
       if (inUse.rows[0].count > 0) {
-        return res.status(409).json({
-          ok: false,
-          error: `Cannot delete plan: ${inUse.rows[0].count} contract(s) still use it`,
-        });
+        return apiError(res, 409, "TARIFF_PLAN_IN_USE", `Cannot delete plan: ${inUse.rows[0].count} contract(s) still use it`);
       }
 
       const result = await corePool.query(
@@ -1821,8 +1976,12 @@ router.delete("/admin/tariff-plans/:id",
       );
 
       if (!result.rows.length) {
-        return res.status(404).json({ ok: false, error: "Plan not found" });
+        return apiError(res, 404, "TARIFF_PLAN_NOT_FOUND", "Plan not found");
       }
+
+      safeAudit('warn', 'api', `Tariff plan deleted: ${id}`, {
+        planId: id,
+      }, req.userId || null);
 
       res.json({
         ok: true,
@@ -1830,7 +1989,7 @@ router.delete("/admin/tariff-plans/:id",
       });
     } catch (e) {
       console.error("DELETE /admin/tariff-plans/:id error:", e);
-      res.status(500).json({ ok: false, error: e.message });
+      apiError(res, 500, "TARIFF_PLAN_DELETE_FAILED", e.message);
     }
   }
 );

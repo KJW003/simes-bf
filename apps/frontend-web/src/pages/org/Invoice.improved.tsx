@@ -16,9 +16,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import {
-  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
-} from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useAppContext } from '@/contexts/AppContext';
 import { useSubmitFacture, useFactureResult, useTariffPlans, useTerrainContract, useSaveTerrainContract, useFactureMonths, useFactureMonthly } from '@/hooks/useApi';
 import { Receipt, Zap, TrendingUp, AlertTriangle, Loader2, FileText, Calculator, Settings2, Check, ChevronDown } from 'lucide-react';

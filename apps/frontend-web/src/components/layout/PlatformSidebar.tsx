@@ -9,8 +9,10 @@ import {
   Radio,
   Cpu,
   Activity,
+  FlaskConical,
   FileSearch,
   Settings,
+  Receipt,
   Trash2,
   X,
   Play,
@@ -119,10 +121,12 @@ export function PlatformSidebar({ onClose }: { onClose?: () => void } = {}) {
             />
             <NavItem to="/platform/jobs" icon={Play} label="Jobs" />
             <NavItem to="/platform/logs" icon={FileSearch} label="Logs" />
+            {isSuperAdmin && <NavItem to="/platform/ingestion" icon={FlaskConical} label="Ingestion Lab" />}
           </NavSection>
 
           {isSuperAdmin && (
             <NavSection title="Administration">
+              <NavItem to="/platform/tariffs" icon={Receipt} label="Plans tarifaires" />
               <NavItem to="/platform/purge" icon={Trash2} label="Purge en masse" />
               <NavItem to="/platform/admin" icon={Settings} label="Configuration" />
             </NavSection>

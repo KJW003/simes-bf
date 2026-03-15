@@ -78,6 +78,9 @@ export default function Anomalies() {
   const alarmEngine = useAlarmEngine(selectedTerrainId);
   const { data: anomalyData, isLoading: loadAnom } = useAnomalies(selectedTerrainId);
   const detectMutation = useDetectAnomalies();
+  const detectedCount =
+    (detectMutation.data?.residual?.found ?? 0) +
+    (detectMutation.data?.isolation_forest?.found ?? 0);
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const anomalies = (anomalyData?.anomalies ?? []) as Array<Record<string, any>>;
@@ -183,7 +186,7 @@ export default function Anomalies() {
             </Button>
             {detectMutation.isSuccess && (
               <Badge className="bg-green-100 text-green-700 text-[10px]">
-                ✓ Analyse complète: {detectMutation.data?.anomalies_found ?? 0} problèmes trouvés
+                ✓ Analyse complète: {detectedCount} problèmes trouvés
               </Badge>
             )}
             {detectMutation.isError && (

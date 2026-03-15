@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog';
 import { usePipelineHealth } from '@/hooks/useApi';
 import api from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -40,6 +41,13 @@ const componentIcons: Record<string, any> = {
   'Telemetry Throughput': Activity,
 };
 
+interface PipelineComponent {
+  name: string;
+  status: string;
+  latency_ms?: number | null;
+  detail?: Record<string, unknown>;
+}
+
 export default function PipelineHealth() {
   const { data, isLoading, refetch } = usePipelineHealth();
 
@@ -48,6 +56,10 @@ export default function PipelineHealth() {
   const [repairResult, setRepairResult] = useState<string | null>(null);
   const [aggFrom, setAggFrom] = useState('');
   const [aggTo, setAggTo] = useState('');
+  const [flushConfirmOpen, setFlushConfirmOpen] = useState(false);
+  const [flushConfirmText, setFlushConfirmText] = useState('');
+
+  const requiredFlushKeyword = 'CONFIRM-FLUSH-JOBS';
 
   // Queue actions state
   const [retrying, setRetrying] = useState<string | null>(null);
@@ -86,16 +98,18 @@ export default function PipelineHealth() {
     setFlushing(null);
   }, [refetch]);
 
-  const components = data?.components ?? [];
-  const queues = components.filter((c: any) => c.name.startsWith('Queue'));
-  const infra = components.filter((c: any) => !c.name.startsWith('Queue'));
-  const upCount = infra.filter((c: any) => c.status === 'up').length;
-  const downCount = infra.filter((c: any) => c.status === 'down' || c.status === 'error').length;
+  const components = (data?.components ?? []) as PipelineComponent[];
+  const queues = components.filter((c) => c.name.startsWith('Queue'));
+  const infra = components.filter((c) => !c.name.startsWith('Queue'));
+  const upCount = infra.filter((c) => c.status === 'up').length;
+  const downCount = infra.filter((c) => c.status === 'down' || c.status === 'error').length;
   const avgLatency = (() => {
-    const lats = infra.filter((c: any) => c.latency_ms != null).map((c: any) => c.latency_ms);
+    const lats = infra
+      .map((c) => c.latency_ms)
+      .filter((v): v is number => typeof v === 'number');
     return lats.length ? Math.round(lats.reduce((s: number, v: number) => s + v, 0) / lats.length) : 0;
   })();
-  const totalFailed = queues.reduce((s: number, q: any) => s + (q.detail?.failed ?? 0), 0);
+  const totalFailed = queues.reduce((s: number, q) => s + Number((q.detail as { failed?: number } | undefined)?.failed ?? 0), 0);
 
   const statusBadge = (s: string) => {
     if (s === 'up') return <Badge className="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300">{s}</Badge>;
@@ -281,7 +295,10 @@ export default function PipelineHealth() {
               <p className="text-xs text-muted-foreground">Supprime définitivement tous les jobs échoués.</p>
               <Button size="sm" variant="destructive" className="w-full text-xs"
                 disabled={repairLoading === 'flush'}
-                onClick={() => { if (window.confirm('Supprimer TOUS les jobs échoués ?')) runRepair('flush', () => api.flushFailedJobs('telemetry')); }}
+                onClick={() => {
+                  setFlushConfirmText('');
+                  setFlushConfirmOpen(true);
+                }}
               >
                 {repairLoading === 'flush' ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
                 Vider
@@ -314,6 +331,28 @@ export default function PipelineHealth() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmActionDialog
+        open={flushConfirmOpen}
+        onOpenChange={(open) => {
+          setFlushConfirmOpen(open);
+          if (!open) setFlushConfirmText('');
+        }}
+        title="Vider les jobs échoués"
+        description="Tous les jobs échoués de la file telemetry seront supprimés définitivement."
+        confirmLabel={repairLoading === 'flush' ? 'Suppression...' : 'Vider'}
+        cancelLabel="Annuler"
+        requiredKeyword={requiredFlushKeyword}
+        confirmText={flushConfirmText}
+        onConfirmTextChange={setFlushConfirmText}
+        onConfirm={async () => {
+          await runRepair('flush', () => api.flushFailedJobs('telemetry'));
+          setFlushConfirmOpen(false);
+          setFlushConfirmText('');
+        }}
+        busy={repairLoading === 'flush'}
+        destructive
+      />
     </div>
   );
 }

@@ -119,7 +119,11 @@ function syncAlarmToDB(entry: AlarmEntry, terrainId: string): Promise<string | n
     terrain_id: terrainId,
     point_id: entry.pointId || undefined,
     metadata: { alarmKey: entry.key, alarmSource: entry.source, ruleId: entry.ruleId },
-  }).then(res => res.ok ? res.incident.id : null)
+  }).then((res) => {
+    if (!res.ok || !res.incident || typeof res.incident !== 'object') return null;
+    const incident = res.incident as { id?: string | number };
+    return incident.id != null ? String(incident.id) : null;
+  })
     .catch(() => null);
 }
 

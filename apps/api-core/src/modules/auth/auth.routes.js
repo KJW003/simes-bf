@@ -153,6 +153,18 @@ router.get("/auth/me", requireAuth, async (req, res) => {
   }
 });
 
+// ── POST /auth/logout ───────────────────────────────────────
+// JWT is stateless; logout is client-side token removal + audit trail.
+router.post("/auth/logout", requireAuth, async (req, res) => {
+  try {
+    auditLog('info', 'api', `User logout`, { userId: req.userId, role: req.userRole }, req.userId);
+    return res.json({ ok: true, message: "Logged out" });
+  } catch (e) {
+    log.error({ err: e.message }, "[auth/logout]");
+    return res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 // ── GET /auth/settings ──────────────────────────────────────
 router.get("/auth/settings", requireAuth, async (req, res) => {
   try {
@@ -212,7 +224,13 @@ router.patch("/auth/settings", requireAuth, validate(settingsSchema), async (req
 });
 
 // ── GET /users ──────────────────────────────────────────────
-router.get("/users", requireAuth, async (req, res) => {
+router.get("/users", requireAuth, (req, res, next) => {
+  // Only platform_super_admin can list all users
+  if (req.userRole !== "platform_super_admin") {
+    return res.status(403).json({ ok: false, error: "Forbidden: only super admin can list users" });
+  }
+  next();
+}, async (req, res) => {
   try {
     if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
     const { rows } = await corePool.query(
@@ -229,7 +247,14 @@ router.get("/users", requireAuth, async (req, res) => {
 });
 
 // ── POST /users ─────────────────────────────────────────────
-router.post("/users", requireAuth, validate(createUserSchema), async (req, res) => {
+router.post("/users", requireAuth, (req, res, next) => {
+  // Only platform_super_admin can create users
+  if (req.userRole !== "platform_super_admin") {
+    auditLog('warn', 'api', `Unauthorized user creation attempt`, { user: req.body?.email }, req.userId);
+    return res.status(403).json({ ok: false, error: "Forbidden: only super admin can create users" });
+  }
+  next();
+}, validate(createUserSchema), async (req, res) => {
   try {
     if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
     const { email, password, name, role, organization_id, site_access, avatar } = req.body;
@@ -241,6 +266,7 @@ router.post("/users", requireAuth, validate(createUserSchema), async (req, res) 
       [email.toLowerCase().trim(), hash, name.trim(), role || 'operator', organization_id || null, site_access || '{}', avatar || '']
     );
     const u = rows[0];
+    auditLog('info', 'api', `User created: ${email}`, { email, role, orgId: organization_id }, req.userId);
     res.status(201).json({
       id: u.id, email: u.email, name: u.name, role: u.role,
       orgId: u.organization_id, siteAccess: u.site_access || [],
@@ -250,7 +276,14 @@ router.post("/users", requireAuth, validate(createUserSchema), async (req, res) 
 });
 
 // ── PUT /users/:userId ──────────────────────────────────────
-router.put("/users/:userId", requireAuth, validate(updateUserSchema), async (req, res) => {
+router.put("/users/:userId", requireAuth, (req, res, next) => {
+  // Only platform_super_admin can modify users
+  if (req.userRole !== "platform_super_admin") {
+    auditLog('warn', 'api', `Unauthorized user update attempt for ${req.params.userId}`, {}, req.userId);
+    return res.status(403).json({ ok: false, error: "Forbidden: only super admin can modify users" });
+  }
+  next();
+}, validate(updateUserSchema), async (req, res) => {
   try {
     if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
     const { userId } = req.params;
@@ -276,6 +309,7 @@ router.put("/users/:userId", requireAuth, validate(updateUserSchema), async (req
     );
     if (rowCount === 0) return res.status(404).json({ ok: false, error: "user not found" });
     const u = rows[0];
+    auditLog('info', 'api', `User updated: ${userId}`, { changes: { email, name, role, active } }, req.userId);
     res.json({
       id: u.id, email: u.email, name: u.name, role: u.role,
       orgId: u.organization_id, siteAccess: u.site_access || [],
@@ -285,12 +319,20 @@ router.put("/users/:userId", requireAuth, validate(updateUserSchema), async (req
 });
 
 // ── DELETE /users/:userId ───────────────────────────────────
-router.delete("/users/:userId", requireAuth, async (req, res) => {
+router.delete("/users/:userId", requireAuth, (req, res, next) => {
+  // Only platform_super_admin can delete users
+  if (req.userRole !== "platform_super_admin") {
+    auditLog('warn', 'api', `Unauthorized user deletion attempt for ${req.params.userId}`, {}, req.userId);
+    return res.status(403).json({ ok: false, error: "Forbidden: only super admin can delete users" });
+  }
+  next();
+}, async (req, res) => {
   try {
     if (!corePool) return res.status(503).json({ ok: false, error: "Database unavailable" });
     const { userId } = req.params;
-    const r = await corePool.query(`DELETE FROM users WHERE id = $1 RETURNING id`, [userId]);
+    const r = await corePool.query(`DELETE FROM users WHERE id = $1 RETURNING id, email`, [userId]);
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "user not found" });
+    auditLog('warn', 'api', `User deleted: ${r.rows[0].email}`, { userId }, req.userId);
     res.json({ ok: true, deleted: r.rows[0].id });
   } catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });

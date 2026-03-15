@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { ConfirmActionDialog } from "@/components/ui/confirm-action-dialog";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -100,6 +101,15 @@ function ReferentialTab() {
   const [editSiteName, setEditSiteName] = useState("");
   const [editingTerrainId, setEditingTerrainId] = useState<string | null>(null);
   const [editTerrainName, setEditTerrainName] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<
+    | { type: "org"; id: string; name: string }
+    | { type: "site"; id: string; name: string }
+    | { type: "terrain"; id: string; name: string }
+    | null
+  >(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [deletingTargetId, setDeletingTargetId] = useState<string | null>(null);
 
   const handleCreateOrg = async () => {
     if (!newOrgName.trim()) return;
@@ -112,6 +122,51 @@ function ReferentialTab() {
   const handleCreateTerrain = async () => {
     if (!selectedSiteId || !newTerrainName.trim()) return;
     try { await createTerrain.mutateAsync({ siteId: selectedSiteId, name: newTerrainName.trim() }); toast.success("Terrain créé"); setShowCreateTerrain(false); setNewTerrainName(""); } catch { toast.error("Erreur création terrain"); }
+  };
+
+  const requiredDeleteKeyword = "CONFIRM-DELETE";
+
+  const openDeleteConfirm = (target: NonNullable<typeof deleteTarget>) => {
+    setDeleteError(null);
+    setDeleteConfirmText("");
+    setDeleteTarget(target);
+  };
+
+  const closeDeleteConfirm = () => {
+    setDeleteError(null);
+    setDeleteConfirmText("");
+    setDeleteTarget(null);
+  };
+
+  const executeDeleteTarget = async () => {
+    if (!deleteTarget) return;
+
+    setDeleteError(null);
+    setDeletingTargetId(deleteTarget.id);
+    try {
+      if (deleteTarget.type === "org") {
+        await deleteOrg.mutateAsync(deleteTarget.id);
+        toast.success("Organisation supprimée");
+        if (selectedOrgId === deleteTarget.id) {
+          setSelectedOrgId(null);
+          setSelectedSiteId(null);
+        }
+      } else if (deleteTarget.type === "site") {
+        await deleteSite.mutateAsync(deleteTarget.id);
+        toast.success("Site supprimé");
+        if (selectedSiteId === deleteTarget.id) {
+          setSelectedSiteId(null);
+        }
+      } else {
+        await deleteTerrain.mutateAsync(deleteTarget.id);
+        toast.success("Terrain supprimé");
+      }
+      closeDeleteConfirm();
+    } catch (e: any) {
+      setDeleteError(e?.message || "Impossible de supprimer cet élément");
+    } finally {
+      setDeletingTargetId(null);
+    }
   };
 
   return (
@@ -136,7 +191,7 @@ function ReferentialTab() {
                   <span className="flex items-center gap-1">{o.name} <ChevronRight className="w-3 h-3 text-muted-foreground" /></span>
                   <span className="flex gap-0.5">
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setEditingOrgId(o.id); setEditOrgName(o.name); }}><Pencil className="w-3 h-3" /></Button>
-                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={(e) => { e.stopPropagation(); if (confirm(`Supprimer "${o.name}" ?`)) deleteOrg.mutateAsync(o.id).then(() => toast.success("Supprimée")); }}><Trash2 className="w-3 h-3" /></Button>
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={(e) => { e.stopPropagation(); openDeleteConfirm({ type: "org", id: o.id, name: o.name }); }}><Trash2 className="w-3 h-3" /></Button>
                   </span>
                 </>
               )}
@@ -166,7 +221,7 @@ function ReferentialTab() {
                   <span className="flex items-center gap-1">{s.name} <ChevronRight className="w-3 h-3 text-muted-foreground" /></span>
                   <span className="flex gap-0.5">
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={(e) => { e.stopPropagation(); setEditingSiteId(s.id); setEditSiteName(s.name); }}><Pencil className="w-3 h-3" /></Button>
-                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={(e) => { e.stopPropagation(); if (confirm(`Supprimer "${s.name}" ?`)) deleteSite.mutateAsync(s.id).then(() => toast.success("Supprimé")); }}><Trash2 className="w-3 h-3" /></Button>
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={(e) => { e.stopPropagation(); openDeleteConfirm({ type: "site", id: s.id, name: s.name }); }}><Trash2 className="w-3 h-3" /></Button>
                   </span>
                 </>
               )}
@@ -196,7 +251,7 @@ function ReferentialTab() {
                   <span>{t.name}</span>
                   <span className="flex gap-0.5">
                     <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => { setEditingTerrainId(t.id); setEditTerrainName(t.name); }}><Pencil className="w-3 h-3" /></Button>
-                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={() => { if (confirm(`Supprimer "${t.name}" ?`)) deleteTerrain.mutateAsync(t.id).then(() => toast.success("Supprimé")); }}><Trash2 className="w-3 h-3" /></Button>
+                    <Button size="sm" variant="ghost" className="h-6 w-6 p-0 text-destructive" onClick={() => { openDeleteConfirm({ type: "terrain", id: t.id, name: t.name }); }}><Trash2 className="w-3 h-3" /></Button>
                   </span>
                 </>
               )}
@@ -255,6 +310,36 @@ function ReferentialTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmActionDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) closeDeleteConfirm(); }}
+        title="Confirmer la suppression"
+        description="Cette action est irréversible et supprimera définitivement l'élément sélectionné."
+        requiredKeyword={requiredDeleteKeyword}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onConfirm={executeDeleteTarget}
+        error={deleteError}
+        busy={!!deletingTargetId}
+      >
+        {deleteTarget && (
+          <div className="rounded-md border bg-muted/30 p-3 text-xs space-y-1.5">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Type</span>
+              <span className="font-medium capitalize">{deleteTarget.type}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Nom</span>
+              <span className="font-medium">{deleteTarget.name}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">ID</span>
+              <span className="font-mono">{deleteTarget.id}</span>
+            </div>
+          </div>
+        )}
+      </ConfirmActionDialog>
     </div>
   );
 }
@@ -557,6 +642,11 @@ function GatewaysTab() {
 
   // Device mapping dialog
   const [mappingDevice, setMappingDevice] = useState<Record<string, any> | null>(null);
+  const [deleteGatewayTarget, setDeleteGatewayTarget] = useState<string | null>(null);
+  const [deleteGatewayConfirmText, setDeleteGatewayConfirmText] = useState("");
+  const [deleteGatewayError, setDeleteGatewayError] = useState<string | null>(null);
+
+  const requiredDeleteGatewayKeyword = "CONFIRM-DELETE-GATEWAY";
 
   const handleMap = async (gatewayId: string) => {
     if (mapTerrainId === "none") return;
@@ -622,11 +712,22 @@ function GatewaysTab() {
   };
 
   const handleDeleteGateway = (gatewayId: string) => {
-    if (!confirm(`Supprimer le concentrateur « ${gatewayId} » ?\nCette action supprime uniquement l'enregistrement, pas les données.`)) return;
-    deleteGwMut.mutate(gatewayId, {
-      onSuccess: () => toast.success("Concentrateur supprimé"),
-      onError: (err: any) => toast.error(err?.message || "Erreur suppression"),
-    });
+    setDeleteGatewayError(null);
+    setDeleteGatewayConfirmText("");
+    setDeleteGatewayTarget(gatewayId);
+  };
+
+  const executeDeleteGateway = async () => {
+    if (!deleteGatewayTarget) return;
+    setDeleteGatewayError(null);
+    try {
+      await deleteGwMut.mutateAsync(deleteGatewayTarget);
+      toast.success("Concentrateur supprimé");
+      setDeleteGatewayTarget(null);
+      setDeleteGatewayConfirmText("");
+    } catch (err: any) {
+      setDeleteGatewayError(err?.message || "Erreur suppression");
+    }
   };
 
   const unmappedDeviceCount = displayDevices.filter((d: any) => !d.point_id).length;
@@ -1017,6 +1118,28 @@ function GatewaysTab() {
         </DialogContent>
       </Dialog>
 
+      <ConfirmActionDialog
+        open={!!deleteGatewayTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteGatewayTarget(null);
+            setDeleteGatewayConfirmText("");
+            setDeleteGatewayError(null);
+          }
+        }}
+        title="Supprimer ce concentrateur"
+        description={deleteGatewayTarget ? `Le concentrateur « ${deleteGatewayTarget} » sera supprimé du registre. Les données historiques ne seront pas supprimées.` : ""}
+        confirmLabel={deleteGwMut.isPending ? "Suppression..." : "Supprimer"}
+        cancelLabel="Annuler"
+        requiredKeyword={requiredDeleteGatewayKeyword}
+        confirmText={deleteGatewayConfirmText}
+        onConfirmTextChange={setDeleteGatewayConfirmText}
+        onConfirm={executeDeleteGateway}
+        busy={deleteGwMut.isPending}
+        error={deleteGatewayError}
+        destructive
+      />
+
       {/* ── Device Mapping Dialog (shared component) ── */}
       <DeviceMappingDialog
         device={mappingDevice}
@@ -1225,11 +1348,16 @@ function IncomingTab() {
 
   // Info dialog state
   const [infoMsg, setInfoMsg] = useState<Record<string, any> | null>(null);
+  const [purgeConfirmOpen, setPurgeConfirmOpen] = useState(false);
+  const [purgeConfirmText, setPurgeConfirmText] = useState("");
+  const [purgeError, setPurgeError] = useState<string | null>(null);
 
   // Delete mutations
   const deleteMut = useDeleteIncoming();
   const deleteAllMut = useDeleteAllIncoming();
   const reconcileMut = useReconcileIncoming();
+
+  const requiredPurgeKeyword = "CONFIRM-PURGE-INCOMING";
 
   const handleDeleteOne = (id: string) => {
     deleteMut.mutate(id, {
@@ -1251,20 +1379,25 @@ function IncomingTab() {
   };
 
   const handlePurgeAll = () => {
-    const filterLabel = statusFilter === "all" ? "TOUS les messages" : `les messages « ${statusFilter} »`;
-    if (!confirm(`Supprimer ${filterLabel} ?\nCette action est irréversible.`)) return;
+    setPurgeError(null);
+    setPurgeConfirmText("");
+    setPurgeConfirmOpen(true);
+  };
+
+  const executePurgeAll = async () => {
+    setPurgeError(null);
     const params = actualFilter ? { status: actualFilter } : undefined;
-    deleteAllMut.mutate(params, {
-      onSuccess: (data: any) => {
-        const count = (data as any)?.deleted_count ?? 0;
-        toast.success(`${count} message(s) supprimé(s)`);
-      },
-      onError: (error: any) => {
-        const msg = error?.message || JSON.stringify(error);
-        toast.error(`Erreur purge: ${msg}`);
-        console.error("Delete all incoming error:", error);
-      },
-    });
+    try {
+      const data = await deleteAllMut.mutateAsync(params);
+      const count = (data as any)?.deleted_count ?? 0;
+      toast.success(`${count} message(s) supprimé(s)`);
+      setPurgeConfirmOpen(false);
+      setPurgeConfirmText("");
+    } catch (error: any) {
+      const msg = error?.message || JSON.stringify(error);
+      setPurgeError(`Erreur purge: ${msg}`);
+      console.error("Delete all incoming error:", error);
+    }
   };
 
   return (
@@ -1400,6 +1533,28 @@ function IncomingTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <ConfirmActionDialog
+        open={purgeConfirmOpen}
+        onOpenChange={(open) => {
+          setPurgeConfirmOpen(open);
+          if (!open) {
+            setPurgeConfirmText("");
+            setPurgeError(null);
+          }
+        }}
+        title="Purger les messages entrants"
+        description={`Cette action supprimera ${statusFilter === "all" ? "TOUS les messages" : `les messages « ${statusFilter} »`} de la liste entrante. Action irréversible.`}
+        confirmLabel={deleteAllMut.isPending ? "Purge..." : "Purger"}
+        cancelLabel="Annuler"
+        requiredKeyword={requiredPurgeKeyword}
+        confirmText={purgeConfirmText}
+        onConfirmTextChange={setPurgeConfirmText}
+        onConfirm={executePurgeAll}
+        busy={deleteAllMut.isPending}
+        error={purgeError}
+        destructive
+      />
     </Card>
   );
 }
@@ -1431,6 +1586,11 @@ function MeasurementPointsTab() {
   const [editDevice, setEditDevice] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [editCtRatio, setEditCtRatio] = useState("1");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const requiredDeleteKeyword = "CONFIRM-DELETE-POINT";
 
   const handleCreate = async () => {
     if (!selectedTerrainId || !newName.trim()) return;
@@ -1465,11 +1625,22 @@ function MeasurementPointsTab() {
   };
 
   const handleDelete = (pointId: string, name: string) => {
-    if (!confirm(`Supprimer le point « ${name} » ?\nCela supprimera aussi le mapping appareil associé.`)) return;
-    deletePointMut.mutate(pointId, {
-      onSuccess: () => toast.success("Point supprimé"),
-      onError: () => toast.error("Erreur suppression"),
-    });
+    setDeleteError(null);
+    setDeleteConfirmText("");
+    setDeleteTarget({ id: pointId, name });
+  };
+
+  const executeDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteError(null);
+    try {
+      await deletePointMut.mutateAsync(deleteTarget.id);
+      toast.success("Point supprimé");
+      setDeleteTarget(null);
+      setDeleteConfirmText("");
+    } catch {
+      setDeleteError("Erreur suppression");
+    }
   };
 
   return (
@@ -1643,6 +1814,28 @@ function MeasurementPointsTab() {
           </CardContent>
         </Card>
       )}
+
+      <ConfirmActionDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteConfirmText("");
+            setDeleteError(null);
+          }
+        }}
+        title="Supprimer ce point de mesure"
+        description={deleteTarget ? `Le point « ${deleteTarget.name} » sera supprimé, ainsi que le mapping appareil associé.` : ""}
+        confirmLabel={deletePointMut.isPending ? "Suppression..." : "Supprimer"}
+        cancelLabel="Annuler"
+        requiredKeyword={requiredDeleteKeyword}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onConfirm={executeDelete}
+        busy={deletePointMut.isPending}
+        error={deleteError}
+        destructive
+      />
     </div>
   );
 }
@@ -1680,6 +1873,11 @@ function UsersTab() {
   const [editRole, setEditRole] = useState("");
   const [editOrgId, setEditOrgId] = useState("none");
   const [editActive, setEditActive] = useState(true);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const requiredDeleteKeyword = "CONFIRM-DELETE-USER";
 
   const handleCreate = async () => {
     if (!newEmail.trim() || !newName.trim() || !newPassword.trim()) return;
@@ -1712,11 +1910,22 @@ function UsersTab() {
   };
 
   const handleDelete = (userId: string, userName: string) => {
-    if (!confirm(`Supprimer l'utilisateur « ${userName} » ?`)) return;
-    deleteUserMut.mutate(userId, {
-      onSuccess: () => toast.success("Utilisateur supprimé"),
-      onError: () => toast.error("Erreur suppression"),
-    });
+    setDeleteError(null);
+    setDeleteConfirmText("");
+    setDeleteTarget({ id: userId, name: userName });
+  };
+
+  const executeDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteError(null);
+    try {
+      await deleteUserMut.mutateAsync(deleteTarget.id);
+      toast.success("Utilisateur supprimé");
+      setDeleteTarget(null);
+      setDeleteConfirmText("");
+    } catch {
+      setDeleteError("Erreur suppression");
+    }
   };
 
   return (
@@ -1830,6 +2039,28 @@ function UsersTab() {
         </table>
         {!isLoading && (users as any[]).length === 0 && <p className="text-xs text-muted-foreground italic mt-2">Aucun utilisateur</p>}
       </CardContent>
+
+      <ConfirmActionDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteConfirmText("");
+            setDeleteError(null);
+          }
+        }}
+        title="Supprimer cet utilisateur"
+        description={deleteTarget ? `L'utilisateur « ${deleteTarget.name} » sera supprimé de la plateforme.` : ""}
+        confirmLabel={deleteUserMut.isPending ? "Suppression..." : "Supprimer"}
+        cancelLabel="Annuler"
+        requiredKeyword={requiredDeleteKeyword}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onConfirm={executeDelete}
+        busy={deleteUserMut.isPending}
+        error={deleteError}
+        destructive
+      />
     </Card>
   );
 }
@@ -1855,6 +2086,11 @@ function ZonesTab() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editName, setEditName] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const requiredDeleteKeyword = "CONFIRM-DELETE-ZONE";
 
   const handleCreate = async () => {
     if (!selectedTerrainId || !newName.trim()) return;
@@ -1883,11 +2119,22 @@ function ZonesTab() {
   };
 
   const handleDelete = (zoneId: string, name: string) => {
-    if (!confirm(`Supprimer la zone « ${name} » ?\nLes points de mesure associés seront détachés de cette zone.`)) return;
-    deleteZoneMut.mutate(zoneId, {
-      onSuccess: () => toast.success("Zone supprimée"),
-      onError: () => toast.error("Erreur suppression"),
-    });
+    setDeleteError(null);
+    setDeleteConfirmText("");
+    setDeleteTarget({ id: zoneId, name });
+  };
+
+  const executeDelete = async () => {
+    if (!deleteTarget) return;
+    setDeleteError(null);
+    try {
+      await deleteZoneMut.mutateAsync(deleteTarget.id);
+      toast.success("Zone supprimée");
+      setDeleteTarget(null);
+      setDeleteConfirmText("");
+    } catch {
+      setDeleteError("Erreur suppression");
+    }
   };
 
   return (
@@ -2014,6 +2261,28 @@ function ZonesTab() {
           </CardContent>
         </Card>
       )}
+
+      <ConfirmActionDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDeleteTarget(null);
+            setDeleteConfirmText("");
+            setDeleteError(null);
+          }
+        }}
+        title="Supprimer cette zone"
+        description={deleteTarget ? `La zone « ${deleteTarget.name} » sera supprimée et les points associés seront détachés.` : ""}
+        confirmLabel={deleteZoneMut.isPending ? "Suppression..." : "Supprimer"}
+        cancelLabel="Annuler"
+        requiredKeyword={requiredDeleteKeyword}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onConfirm={executeDelete}
+        busy={deleteZoneMut.isPending}
+        error={deleteError}
+        destructive
+      />
     </div>
   );
 }

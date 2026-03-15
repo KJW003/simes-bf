@@ -1,4 +1,5 @@
 import React, { useState, useMemo, useCallback, useRef } from 'react';
+import { toast } from 'sonner';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
@@ -68,14 +69,14 @@ export default function Exports() {
 
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        alert(`Export failed: ${(error as any).error || 'Unknown error'}`);
+        toast.error(`Échec de l'export: ${(error as any).error || 'Erreur inconnue'}`);
         return;
       }
 
       const ct = response.headers.get('content-type') ?? '';
       if (!ct.includes('spreadsheet')) {
         const body = await response.json().catch(() => null);
-        alert((body as any)?.message ?? 'Aucune donnée à exporter pour ce point.');
+        toast.error((body as any)?.message ?? 'Aucune donnée à exporter pour ce point.');
         return;
       }
 
@@ -91,7 +92,7 @@ export default function Exports() {
       window.URL.revokeObjectURL(downloadUrl);
       document.body.removeChild(a);
     } catch {
-      alert('Export échoué. Veuillez réessayer.');
+      toast.error('Échec de l\'export. Veuillez réessayer.');
     } finally {
       setExportingId(null);
     }

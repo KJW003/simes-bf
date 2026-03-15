@@ -7,6 +7,7 @@ import { AppProvider, useAppContext } from '@/contexts/AppContext';
 vi.mock('@/lib/api', () => ({
   default: {
     login: vi.fn(),
+    logout: vi.fn().mockResolvedValue({ ok: true, message: 'Logged out' }),
     me: vi.fn().mockResolvedValue({ ok: false }),
     getOrgs: vi.fn().mockResolvedValue([]),
     getSites: vi.fn().mockResolvedValue([]),
