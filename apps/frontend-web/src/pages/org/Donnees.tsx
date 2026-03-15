@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { useReadings, useTerrainOverview, useZones } from '@/hooks/useApi';
 import { usePreferences } from '@/hooks/usePreferences';
 import { cn } from '@/lib/utils';
+import { adaptiveBucketMs, computeTimeWindow, downsampleByStep } from '@/lib/time-window';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
@@ -22,9 +23,10 @@ import {
 } from 'recharts';
 
 const RANGES = [
-  { key: '1D', label: '1 jour', hours: 24 },
-  { key: '7D', label: '7 jours', hours: 168 },
-  { key: '1M', label: '1 mois', hours: 720 },
+  { key: '24h', label: '24h' },
+  { key: '7d', label: '7j' },
+  { key: '30d', label: '30j' },
+  { key: 'custom', label: 'Jour précis' },
 ] as const;
 
 const METRICS = [
@@ -72,7 +74,8 @@ export default function History() {
   const { selectedTerrainId } = useAppContext();
   const navigate = useNavigate();
   const prefs = usePreferences();
-  const [range, setRange] = useState<string>('1D');
+  const [range, setRange] = useState<string>('24h');
+  const [customDate, setCustomDate] = useState('');
   const [metric, setMetric] = useState<string>('active_power_total');
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
   const [compareMode, setCompareMode] = useState(false);
@@ -89,21 +92,28 @@ export default function History() {
 
   const rangeObj = RANGES.find(r => r.key === range) ?? RANGES[0];
   const metricObj = METRICS.find(m => m.key === metric) ?? METRICS[0];
-  // Stabilize 'now' per range change — only recalculate on range switch
-  const now = useMemo(() => new Date(), [range]); // eslint-disable-line react-hooks/exhaustive-deps
-  const from = useMemo(() => new Date(now.getTime() - rangeObj.hours * 3600_000).toISOString(), [now, rangeObj]);
+  const window = useMemo(() => computeTimeWindow(range, customDate), [range, customDate]);
 
   // Flexible comparison date range
-  const compFrom = useMemo(() => {
-    if (!compareDate) return new Date(now.getTime() - rangeObj.hours * 3600_000 - 86400_000).toISOString();
-    const d = new Date(compareDate);
-    return d.toISOString();
-  }, [compareDate, now, rangeObj]);
-  const compTo = useMemo(() => {
-    if (!compareDate) return new Date(now.getTime() - 86400_000).toISOString();
-    const d = new Date(compareDate);
-    return new Date(d.getTime() + rangeObj.hours * 3600_000).toISOString();
-  }, [compareDate, now, rangeObj]);
+  const comparisonWindow = useMemo(() => {
+    const durationMs = Math.max(1, window.durationMs);
+    if (!compareDate) {
+      const toTs = new Date(window.from).getTime();
+      const fromTs = toTs - durationMs;
+      return { from: new Date(fromTs).toISOString(), to: new Date(toTs).toISOString() };
+    }
+
+    const start = new Date(`${compareDate}T00:00:00`);
+    if (range === 'custom') {
+      const end = new Date(start);
+      end.setHours(23, 59, 59, 999);
+      return { from: start.toISOString(), to: end.toISOString() };
+    }
+    return { from: start.toISOString(), to: new Date(start.getTime() + durationMs).toISOString() };
+  }, [compareDate, range, window]);
+
+  const compFrom = comparisonWindow.from;
+  const compTo = comparisonWindow.to;
   const compareLabel = useMemo(() => {
     if (!compareDate) return 'J-1';
     return new Date(compareDate).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
@@ -130,10 +140,11 @@ export default function History() {
   }, [viewMode, metric]);
 
   const { data, isLoading, isError } = useReadings(selectedTerrainId, {
-    from,
-    to: now.toISOString(),
+    from: window.from,
+    to: window.to,
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
     cols: readingsCols,
+    limit: range === '24h' ? 4000 : range === '7d' ? 12000 : 25000,
   });
 
   const readings = (data?.readings ?? []) as Array<Record<string, unknown>>;
@@ -153,39 +164,54 @@ export default function History() {
   // ─── Compute chart data (with optional comparison)
   const chartData = useMemo(() => {
     if (!readings.length) return [];
-    const mainData = readings
-      .map(r => ({
-        time: new Date(String(r.time)).getTime(),
-        value: r[metric] != null ? Number(r[metric]) : null,
-        label: new Date(String(r.time)).toLocaleString('fr-FR', {
-          hour: '2-digit', minute: '2-digit',
-          ...(rangeObj.hours > 24 ? { day: '2-digit', month: '2-digit' } : {}),
-        }),
-      }))
-      .sort((a, b) => a.time - b.time);
+    const includeDay = window.durationMs > 24 * 3600_000;
+    const bucketMs = adaptiveBucketMs(window.durationMs);
+    const maxPoints = window.durationMs <= 2 * 24 * 3600_000 ? 800 : window.durationMs <= 7 * 24 * 3600_000 ? 1200 : 1600;
+
+    const toSeries = (rows: Array<Record<string, unknown>>, shiftMs = 0) => {
+      const buckets = new Map<number, { sum: number; count: number }>();
+      for (const r of rows) {
+        const rawTs = new Date(String(r.time)).getTime() + shiftMs;
+        const ts = Math.floor(rawTs / bucketMs) * bucketMs;
+        const val = r[metric] != null ? Number(r[metric]) : NaN;
+        if (Number.isNaN(val)) continue;
+        const existing = buckets.get(ts);
+        if (existing) {
+          existing.sum += val;
+          existing.count += 1;
+        } else {
+          buckets.set(ts, { sum: val, count: 1 });
+        }
+      }
+      const ordered = Array.from(buckets.entries())
+        .sort((a, b) => a[0] - b[0])
+        .map(([time, agg]) => ({
+          time,
+          value: agg.sum / agg.count,
+          label: new Date(time).toLocaleString('fr-FR', {
+            hour: '2-digit', minute: '2-digit',
+            ...(includeDay ? { day: '2-digit', month: '2-digit' } : {}),
+          }),
+        }));
+      return downsampleByStep(ordered, maxPoints);
+    };
+
+    const mainData = toSeries(readings);
 
     if (compareMode && compareReadings.length) {
       // Align comparison data to main time axis
-      const shiftMs = compareDate
-        ? new Date(from).getTime() - new Date(compFrom).getTime()
-        : 86400_000;
-      const compMap = new Map<string, number>();
-      for (const r of compareReadings) {
-        const shifted = new Date(new Date(String(r.time)).getTime() + shiftMs);
-        const label = shifted.toLocaleString('fr-FR', {
-          hour: '2-digit', minute: '2-digit',
-          ...(rangeObj.hours > 24 ? { day: '2-digit', month: '2-digit' } : {}),
-        });
-        const val = r[metric] != null ? Number(r[metric]) : null;
-        if (val != null) compMap.set(label, val);
+      const shiftMs = new Date(window.from).getTime() - new Date(compFrom).getTime();
+      const compMap = new Map<number, number>();
+      for (const item of toSeries(compareReadings, shiftMs)) {
+        compMap.set(item.time, item.value);
       }
       return mainData.map(d => ({
         ...d,
-        yesterday: compMap.get(d.label) ?? null,
+        yesterday: compMap.get(d.time) ?? null,
       }));
     }
     return mainData;
-  }, [readings, compareReadings, metric, rangeObj, compareMode]);
+  }, [readings, compareReadings, metric, window, compareMode, compFrom]);
 
   // ─── Daily energy bars
   const dailyEnergy = useMemo(() => {
@@ -312,12 +338,33 @@ export default function History() {
           <label className="text-xs font-medium text-muted-foreground">Période</label>
           <div className="flex gap-1">
             {RANGES.map(r => (
-              <Button key={r.key} variant={range === r.key ? 'default' : 'outline'} size="sm" onClick={() => setRange(r.key)}>
-                {r.key}
+              <Button
+                key={r.key}
+                variant={range === r.key ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  setRange(r.key);
+                  if (r.key === 'custom' && !customDate) setCustomDate(new Date().toISOString().slice(0, 10));
+                }}
+              >
+                {r.label}
               </Button>
             ))}
           </div>
         </div>
+
+        {range === 'custom' && (
+          <div className="space-y-1">
+            <label className="text-xs font-medium text-muted-foreground">Jour</label>
+            <input
+              type="date"
+              value={customDate}
+              onChange={e => setCustomDate(e.target.value)}
+              className="h-10 rounded border px-2 text-sm bg-background"
+              max={new Date().toISOString().slice(0, 10)}
+            />
+          </div>
+        )}
 
         <div className="space-y-1">
           <label className="text-xs font-medium text-muted-foreground">Métrique</label>
@@ -435,9 +482,9 @@ export default function History() {
                             <span style={{ color: hiddenSeries.has(entry.dataKey) ? '#9ca3af' : entry.color, textDecoration: hiddenSeries.has(entry.dataKey) ? 'line-through' : 'none' }}>{value}</span>
                           )}
                         />
-                        <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="Aujourd'hui" hide={hiddenSeries.has('value')} />
+                        <Line type="monotone" dataKey="value" stroke="hsl(var(--primary))" dot={false} strokeWidth={1.5} name="Aujourd'hui" hide={hiddenSeries.has('value')} isAnimationActive={false} />
                         {compareMode && (
-                          <Line type="monotone" dataKey="yesterday" stroke="#f97316" dot={false} strokeWidth={1.5} strokeDasharray="5 5" name={compareLabel} connectNulls hide={hiddenSeries.has('yesterday')} />
+                          <Line type="monotone" dataKey="yesterday" stroke="#f97316" dot={false} strokeWidth={1.5} strokeDasharray="5 5" name={compareLabel} connectNulls hide={hiddenSeries.has('yesterday')} isAnimationActive={false} />
                         )}
                         <Brush dataKey="label" height={20} stroke="hsl(var(--primary))" travellerWidth={8} />
                       </LineChart>
@@ -467,7 +514,7 @@ export default function History() {
           )}
 
           {/* Heatmap */}
-          {heatmapData.length > 0 && rangeObj.hours >= 168 && (
+          {heatmapData.length > 0 && window.durationMs >= 7 * 24 * 3600_000 && (
             <Card>
               <CardHeader className="pb-2">
                 <CardTitle className="text-base font-medium">Profil hebdomadaire — {metricObj.label}</CardTitle>

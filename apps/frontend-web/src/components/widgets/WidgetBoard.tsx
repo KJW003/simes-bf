@@ -25,6 +25,7 @@ import { LiveKPIs, UnifiedLoadCurve, PowerPeaksTable, DailyCostWidget, CarbonWid
 import { SiteMapWidget } from '@/components/widgets/SiteMapWidget';
 import { cn } from '@/lib/utils';
 import { METRIC_LABELS, METRIC_UNITS, ENERGY_SOURCE_LABELS } from '@/types/widget-engine';
+import { computeTimeWindow } from '@/lib/time-window';
 import {
   AreaChart,
   Area,
@@ -381,7 +382,7 @@ function renderWidgetContent(
     case 'dashboard-kpis':
       return ctx?.terrainId ? <LiveKPIs terrainId={ctx.terrainId} /> : null;
     case 'dashboard-load-curve':
-      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} dashboardPeriod={ctx.timePeriod} /> : null;
+      return ctx?.terrainId ? <UnifiedLoadCurve terrainId={ctx.terrainId} from={ctx.timePeriod === 'custom' ? ctx.from : undefined} to={ctx.timePeriod === 'custom' ? ctx.to : undefined} dashboardPeriod={ctx.timePeriod} /> : null;
     case 'dashboard-map':
       return ctx?.terrainId ? <SiteMapWidget terrainId={ctx.terrainId} size={size} /> : null;
     case 'dashboard-alarms':
@@ -389,9 +390,9 @@ function renderWidgetContent(
     case 'dashboard-alarm-config':
       return ctx?.terrainId ? <AlarmConfigPanel terrainId={ctx.terrainId} /> : null;
     case 'dashboard-daily-cost':
-      return ctx?.terrainId ? <DailyCostWidget terrainId={ctx.terrainId} dashboardPeriod={ctx.timePeriod} /> : null;
+      return ctx?.terrainId ? <DailyCostWidget terrainId={ctx.terrainId} from={ctx.timePeriod === 'custom' ? ctx.from : undefined} to={ctx.timePeriod === 'custom' ? ctx.to : undefined} dashboardPeriod={ctx.timePeriod} /> : null;
     case 'dashboard-carbon':
-      return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} dashboardPeriod={ctx.timePeriod} /> : null;
+      return ctx?.terrainId ? <CarbonWidget terrainId={ctx.terrainId} from={ctx.timePeriod === 'custom' ? ctx.from : undefined} to={ctx.timePeriod === 'custom' ? ctx.to : undefined} dashboardPeriod={ctx.timePeriod} /> : null;
     case 'dashboard-power-peaks':
       return ctx?.terrainId ? <PowerPeaksTable terrainId={ctx.terrainId} from={ctx.from ?? stableFrom(86400_000)} to={ctx.to ?? stableNow()} /> : null;
     case 'dashboard-anomalies':
@@ -934,16 +935,15 @@ export function WidgetBoard() {
   // Time period selector for readings
   const [timePeriod, setTimePeriod] = useState('live');
   const [customDate, setCustomDate] = useState('');
-  const periodMs = timePeriod === 'live'
-    ? (Date.now() - new Date(new Date().toDateString()).getTime()) || 24 * 60 * 60 * 1000
-    : timePeriod === 'custom'
-      ? (customDate ? Date.now() - new Date(customDate).getTime() : 24 * 60 * 60 * 1000)
-      : TIME_PERIOD_OPTIONS.find(o => o.value === timePeriod)?.ms ?? 24 * 60 * 60 * 1000;
 
   // Fetch historical readings for chart widgets
-  const readingsFrom = useMemo(() => stableFrom(periodMs), [periodMs]);
-  const readingsTo = useMemo(() => stableNow(), [readingsFrom]);
-  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom });
+  const readingsWindow = useMemo(
+    () => computeTimeWindow(timePeriod, customDate),
+    [timePeriod, customDate]
+  );
+  const readingsFrom = readingsWindow.from;
+  const readingsTo = readingsWindow.to;
+  const { data: readingsData } = useReadings(selectedTerrainId, { from: readingsFrom, to: readingsTo });
 
   // Fetch anomalies and ML forecast data for IA widgets
   const { data: anomaliesData } = useAnomalies(selectedTerrainId, 30);
@@ -1148,7 +1148,15 @@ export function WidgetBoard() {
           <p className="text-xs sm:text-sm text-muted-foreground hidden sm:block">Glissez-déposez, configurez et composez vos widgets.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={timePeriod} onValueChange={setTimePeriod}>
+          <Select
+            value={timePeriod}
+            onValueChange={(value) => {
+              setTimePeriod(value);
+              if (value === 'custom' && !customDate) {
+                setCustomDate(new Date().toISOString().slice(0, 10));
+              }
+            }}
+          >
             <SelectTrigger className="w-28 sm:w-36 h-8 text-xs">
               <SelectValue />
             </SelectTrigger>

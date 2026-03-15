@@ -46,7 +46,7 @@ export default function Points({ embedded }: { embedded?: boolean }) {
   const sparklineFrom = stableFrom(24 * 3600_000);
   const { data: allReadingsData } = useReadings(
     selectedTerrainId,
-    { from: sparklineFrom },
+    { from: sparklineFrom, limit: 20000 },
   );
 
   // Compute sparkline data per point

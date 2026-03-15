@@ -16,6 +16,7 @@ import {
 } from 'lucide-react';
 import { useDashboard, useReadings, useChartData, useEnergyHistory, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
+import { adaptiveBucketMs, downsampleByStep } from '@/lib/time-window';
 import {
   LineChart, Line, BarChart, Bar, AreaChart, Area,
   XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
@@ -141,7 +142,7 @@ const METRIC_OPTIONS = [
 ] as const;
 
 /* ── UnifiedLoadCurve (Courbe des points) ── */
-export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
+export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId, from: externalFrom, to: externalTo, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
   const [period, setPeriod] = useState<string>('24h');
   const [offsetDays, setOffsetDays] = useState(0);
   const [metric, setMetric] = useState<string>('active_power_total');
@@ -156,8 +157,11 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
   }, [dashboardPeriod]);
 
   const periodMs = LOAD_PERIODS.find(p => p.key === period)?.ms ?? 86400_000;
-  const from = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
-  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const localFrom = useMemo(() => stableFrom(offsetDays * 86400_000 + periodMs), [periodMs, offsetDays]);
+  const localTo = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const useExternalWindow = dashboardPeriod === 'custom' && !!externalFrom && !!externalTo;
+  const from = useExternalWindow ? String(externalFrom) : localFrom;
+  const to = useExternalWindow ? String(externalTo) : localTo;
 
   // Scale limit based on period to avoid data truncation
   const limit = periodMs <= 48 * 3600_000 ? 10000 : periodMs <= 7 * 86400_000 ? 30000 : 50000;
@@ -197,11 +201,14 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
       idByName.set(name, id);
     }
 
+    const fromTs = new Date(from).getTime();
+    const toTs = new Date(to).getTime();
+    const bucketMs = adaptiveBucketMs(Math.max(1, toTs - fromTs));
     const buckets = new Map<number, Record<string, number | null>>();
     for (const r of readings) {
       const pid = String(r.point_id);
       if (!activePts.has(pid)) continue;
-      const t = Math.floor(new Date(String(r.time)).getTime() / 300_000) * 300_000;
+      const t = Math.floor(new Date(String(r.time)).getTime() / bucketMs) * bucketMs;
       if (!buckets.has(t)) buckets.set(t, {});
       const name = pointMap.get(pid) ?? pid;
       const val = r[metric] != null ? Number(r[metric]) : null;
@@ -216,8 +223,11 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
         ...vals,
       }));
 
-    return { chartData: sorted, pointNames: pNames, pointIdByName: idByName };
-  }, [readings, points, metric, selectedPoints]);
+    const maxPoints = periodMs <= 48 * 3600_000 ? 700 : periodMs <= 7 * 86400_000 ? 1000 : 1400;
+    const sampled = downsampleByStep(sorted, maxPoints);
+
+    return { chartData: sampled, pointNames: pNames, pointIdByName: idByName };
+  }, [readings, points, metric, selectedPoints, from, to, periodMs]);
 
   const handleLegendClick = useCallback((entry: any) => {
     const name = entry.value ?? entry.dataKey;
@@ -322,6 +332,7 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
                   dataKey={name}
                   stroke={color}
                   dot={false}
+                  isAnimationActive={false}
                   strokeWidth={hiddenSeries.has(name) ? 0 : 1.5}
                   connectNulls
                   hide={hiddenSeries.has(name)}
@@ -446,7 +457,7 @@ const COST_PERIODS = [
   { key: '365d', label: '1 an', days: 365 },
 ] as const;
 
-export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, dashboardPeriod }: { terrainId: string; dashboardPeriod?: string }) {
+export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, from: externalFrom, to: externalTo, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
   const [period, setPeriod] = useState<string>('30d');
@@ -461,8 +472,8 @@ export const DailyCostWidget = React.memo(function DailyCostWidget({ terrainId, 
   }, [dashboardPeriod]);
 
   const periodDays = COST_PERIODS.find(p => p.key === period)?.days ?? 30;
-  const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
-  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const from = useMemo(() => externalFrom ?? stableFrom((offsetDays + periodDays) * 86400_000), [externalFrom, periodDays, offsetDays]);
+  const to = useMemo(() => externalTo ?? stableFrom(offsetDays * 86400_000), [externalTo, offsetDays]);
   
   // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
   const { data: historyResult } = useEnergyHistory(terrainId, { from, to });
@@ -575,7 +586,7 @@ const CARBON_PERIODS = [
   { key: '365d', label: '1 an', days: 365 },
 ] as const;
 
-export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, dashboardPeriod }: { terrainId: string; dashboardPeriod?: string }) {
+export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, from: externalFrom, to: externalTo, dashboardPeriod }: { terrainId: string; from?: string; to?: string; dashboardPeriod?: string }) {
   const prefs = usePreferences();
   const [period, setPeriod] = useState<string>('30d');
   const [offsetDays, setOffsetDays] = useState(0);
@@ -589,8 +600,8 @@ export const CarbonWidget = React.memo(function CarbonWidget({ terrainId, dashbo
   }, [dashboardPeriod]);
 
   const periodDays = CARBON_PERIODS.find(p => p.key === period)?.days ?? 30;
-  const from = useMemo(() => stableFrom((offsetDays + periodDays) * 86400_000), [periodDays, offsetDays]);
-  const to = useMemo(() => stableFrom(offsetDays * 86400_000), [offsetDays]);
+  const from = useMemo(() => externalFrom ?? stableFrom((offsetDays + periodDays) * 86400_000), [externalFrom, periodDays, offsetDays]);
+  const to = useMemo(() => externalTo ?? stableFrom(offsetDays * 86400_000), [externalTo, offsetDays]);
   
   // Fetch historical daily totals (for past days, already aggregated across all LOAD points)
   const { data: historyResult } = useEnergyHistory(terrainId, { from, to });

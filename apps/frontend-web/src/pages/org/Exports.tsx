@@ -275,7 +275,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
   // Separate readings fetch for image export with its own time range
   const imgFrom = useMemo(() => stableFrom(imgDays * 86400_000), [imgDays]);
   const imgTo = useMemo(() => stableNow(), []);
-  const { data: imgReadingsData, isLoading: imgLoading } = useReadings(selectedTerrainId, { from: imgFrom, to: imgTo });
+  const { data: imgReadingsData, isLoading: imgLoading } = useReadings(selectedTerrainId, { from: imgFrom, to: imgTo, limit: 25000 });
   const imgReadings = (imgReadingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
   // Toggle point for image

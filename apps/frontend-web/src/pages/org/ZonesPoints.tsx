@@ -69,7 +69,7 @@ export default function ZonesPoints() {
 
   // Sparkline data — stableFrom keeps the query key stable within 15-min windows
   const sparklineFrom = stableFrom(24 * 3600_000);
-  const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom, cols: 'active_power_total' });
+  const { data: allReadingsData } = useReadings(terrainId, { from: sparklineFrom, cols: 'active_power_total', limit: 20000 });
   const sparklineMap = useMemo(() => {
     const map = new Map<string, number[]>();
     const readings = (allReadingsData as any)?.readings ?? [];

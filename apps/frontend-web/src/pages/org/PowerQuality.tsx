@@ -38,7 +38,7 @@ export default function PowerQuality() {
   const [selectedPoint, setSelectedPoint] = useState<string>('_all');
   const [period, setPeriod] = useState('24h');
 
-  const now = useMemo(() => new Date(), []);
+  const now = useMemo(() => new Date(), [period]);
   const periodMs = PERIOD_OPTIONS.find(p => p.value === period)?.ms ?? 24 * 3600_000;
   const fromDate = useMemo(() => new Date(now.getTime() - periodMs).toISOString(), [now, periodMs]);
 
@@ -46,6 +46,7 @@ export default function PowerQuality() {
   const { data: readingsData, isLoading: loadingR } = useReadings(selectedTerrainId, {
     from: fromDate, to: now.toISOString(),
     point_id: selectedPoint === '_all' ? undefined : selectedPoint,
+    limit: period === '6h' ? 1200 : period === '12h' ? 2400 : period === '24h' ? 4800 : period === '7d' ? 14000 : 25000,
     cols: 'power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,voltage_unbalance,current_unbalance',
   });
 

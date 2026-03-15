@@ -13,6 +13,7 @@ import {
 } from '@/components/ui/dialog';
 import { useTerrainOverview, useReadings } from '@/hooks/useApi';
 import api from '@/lib/api';
+import { adaptiveBucketMs, computeTimeWindow, downsampleByStep } from '@/lib/time-window';
 import {
   Activity, Zap, Thermometer, ArrowLeft, Download, Loader2,
   AlertTriangle, CheckCircle2, ChevronDown, ChevronUp,
@@ -122,6 +123,7 @@ const InteractiveLineChart = React.memo(function InteractiveLineChart({ data, li
         />
         {lines.map(l => (
           <Line key={l.dataKey} type="monotone" dataKey={l.dataKey} stroke={l.stroke} dot={false}
+            isAnimationActive={false}
             strokeWidth={l.strokeWidth ?? 1.5} name={l.name} yAxisId={l.yAxisId}
             hide={hiddenSeries.has(l.dataKey)} />
         ))}
@@ -135,16 +137,17 @@ export default function PointDetails() {
   const { pointId } = useParams<{ pointId: string }>();
   const { selectedTerrainId } = useAppContext();
   const [tab, setTab] = useState('overview');
-  const [range, setRange] = useState<'1D' | '7D' | '1M'>('1D');
+  const [range, setRange] = useState<'24h' | '7d' | '30d' | 'custom'>('24h');
+  const [customDate, setCustomDate] = useState('');
 
-
-  const now = useMemo(() => new Date(), []);
-  const rangeMs = range === '1D' ? 86400_000 : range === '7D' ? 7 * 86400_000 : 30 * 86400_000;
-  const from = useMemo(() => new Date(now.getTime() - rangeMs).toISOString(), [now, rangeMs]);
+  const window = useMemo(() => computeTimeWindow(range, customDate), [range, customDate]);
 
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(selectedTerrainId);
   const { data: readingsData, isLoading: loadR } = useReadings(selectedTerrainId, {
-    from, to: now.toISOString(), point_id: pointId,
+    from: window.from,
+    to: window.to,
+    point_id: pointId,
+    limit: range === '24h' ? 4000 : range === '7d' ? 12000 : 25000,
     cols: 'active_power_total,active_power_a,active_power_b,active_power_c,reactive_power_total,reactive_power_a,reactive_power_b,reactive_power_c,apparent_power_total,apparent_power_a,apparent_power_b,apparent_power_c,voltage_a,voltage_b,voltage_c,voltage_ab,voltage_bc,voltage_ca,current_a,current_b,current_c,power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,energy_total',
   });
 
@@ -155,35 +158,74 @@ export default function PointDetails() {
   const isLoading = loadOv || loadR;
 
   // ─── Time-series for charts (all available metrics)
-  const timeSeries = useMemo(() =>
-    readings.map(r => ({
-      time: fmtDT(String(r.time)),
-      // Puissances
-      p_total: num(r.active_power_total),
-      p_a: num(r.active_power_a), p_b: num(r.active_power_b), p_c: num(r.active_power_c),
-      q_total: num(r.reactive_power_total),
-      q_a: num(r.reactive_power_a), q_b: num(r.reactive_power_b), q_c: num(r.reactive_power_c),
-      s_total: num(r.apparent_power_total),
-      s_a: num(r.apparent_power_a), s_b: num(r.apparent_power_b), s_c: num(r.apparent_power_c),
-      // Tensions simples
-      v_a: num(r.voltage_a), v_b: num(r.voltage_b), v_c: num(r.voltage_c),
-      // Tensions composées
-      v_ab: num(r.voltage_ab), v_bc: num(r.voltage_bc), v_ca: num(r.voltage_ca),
-      // Courants
-      i_a: num(r.current_a), i_b: num(r.current_b), i_c: num(r.current_c),
-      // PF
-      pf: num(r.power_factor_total),
-      pf_a: num(r.power_factor_a), pf_b: num(r.power_factor_b), pf_c: num(r.power_factor_c),
-      // THD courant
-      thdi_a: num(r.thdi_a), thdi_b: num(r.thdi_b), thdi_c: num(r.thdi_c),
-      // THD tension
-      thdu_a: num(r.thdu_a), thdu_b: num(r.thdu_b), thdu_c: num(r.thdu_c),
-      // Énergie
-      energy_total: num(r.energy_total),
+  const timeSeries = useMemo(() => {
+    if (!readings.length) return [];
 
-    })).reverse(),
-    [readings],
-  );
+    const bucketMs = adaptiveBucketMs(window.durationMs);
+    const maxPoints = window.durationMs <= 2 * 24 * 3600_000 ? 800 : window.durationMs <= 7 * 24 * 3600_000 ? 1200 : 1600;
+    const metricKeys = [
+      'active_power_total', 'active_power_a', 'active_power_b', 'active_power_c',
+      'reactive_power_total', 'reactive_power_a', 'reactive_power_b', 'reactive_power_c',
+      'apparent_power_total', 'apparent_power_a', 'apparent_power_b', 'apparent_power_c',
+      'voltage_a', 'voltage_b', 'voltage_c', 'voltage_ab', 'voltage_bc', 'voltage_ca',
+      'current_a', 'current_b', 'current_c',
+      'power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c',
+      'thdi_a', 'thdi_b', 'thdi_c', 'thdu_a', 'thdu_b', 'thdu_c', 'energy_total',
+    ];
+
+    const buckets = new Map<number, { sums: Record<string, number>; counts: Record<string, number> }>();
+    for (const row of readings) {
+      const ts = Math.floor(new Date(String(row.time)).getTime() / bucketMs) * bucketMs;
+      let agg = buckets.get(ts);
+      if (!agg) {
+        agg = { sums: {}, counts: {} };
+        buckets.set(ts, agg);
+      }
+      for (const key of metricKeys) {
+        const v = row[key] != null ? Number(row[key]) : NaN;
+        if (Number.isNaN(v)) continue;
+        agg.sums[key] = (agg.sums[key] ?? 0) + v;
+        agg.counts[key] = (agg.counts[key] ?? 0) + 1;
+      }
+    }
+
+    const aggregated = Array.from(buckets.entries())
+      .sort((a, b) => a[0] - b[0])
+      .map(([ts, agg]) => {
+        const avg = (key: string) => {
+          const c = agg.counts[key] ?? 0;
+          return c > 0 ? agg.sums[key] / c : null;
+        };
+        return {
+          ts,
+          time: fmtDT(new Date(ts).toISOString()),
+      // Puissances
+          p_total: avg('active_power_total'),
+          p_a: avg('active_power_a'), p_b: avg('active_power_b'), p_c: avg('active_power_c'),
+          q_total: avg('reactive_power_total'),
+          q_a: avg('reactive_power_a'), q_b: avg('reactive_power_b'), q_c: avg('reactive_power_c'),
+          s_total: avg('apparent_power_total'),
+          s_a: avg('apparent_power_a'), s_b: avg('apparent_power_b'), s_c: avg('apparent_power_c'),
+      // Tensions simples
+          v_a: avg('voltage_a'), v_b: avg('voltage_b'), v_c: avg('voltage_c'),
+      // Tensions composées
+          v_ab: avg('voltage_ab'), v_bc: avg('voltage_bc'), v_ca: avg('voltage_ca'),
+      // Courants
+          i_a: avg('current_a'), i_b: avg('current_b'), i_c: avg('current_c'),
+      // PF
+          pf: avg('power_factor_total'),
+          pf_a: avg('power_factor_a'), pf_b: avg('power_factor_b'), pf_c: avg('power_factor_c'),
+      // THD courant
+          thdi_a: avg('thdi_a'), thdi_b: avg('thdi_b'), thdi_c: avg('thdi_c'),
+      // THD tension
+          thdu_a: avg('thdu_a'), thdu_b: avg('thdu_b'), thdu_c: avg('thdu_c'),
+      // Énergie
+          energy_total: avg('energy_total'),
+        };
+      });
+
+    return downsampleByStep(aggregated, maxPoints);
+  }, [readings, window.durationMs]);
 
   // ─── Quality diagnostics from latest reading
   const diags = useMemo(() => {
@@ -250,10 +292,29 @@ export default function PointDetails() {
           <div className="flex items-center gap-2">
             <Link to="/data-monitor"><Button variant="ghost" size="sm"><ArrowLeft className="w-4 h-4 mr-1" />Retour</Button></Link>
             <div className="flex gap-1">
-              {(['1D', '7D', '1M'] as const).map(r => (
-                <Button key={r} size="sm" variant={range === r ? 'default' : 'outline'} onClick={() => setRange(r)}>{r}</Button>
+              {(['24h', '7d', '30d', 'custom'] as const).map(r => (
+                <Button
+                  key={r}
+                  size="sm"
+                  variant={range === r ? 'default' : 'outline'}
+                  onClick={() => {
+                    setRange(r);
+                    if (r === 'custom' && !customDate) setCustomDate(new Date().toISOString().slice(0, 10));
+                  }}
+                >
+                  {r === 'custom' ? 'Jour précis' : r}
+                </Button>
               ))}
             </div>
+            {range === 'custom' && (
+              <input
+                type="date"
+                value={customDate}
+                onChange={e => setCustomDate(e.target.value)}
+                className="h-9 rounded border px-2 text-sm bg-background"
+                max={new Date().toISOString().slice(0, 10)}
+              />
+            )}
             <Button variant="outline" size="sm" onClick={exportCsv}><Download className="w-4 h-4 mr-1" />CSV</Button>
           </div>
         }
