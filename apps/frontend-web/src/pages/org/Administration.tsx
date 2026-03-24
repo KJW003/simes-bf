@@ -815,7 +815,7 @@ function GatewaysTab() {
                     <Radio className="w-3.5 h-3.5 text-muted-foreground shrink-0" />
                     <span className="font-mono truncate">{gw.gateway_id}</span>
                     {gw.terrain_id ? (
-                      <Badge className="text-[10px] bg-green-100 text-green-700 border-green-200 dark:bg-green-950 dark:text-green-400 dark:border-green-800 shrink-0">
+                      <Badge className="text-[10px] bg-green-100 text-green-700 border-green-200 dark:bg-green-200 dark:text-black dark:border-green-300 shrink-0">
                         <Check className="w-3 h-3 mr-0.5" /> {gw.terrain_name || gw.terrain_id.slice(0, 8)}
                       </Badge>
                     ) : (
@@ -851,7 +851,7 @@ function GatewaysTab() {
                   <Cpu className="w-4 h-4" />
                   Appareils de <span className="font-mono">{selectedGw}</span>
                   {selectedTerrainId ? (
-                    <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-950 dark:text-green-400">
+                    <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-200 dark:text-black dark:border-green-300">
                       <Check className="w-3 h-3 mr-0.5" /> {selectedGwInfo?.terrain_name || selectedTerrainId.slice(0, 8)}
                     </Badge>
                   ) : (
@@ -949,7 +949,7 @@ function GatewaysTab() {
                         </td>
                         <td className="py-2 px-3">
                           {d.point_id ? (
-                            <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-950 dark:text-green-400">
+                            <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-200 dark:text-black dark:border-green-300">
                               <Check className="w-3 h-3 mr-0.5" /> Mappé
                             </Badge>
                           ) : (
@@ -967,7 +967,7 @@ function GatewaysTab() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-7 text-[11px] text-amber-700"
+                                className="h-7 text-[11px] text-amber-700 dark:text-amber-300"
                                 onClick={() => handleUnmapDevice(d)}
                                 disabled={unmapDeviceMut.isPending}
                               >
@@ -1273,7 +1273,7 @@ function DevicesTab() {
           <CardHeader className="pb-2 flex-row items-center justify-between">
             <CardTitle className="text-sm font-medium flex items-center gap-2">
               <Cpu className="w-4 h-4" /> Appareils de {selectedGw}
-              <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-950 dark:text-green-400">
+              <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-200 dark:text-black dark:border-green-300">
                 <Check className="w-3 h-3 mr-0.5" /> Terrain: {gatewayTerrainName || gatewayTerrainId.slice(0, 8)}
               </Badge>
             </CardTitle>
@@ -1332,7 +1332,7 @@ function DevicesTab() {
                         </td>
                         <td className="py-2 px-3">
                           {d.point_id ? (
-                            <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-950 dark:text-green-400">
+                            <Badge className="bg-green-100 text-green-700 text-[10px] border-green-200 dark:bg-green-200 dark:text-black dark:border-green-300">
                               <Check className="w-3 h-3 mr-0.5" /> Mappé
                             </Badge>
                           ) : (
@@ -1350,7 +1350,7 @@ function DevicesTab() {
                               <Button
                                 size="sm"
                                 variant="ghost"
-                                className="h-7 text-[11px] text-amber-700"
+                                className="h-7 text-[11px] text-amber-700 dark:text-amber-300"
                                 onClick={() => handleUnmap(d)}
                                 disabled={unmapDeviceMut.isPending}
                               >
