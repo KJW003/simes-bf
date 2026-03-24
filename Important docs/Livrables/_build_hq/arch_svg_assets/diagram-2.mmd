@@ -1,0 +1,31 @@
+﻿flowchart TB
+    subgraph VPS["VPS Docker Host"]
+        subgraph EDGE["Reseau edge"]
+            T["Traefik"]
+            F["Frontend"]
+            API["API Core"]
+            ING["Ingestion"]
+        end
+        subgraph INT["Reseau internal"]
+            C[("Core DB")]
+            D[("Telemetry DB")]
+            R[("Redis")]
+            W["Workers"]
+            ML["ML Service"]
+            O["MinIO"]
+            P["pgAdmin"]
+        end
+    end
+
+    INTERNET["Internet"] --> T
+    T --> F
+    T --> API
+    T --> ING
+    API --> C
+    API --> D
+    ING --> D
+    ING --> R
+    W --> C
+    W --> D
+    W --> ML
+    W --> O

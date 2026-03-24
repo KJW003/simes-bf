@@ -1,0 +1,9 @@
+﻿flowchart TD
+    I["Internet"] --> V["VPS VPN Hub 10.10.10.1"]
+    V --> G1["Gateway Site A 10.10.10.2"]
+    V --> G2["Gateway Site B 10.10.10.3"]
+    V --> A1["Admin 10.10.10.10"]
+    V --> T1["Technicien 10.10.10.20"]
+
+    G1 --> L1["LAN Site A 192.168.10.0/24"]
+    G2 --> L2["LAN Site B 192.168.20.0/24"]

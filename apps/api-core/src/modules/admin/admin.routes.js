@@ -642,37 +642,81 @@ router.get("/admin/gateways", requireAuth, requireRole("platform_super_admin"), 
 });
 
 // ─────────────────────────────────────────────────────────────
-// 7) List discovered devices for a gateway (from incoming_messages)
+// 7) List devices for a gateway
+// Includes:
+//   - discovered devices (incoming_messages)
+//   - mapped devices (device_registry) even if no recent incoming messages
 // ─────────────────────────────────────────────────────────────
 router.get("/admin/gateways/:gatewayId/devices", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const { gatewayId } = req.params;
 
-    const r = await corePool.query(
-      `SELECT device_key, modbus_addr, dev_eui,
-              COUNT(*) AS msg_count,
+    // Aggregate incoming by device_key to avoid duplicates when modbus/dev_eui vary.
+    const incoming = await corePool.query(
+      `SELECT device_key,
+              COUNT(*)::int AS msg_count,
               MAX(received_at) AS last_seen,
-              MIN(received_at) AS first_seen
+              MIN(received_at) AS first_seen,
+              (ARRAY_AGG(modbus_addr ORDER BY received_at DESC NULLS LAST))[1] AS modbus_addr,
+              (ARRAY_AGG(dev_eui ORDER BY received_at DESC NULLS LAST))[1] AS dev_eui
        FROM incoming_messages
        WHERE gateway_id = $1 AND device_key IS NOT NULL AND device_key != 'unknown'
-       GROUP BY device_key, modbus_addr, dev_eui
+       GROUP BY device_key
        ORDER BY device_key`,
       [gatewayId]
     );
 
-    // Check which are already mapped
+    // Pull mapped devices for the terrain linked to this gateway.
     const mapped = await corePool.query(
-      `SELECT device_key, point_id FROM device_registry
+      `SELECT device_key, point_id, modbus_addr, dev_eui
+       FROM device_registry
        WHERE terrain_id = (SELECT terrain_id FROM gateway_registry WHERE gateway_id = $1)`,
       [gatewayId]
     );
-    const mappedSet = new Map(mapped.rows.map((m) => [m.device_key, m.point_id]));
 
-    const devices = r.rows.map((d) => ({
-      ...d,
-      mapped: mappedSet.has(d.device_key),
-      point_id: mappedSet.get(d.device_key) || null,
-    }));
+    const devicesMap = new Map();
+
+    // Seed with incoming-discovered devices.
+    for (const d of incoming.rows) {
+      devicesMap.set(d.device_key, {
+        device_key: d.device_key,
+        modbus_addr: d.modbus_addr ?? null,
+        dev_eui: d.dev_eui ?? null,
+        msg_count: d.msg_count ?? 0,
+        last_seen: d.last_seen ?? null,
+        first_seen: d.first_seen ?? null,
+        mapped: false,
+        point_id: null,
+      });
+    }
+
+    // Merge mapped devices so they appear even without incoming rows.
+    for (const m of mapped.rows) {
+      const existing = devicesMap.get(m.device_key);
+      if (existing) {
+        existing.mapped = true;
+        existing.point_id = m.point_id;
+        if (existing.modbus_addr == null && m.modbus_addr != null) existing.modbus_addr = m.modbus_addr;
+        if (!existing.dev_eui && m.dev_eui) existing.dev_eui = m.dev_eui;
+      } else {
+        devicesMap.set(m.device_key, {
+          device_key: m.device_key,
+          modbus_addr: m.modbus_addr ?? null,
+          dev_eui: m.dev_eui ?? null,
+          msg_count: 0,
+          last_seen: null,
+          first_seen: null,
+          mapped: true,
+          point_id: m.point_id,
+        });
+      }
+    }
+
+    const devices = Array.from(devicesMap.values()).sort((a, b) => {
+      if (a.device_key < b.device_key) return -1;
+      if (a.device_key > b.device_key) return 1;
+      return 0;
+    });
 
     res.json({ ok: true, gateway_id: gatewayId, devices });
   } catch (e) {

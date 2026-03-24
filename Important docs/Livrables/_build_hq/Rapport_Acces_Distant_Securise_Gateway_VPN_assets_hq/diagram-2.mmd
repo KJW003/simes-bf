@@ -1,0 +1,11 @@
+﻿sequenceDiagram
+    participant Admin as Operateur VPN
+    participant VPS as Serveur WireGuard
+    participant User as Nouvel utilisateur
+    participant GW as Gateway
+
+    Admin->>VPS: Ajout du peer et IP dediee
+    Admin->>User: Transmission du profil client
+    User->>VPS: Etablissement du tunnel
+    VPS-->>User: Handshake valide
+    User->>GW: Test d'acces via VPN

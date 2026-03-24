@@ -1,0 +1,13 @@
+﻿sequenceDiagram
+    participant M as ADW300
+    participant E as Node-RED Edge
+    participant I as Ingestion Service
+    participant TD as Telemetry DB
+    participant J as Worker Jobs
+
+    M->>E: Envoi de trames partielles
+    E->>E: Normalisation et fusion
+    E->>I: Batch toutes les 10 minutes
+    I->>TD: Insertion des mesures
+    I->>J: Signal de traitement asynchrone
+    J->>TD: Aggregations et enrichissements

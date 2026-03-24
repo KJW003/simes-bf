@@ -1,0 +1,7 @@
+﻿stateDiagram-v2
+    [*] --> Collecte
+    Collecte --> Batching: fenetre 10 min
+    Batching --> Envoi
+    Envoi --> Collecte: succes 2xx
+    Envoi --> AttenteRetry: erreur HTTP
+    AttenteRetry --> Envoi: tick 60 s

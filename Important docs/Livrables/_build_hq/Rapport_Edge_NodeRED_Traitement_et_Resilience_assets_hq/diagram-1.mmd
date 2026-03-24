@@ -1,0 +1,21 @@
+﻿flowchart TD
+    L["LoRaWAN In"] --> N["Normalize"]
+    N --> M["Merge State"]
+    M --> S[("flow.states")]
+
+    I10["Inject 10 min"] --> B["Build Batch"]
+    S --> B
+    B --> H["HTTP Prep"]
+    H --> RQ["HTTP Request"]
+    RQ --> SW{"2xx ?"}
+    SW -->|oui| OK["ACK"]
+    SW -->|non| QP["Queue Push"]
+    QP --> Q[("flow.queue")]
+
+    I1["Inject 60 s"] --> POP["Queue Pop"]
+    Q --> POP
+    POP --> H2["HTTP Prep"]
+    H2 --> RQ2["HTTP Request"]
+    RQ2 --> SW2{"2xx ?"}
+    SW2 -->|oui| QC["Queue Commit"]
+    SW2 -->|non| Q

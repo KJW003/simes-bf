@@ -1,0 +1,11 @@
+﻿flowchart TD
+    A["Lire channel_id"] --> B{"channel_id connu ?"}
+    B -->|oui| C["Lire 4 octets de valeur"]
+    C --> D["Convertir type et echelle"]
+    D --> E["Appliquer PT/CT si necessaire"]
+    E --> F["Inserer dans objet de sortie"]
+    B -->|non| G["Consommer octets selon strategie"]
+    F --> H{"fin payload ?"}
+    G --> H
+    H -->|non| A
+    H -->|oui| Z["Retour JSON decode"]

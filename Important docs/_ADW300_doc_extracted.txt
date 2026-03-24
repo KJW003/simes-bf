@@ -1,0 +1,3218 @@
+﻿ADW300-
+LoRaWAN Configuration Instructions
+V1.
+2
+202
+5.08
+D
+ocumentation version change log table
+Version Number
+Release Date
+Change Summary
+Notes
+V1.0
+2024-07
+Initial release
+V1.1
+2024-11-29
+Corrected the issue with the primary and secondary value address table
+;
+
+Corrected the issue with the decoder incorrectly recognizing CS
+ byte.
+Please note that some primary and secondary value addresses have been swapped.
+V1.2
+2025-0818
+Simplify the information, update the software configuration instructions, and update the decoder
+catalogue
+ADW300-LoRaWAN Configuration Instructions
+1
+1
+ Fast-Connect Settings Guide
+3
+2 Connect the meter
+4
+2.1 Connect the meter through RS485.
+4
+2.2 Communicate with meter using ADW300.exe .
+4
+3 Configure on the 
+â€œ
+LoRaWAN Parameter
+â€
+ page.
+5
+3.1 LoRaWAN info
+5
+3.1.1 DEVEUI
+5
+3.1.2 BAND
+6
+3.2 LoRaWAN Setting
+7
+3.2.1 APPEUI
+ã€
+APPKEY
+ã€
+Upload Interval
+8
+3.2.2 DataRate
+8
+3.3 Channel Setting
+10
+3.4 Packet Type
+10
+3.5 Updata Setting
+11
+3.5.1 Set the data to be uploaded
+12
+3.5.2 Num in Updata Setting
+17
+3.5.3 Need CS
+18
+3.5.4 Big endian
+19
+3.5.5 Updata in sec
+20
+4 Payload format.
+21
+4.1 Selectable Data Packet
+21
+4.1.1 Default field template
+21
+4.1.2 HEX format
+21
+4.1.3 Data list
+22
+4.1.4 Decoder for the initial template
+25
+4.2 Fixed Packet Of 2526
+25
+5 Complete address table
+25
+5.1 Secondary Data Part 1
+26
+5.2 Secondary Value Part 2
+36
+5.3 Primary Value (Real Value) Part 1
+41
+5.4 Primary Value (Real Value) Part 2
+42
+Fast-Connect Settings Guide
+Parameter
+OTAA Default
+Where to Change
+(
+
+Chapter
+)
+Region
+CN470, RU868, IN865, EU868, US915, AU915, KR920, AS923_1, AS923_2, AS923_3, AS923_4
+3
+.1.2
+DevEUI
+L
+abel on the front of the meter
+.
+Not writable, but readable
+
+3
+.1.1
+Join EUI / AppEUI
+1122334455667788
+3
+.2.1
+AppKey (OTAA)
+11223344556677881122334455667788
+3
+.2.1
+NwkSKey / AppSKey (ABP)
+-
+-
+Data Rate
+DR4  (DR3 for US915)
+3
+.2.2
+TX Power
+16 dBm
+-
+Channel Mask
+0-7 
+enabled
+3
+.3
+Max Payload (bytes)
+220 bytes
+3
+.2.2
+Data List
+D
+efault template
+4
+.1.3
+LoRaWAN version
+
+(
+â‰¥
+ 1.0.
+3
+) is supported
+.
+The upload
+ed
+ data has a default template, and the 
+decoder
+
+:
+Connect the meter
+Connect the meter through RS485.
+C
+onnect meter to a computer using an RS485 to USB converter.
+The + sign on meter is connected to 21 port , and the â€“ sign on meter is connected to 22 port.
+F
+or example:
+
+T
+hen t
+he meter 
+should be
+ powered through the power lines
+ L (port 1) and N (port 2)
+.
+Communicate with meter using ADW300.exe .
+ADW300 configuration software EN T version 1.1 and above are recommended
+
+Configure on the â€œLoRaWAN Parameterâ€ page.
+
+LoRaWAN info
+DEVEUI
+Read the 
+LoRaWAN Device EUI
+ from the meter. 
+
+*At the same time, the firmware 
+version
+ number is read out for reference only when engineers debug, where the number has nothing to do with the actual operating frequency band of the module.
+BAND
+Region / Band Plan
+:
+
+RU868, IN865, EU868, US915, AU915, KR920, AS923_1, AS923_2, AS923_3, AS923_4
+.
+LoRaWAN Setting
+APPEUI
+ã€
+APPKEY
+ã€
+Upload Interval
+T
+hey have an initial value at the factory, usually
+ï¼š
+APPEUI
+ï¼š
+1122334455667788
+APPKEY
+ï¼š
+11223344556677881122334455667788
+Ramdom APPKEY : 
+A random APPKEY value can be obtained
+.
+Upload Interval (
+The time interval between data uploads
+)
+ï¼š
+1
+D
+efault unit : minute
+, can be change to second (at least 5 sec).
+They can all be set to the desired number.
+ Read the data before setting it.
+DataRate
+The default 
+DataRate
+
+is DR4. Due to the need to upload fixed length packets, ADR is disabled in the module, so we need to set a data transfer rate level that the module can recognize, which is DataRate. After setting, the corresponding spread spectrum factor is fixed, 
+and the maximum length of data that can be sent per packet is fixed.
+The maximum data load (unit: byte) of a single packet for each DataRate in each frequency band
+ï¼š
+CN470
+EU868
+AU915
+US915
+AS923
+DR0
+50
+50
+50
+10
+50
+DR1
+50
+50
+50
+50
+50
+DR2
+50
+50
+50
+110
+50
+DR3
+110
+110
+110
+220
+110
+DR4
+220
+220
+220
+-
+220
+DR5
+220
+220
+220
+-
+220
+The larger the DataRate Number, the smaller the spread factor and the shorter the transmission time, the more data information is transmitted per unit time, but the anti-interference ability is reduced, so the transmission distance is shortened.
+On the contrary, you can improve the anti-interference of the transmission by setting a smaller DataRate, and extend the transmission distance, and he packet may be divided into more packets to be sent, depending on the corresponding single packet maximum load.
+*
+The maximum DataRate Level corresponding to the US915 is DR3
+.
+Channel Setting
+In general, the number of channels is set to 0, which means that the module will run on default channels within the 
+Region / Band Plan
+. 
+Set the corresponding channel frequencies and the number of channels as needed. By default, for channels 0-7, the reading will not display the default values
+A maximum of 
+8
+ channels can be configured. 
+S
+tart c
+hannel 92
+2
+.2MHz, which can be set to 92
+2
+200000
+. 
+Enable 8 channels starting from 
+92
+2
+200000
+.
+Packet Type
+Click Read to view the data packet mode currently in use.
+Selectable Data Packet
+ï¼š
+Default mode
+. 
+In this mode, there is a default data template 
+available for upload. It can also be customized.
+
+The information in "
+Updata Setting
+" is the data template
+.
+Fixed Packet of 2526
+ï¼š
+Special template, upload data is fixed. In this mode, updata settings cannot be modified.
+Updata Setting
+This is the setting of what data the meter uploads. You can select the required data fields according to the complete address table, all the start address and register length can be found in the complete address table. 
+We can choose to upload the secondary value or the primary value(real value)
+. Or use the 
+default field template
+. The following is a description of the Updata Settings. 
+Set the data to be uploaded
+
+Select adjacent parameters
+When we want to upload the data include PT
+ã€
+CT
+ã€
+Temperature of N phase. We first find the position of the parameter in the data table, like this PT, whose start address is 14. The next one is CT, start address is 15. And then Temperature of N phase, start address is 16. 
+You can see that after the name of the parameter in the table is the number of bytes, this value divided by 2 is the size of the register occupied by the parameter.
+2 (bytes) / 2 = 1 (register), 
+4 (bytes) / 2 = 2 (register).
+
+From 14 to 16, there are 3 registers. 
+So when we set a group of the data, we fill in the start address first, the address is 14. And then the register length, which is 3. So that the three parameters selected will be added to the package in order.
+Select parameters that are not adjacent
+A group of data must be in adjacent states. When you need non-adjacent data, you can set it in different groups. 
+When we want the data include UA
+ã€
+UB
+ã€
+UC
+ã€
+UAB
+ã€
+UBC
+ã€
+UCA
+ã€
+IA
+ã€
+IB
+ã€
+IC. But they are not adjacent to the n-phase temperature parameter, so we need to set it to the new group. 
+So we find the start address is 20, Each data account for 1 register, so there are 9 registers in total. Then we set like :
+Selects data that occupies two registers
+When we need more parameters such as Active power of A phase, it may be involved that some data is 4 bytes in the address table, that is, 2 registers, which is twice the size of the normal data. We just need to calculate the total number of registers that this set of data actually occupies.
+As shown in the table, we need these data, some data account for 4 bytes, and some data account for 2 bytes, converted to the number of registers, the sum can be 29 registers. So we fill in the start address and the number of registers as follows:
+Num in Updata Setting
+Num is the number of valid data groups. There are a total of 20 groups that can be filled in, and after filling in the required data group, fill in the rest of the 0.  
+Finally set the total number of groups. Like the picture, there are 9 groups of data, so set 
+num
+ 9.
+
+If the num value is less than the total number of data groups you entered, for example, we entered 9 groups here, but if num only enter 1, only the first set of data will be uploaded in the data packet. The packet only includes PT
+ã€
+CT
+ã€
+Temperature of N phase. No other data will be uploaded. 
+* 
+The byte size or number of registers that data represents in the data address table does not represent the byte length that data will occupy when it is finally uploaded. Whether the selected data is originally 2 bytes or 4 bytes, it is unified to 5 bytes per parameter (1 sequence number +4 bytes of data) when uploaded.
+
+Need CS
+Enable to add a CS checksum byte to the end of the uploaded data packet. 
+This option is selected by default for the initial template
+Checksum: All the data in the uploaded packet is added to obtain a value, and then the value is divided by 256 to obtain a remainder, which is the CS checksum.
+For example, a packet contains this data:
+01 00 00 00 01 02 00 00 00 01
+If we need CS, then the CS checksum is added to the end:
+01 00 00 00 01 02 00 00 00 01 
+05
+So in the absence of CS, the packet size is a multiple of 5. If we add CS it's a multiple of 5, plus 1 byte.
+The function of CS checksum calculation is constructed by C language
+:
+//pBus[] is the data buffer.
+// start is the location of the first data.
+// n is the number of bytes computed.
+uint8_t CS16(uint8_t* pBus, uint16_t start, uint16_t n) 
+{
+Uint16_t i;
+uint8_t sum = 0;
+for (i = start ; i < n+start ; i++)
+{
+sum = ( sum + pBus[i] ) % 256;
+}
+return sum;
+}
+Big endian
+Select whether we want big endian.
+This option is selected by default for the initial template.
+If we upload a parameter with a value of 0x12345678, then in the big endian condition it looks like this:
+num   value
+01
+
+
+12 34 56 78
+I
+n the small endian condition it looks like this:
+num   value
+01
+
+
+78 56 34 12
+Updata in sec
+After this function is enabled, the data upload frequency changes from minute to second. For example, the original data frequency was 5, and the data was uploaded every 5 minutes. After the second level upload was enabled, the data was uploaded every 5 seconds.
+It is not selected by default.
+
+If you need to use it, consult engineers first.
+Payload format.
+Selectable Data Packet
+By default, or by selection, the packet type is Selectable Data Packet. In this mode, there is an initial template, and we can also customize it. 
+Default field template
+The initial template contains a total of 9 data groups, including 68 parameters and 1 CS checksum. The data is in big endian. 
+HEX format
+04                             00 00 08 98  (=2200)
+Number 
+(1 byte)     +    
+Data Value
+ (4 bytes)
+All parameters have 4 bytes of space in the packet, but the 
+data type may be int16, uint16, int32, uint32, float
+. What is the specific type of the value of each parameter according to the data list or address table. 
+There is a 
+checksum
+ at the last of all data.
+Uploaded data:
+01
+
+00 00 00 01
+
+02
+
+00 00 00 01
+
+03
+
+00 00 00 00
+
+04
+ 00 00 00 00 
+05
+ 00 00 00 00 
+06
+ 00 00 00 00 
+07
+ 00 00 00 00 
+08
+ 00 00 00 00 
+09
+ 00 00 00 00 
+0A
+ 00 00 00 01 
+0B
+ 00 00 00 01 
+0C
+ 00 00 00 01 
+0D
+ 00 00 00 00 
+0E
+ 00 00 00 00
+ 0F
+ 00 00 00 00 
+10
+ 00 00 00 00 
+11
+ 00 00 00 00 
+12
+ 00 00 00 00 
+13
+ 00 00 00 00 
+14
+ 00 00 00 00 
+15
+ 00 00 00 00 
+16
+ 00 00 00 00 
+17
+ 00 00 00 00 
+18
+ 00 00 00 00 
+19
+ 00 00 03 E8 
+1A
+ 00 00 03 E8 
+1B
+ 00 00 03 E8 
+1C
+ 00 00 03 E8 
+1D
+ 00 00 00 00 
+1E
+ 00 00 00 00 
+1F
+ 00 00 00 00 
+20
+ 00 00 00 00 
+21
+ 00 00 00 00 
+22
+ 00 00 00 00 
+23
+ 00 00 00 00 
+24
+ 00 00 00 00 
+25
+ 00 00 00 00 
+26
+ 00 00 00 00 
+27
+ 00 00 00 00 
+28
+ 00 00 00 00 
+29
+ 00 00 00 00 
+2A
+ 00 00 00 00 
+2B
+ 00 00 00 00 
+2C
+ 00 00 00 00 
+2D
+ 00 00 00 00 
+2E
+ 00 00 00 00 
+2F
+ 00 00 00 00 
+30
+ 00 00 00 00 
+31
+ 00 00 00 00 
+32
+ 00 00 00 00 
+33
+ 00 00 00 00 
+34
+ 00 00 00 00 
+35
+ 00 00 00 00 
+36
+ 00 00 00 00 
+37
+ 00 00 00 00 
+38
+ 00 00 00 00 
+39
+ 00 00 00 00 
+3A
+ 00 00 00 00 
+3B
+ 00 00 00 00 
+3C
+ 00 00 00 00 
+3D
+ 00 00 00 00 
+3E
+ 00 00 00 00 
+3F
+ 00 00 00 00 
+40
+ 00 00 00 00 
+41
+ 00 00 00 00 
+42
+ 00 00 00 00 
+43
+ 00 00 00 00 
+44
+ 00 00 00 00 
+9E
+
+
+Notice : Mostly data are secondary side values from the meter. Need to deal data for getting real value.
+Data list
+
+The following table lists the data for the initial template. And the table explains how to process the 
+secondary value
+ data to obtain the 
+primary value
+(real value) data:
+Num in packet
+(Hex)
+Variable
+Data type
+Unit
+Notes
+01
+PT
+Uint16
+1
+02
+CT
+Uint16
+1
+03
+Temperature of N phase
+Int16
+0.1â„ƒ
+If the reading value is 105, the temperature is 
+1
+0.5â„ƒ
+04
+Voltage of A phase
+Uint16
+0.1V
+If U=2200
+ï¼Œ
+PT=1; then U=U*PT=2200*0.1*1=220.0V
+05
+Voltage of B phase
+Uint16
+0.1V
+06
+Voltage of C phase
+Uint16
+0.1V
+07
+Voltage between A-B
+Uint16
+0.1V
+08
+Voltage between B-C
+Uint16
+0.1V
+09
+Voltage between C-A
+Uint16
+0.1V
+0A
+Current of A phase
+Uint16
+0.01A
+If I=200
+ï¼Œ
+CT=10; then I=I*CT
+=200*0.01*10=20A
+0B
+Current of B phase
+Uint16
+0.01A
+0C
+Current of C phase
+Uint16
+0.01A
+0D
+Active power of A phase
+i
+nt32
+0.001kW
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kW
+0E
+Active power of B phase
+Int32
+0.001kW
+0F
+Active power of C phase
+Int32
+0.001kW
+10
+Total active power
+Int32
+0.001kW
+11
+Reactive power of A phase
+Int32
+0.001kVar
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0
+
+kVar 
+12
+Reactive power of B phase
+Int32
+0.001kVar
+13
+Reactive power of C phase
+Int32
+0.001kVar
+14
+Total reactive power
+Int32
+0.001kVar
+15
+Apparent power of A phase
+Uint32
+0.001kVA
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0
+
+kVA
+16
+Apparent power of B phase
+Uint32
+0.001kVA
+17
+Apparent power of C phase
+Uint32
+0.001kVA
+18
+Total apparent power
+Uint32
+0.001kVA
+19
+Power factor of A phase
+Uint16
+0.001
+If value=999, then value=999*0.001=0.999
+1A
+Power factor of B phase
+Uint16
+0.001
+1B
+Power factor of C phase
+Uint16
+0.001
+1C
+Total power factor
+Uint16
+0.001
+1D
+State of DI
+Uint16
+0 or 1
+Bit0
+ï¼š
+DI1
+Bit1
+ï¼š
+DI2
+Bit2
+ï¼š
+DI3
+Bit3
+ï¼š
+DI4
+1E
+Total energy consumption
+Uint32
+0.01 kWh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kWh
+1F
+Forward active energy consumption
+Uint32
+0.01 kWh
+20
+Reversing active energy consumption
+Uint32
+0.01 kWh
+21
+Forward reactive energy consumption
+Uint32
+0.01 kVarh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+22
+Reversing reactive energy consumption
+Uint32
+0.01 kVarh
+23
+Total energy consumption on A phase
+Uint32
+0.01 kWh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kWh
+24
+Forward active energy consumption on A phase
+Uint32
+0.01 kWh
+25
+Reversing active energy consumption on A phase
+Uint32
+0.01 kWh
+26
+Forward reactive energy consumption on A phase
+Uint32
+0.01 kVarh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+27
+Reversing reactive energy consumption on A phase
+Uint32
+0.01 kVarh
+28
+Total energy consumption on B phase
+Uint32
+0.01 kWh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=
+120201 kWh
+29
+Forward active energy consumption on B phase
+Uint32
+0.01 kWh
+2A
+Reversing active energy consumption on B phase
+Uint32
+0.01 kWh
+2B
+Forward reactive energy consumption on B phase
+Uint32
+0.01 kVarh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+2C
+Reversing reactive energy consumption on B phase
+Uint32
+0.01 kVarh
+2D
+Total energy consumption on C phase
+Uint32
+0.01 kWh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kWh
+2E
+Forward active energy consumption on C phase
+Uint32
+0.01 kWh
+2F
+Reversing active energy consumption on C phase
+Uint32
+0.01 kWh
+30
+Forward reactive energy consumption on C phase
+Uint32
+0.01 kVarh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+31
+Reversing reactive energy consumption on C phase
+Uint32
+0.01 kVarh
+32
+Maximum forward active demand in current month
+Uint32
+0.001 KW
+If value=11202,PT=10,CT=10; then value=value*PT*CT= 11202*0.001*10*10=1120.2 kW
+33
+Occur time
+Uint32
+Minute, hour, day, month
+34
+THDUa
+Uint16
+0.01
+Total distortion rate of voltage and current on each phase
+If value= 2425,then value=2425*0.01=25.24%
+35
+THDUb
+Uint16
+0.01
+36
+THDUc
+Uint16
+0.01
+37
+THDIa
+Uint16
+0.01
+38
+THDIb
+Uint16
+0.01
+39
+THDIc
+Uint16
+0.01
+3A
+Current forward active demand
+Uint32
+0.001 KW
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kW
+3B
+Voltage imbalance
+Uint16
+0.01%
+If value=2201,
+
+then 
+value= 2201*0.01=22.01%
+3C
+Current imbalance
+Uint16
+0.01%
+3D
+Temperature on A phase
+Int16
+0.1â„ƒ
+3E
+Temperature on B phase
+Int16
+0.1â„ƒ
+3F
+Temperature on C phase
+Int16
+0.1â„ƒ
+40
+Current total spike active energy
+Uint32
+0.01 kWh
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=*PT*CT= 65120201*0.01*10*10=120201 kWh
+41
+Current total peak active energy
+Uint32
+0.01 kWh
+42
+Current total flat active energy
+Uint32
+0.01 kWh
+43
+Current total valley active energy
+Uint32
+0.01 kWh
+44
+Aftercurrent
+Uint16
+1 mA
+If  I=20
+ï¼Œ
+CT=10; then I=I*CT=20*10=200mA
+Decoder for the initial template
+Fixed Packet Of 2526
+In this mode, there is a special data template and it cannot be changed. 
+It is a retention of the old version template
+.
+ This will not be elaborated here
+.
+Complete address table
+If you want to freely define the content of the uploaded data, you can select the data groups from the following tables.
+Description of the table : 
+The first column is the start address in hexadecimal. 
+The second column is the start address in decimal.
+The third column is variable name. 
+The fourth column is data length (divide by 2 to get the number of register stored). 
+The fifth column indicates whether the data is readable or writable. 
+The sixth column describes the data type, decimal cases, and how to deal the data.
+Secondary Data Part 1
+Table 1. secondary data
+Start Address
+(
+Hexadecimal
+)
+Start Address
+ï¼ˆ
+Decimal
+ï¼‰
+Variable
+Length
+(
+B
+ytes)
+R/W
+Notes
+0000H
+0
+Address
+2
+R/W
+1
+ï½ž
+247
+0001H
+1
+Baud rate
+2
+R/W
+1
+ï¼š
+1200bps
+2
+ï¼š
+3400bps
+3
+ï¼š
+4800bps
+4
+ï¼š
+9600bps
+0002H
+2
+Spreading factor
+2
+R/W
+6~12
+0003H
+3
+Frequency channel setting
+2
+R/W
+0-45 (Communication with the same frequency host)
+0004H
+4
+High byte: parity mode, low byte: stop Bit
+2
+R/W
+High byte: 0-none, 1-even, 2-odd; low byte: 0- 1 stop Bit, 1- 2 stop Bit
+0005H-0006H
+5-6
+Reserved
+0007H
+7
+Backlight Time
+0008H
+8
+Code
+0009H~000CH
+9-13
+Reserved
+000EH
+14
+PT
+000FH
+15
+CT
+0010H
+16
+Temperature of N phase
+2
+R
+Int16
+unit 0.1â„ƒ
+If the reading value is 105, the temperature is 10.5â„ƒ
+0011H~0013H
+17-19
+Time, date (second, minute, hour, day, month, year)
+0014H
+20
+Voltage of A phase
+2
+R
+Uint16
+1 decimal places
+Unit V
+If U=2200
+ï¼Œ
+PT=1; then U=U*PT=2200*0.1*1=220.0V
+0015H
+21
+Voltage of B phase
+2
+R
+0016H
+22
+Voltage of C phase
+2
+R
+0017H
+23
+Voltage between A-B
+2
+R
+0018H
+24
+Voltage between B-C
+2
+R
+0019H
+25
+Voltage between C-A
+2
+R
+001AH
+26
+Current of A phase
+2
+R
+Uint16
+unit A
+2 decimal places
+If  I=200
+ï¼Œ
+CT=10; then I=I*CT=200*0.01*10=20A
+001BH
+27
+Current of B phase
+2
+R
+001CH
+28
+Current of C phase
+2
+R
+001DH
+29
+Vector sum of 3-phase current
+2
+R
+001EH
+30
+Active power of A phase
+4
+R
+Int32
+unit kW
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kW
+0020H
+32
+Active power of B phase
+4
+R
+0022H
+34
+Active power of C phase
+4
+R
+0024H
+36
+Total active power
+4
+R
+0026H
+38
+Reactive power of A phase
+4
+R
+Int32
+unit kVar
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0
+kVar 
+0028H
+40
+Reactive power of B phase
+4
+R
+002AH
+42
+Reactive power of C phase
+4
+R
+002CH
+44
+Total reactive power
+4
+R
+002EH
+46
+Apparent power of A phase
+4
+R
+Uint32
+unit kVA
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0
+kVA
+0030H
+48
+Apparent power of B phase
+4
+R
+0032H
+50
+Apparent power of C phase
+4
+R
+0034H
+52
+Total apparent power
+4
+R
+0036H
+54
+Power factor of A phase
+2
+R
+Uint16
+3 decimal places
+If value=999, then value=999*0.001=0.999
+0037H
+55
+Power factor of B phase
+2
+R
+0038H
+56
+Power factor of C phase
+2
+R
+0039H
+57
+Total power factor
+2
+R
+003AH
+58
+State of DI
+2
+R
+Uint16
+Bit0
+ï¼š
+DI1
+Bit1
+ï¼š
+DI2
+Bit2
+ï¼š
+DI3
+Bit3
+ï¼š
+DI4
+003BH
+59
+Frequency of power
+2
+R
+Uint16
+2 decimal places
+If value=5000,then value=5000*0.01=50.00HZ
+003CH
+60
+Total energy consumption
+4
+R
+Uint32
+unit kWh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kWh
+003EH
+62
+Forward active energy consumption
+4
+R
+0040H
+64
+Reversing active energy consumption
+4
+R
+0042H
+66
+Forward reactive energy consumption
+4
+R
+Uint32
+unit kVarh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+0044H
+68
+Reversing reactive energy consumption
+4
+R
+0046H
+70
+Total energy consumption on A phase
+4
+R
+Uint32
+unit kWh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 
+kWh
+0048H
+72
+Forward active energy consumption on A phase
+4
+R
+004AH
+74
+Reversing active energy consumption on A phase
+4
+R
+004CH
+76
+Forward reactive energy consumption on A phase
+4
+R
+Uint32
+unit kVarh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 
+120201*0.01*10*10=120201 kVarh
+004EH
+78
+Reversing reactive energy consumption on A phase
+4
+R
+0050H
+80
+Total energy consumption on B phase
+4
+R
+Uint32
+unit kWh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 
+kWh
+0052H
+82
+Forward active energy consumption on B phase
+4
+R
+0054H
+84
+Reversing active energy consumption on B phase
+4
+R
+0056H
+86
+Forward reactive energy consumption on B phase
+4
+R
+Uint32
+unit kVarh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+0058H
+88
+Reversing reactive energy consumption on B phase
+4
+R
+005AH
+90
+Total energy consumption on C phase
+4
+R
+Uint32
+unit kWh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 
+kWh
+005CH
+92
+Forward active energy consumption on C phase
+4
+R
+005EH
+94
+Reversing active energy consumption on C phase
+4
+R
+0060H
+96
+Forward reactive energy consumption on C phase
+4
+R
+Uint32
+unit kVarh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=value*PT*CT= 120201*0.01*10*10=120201 kVarh
+0062H
+98
+Reversing reactive energy consumption on C phase
+4
+R
+0064H
+100
+Maximum forward active demand in current month
+4
+R
+Uint32
+unit KW
+3 decimal places
+If value=11202,PT=10,CT=10; then value=value*PT*CT= 11202*0.001*10*10=1120.2 kW
+0066H~0067H
+102-103
+Occur time
+4
+R
+Minute, hour, day, month
+0068H
+104
+Maximum reversing active demand in current month
+4
+R
+Uint32
+unit kVar
+3 decimal places
+If value=11202,PT=10,CT=10; then value=value*PT*CT= 11202*0.001*10*10=1120.2 
+kVar
+006AH~006BH
+106-107
+Occur time
+4
+R
+Minute, hour, day, month
+006CH
+108
+Maximum forward reactive demand in current month
+4
+R
+Uint32
+unit kVar
+3 decimal places
+If value=11202,PT=10,CT=10; then value=value*PT*CT= 11202*0.001*10*10=1120.2 
+kVar
+006EH~006FH
+110-111
+Occur time
+4
+R
+Minute, hour, day, month
+0070H
+112
+Maximum reversing reactive demand in current month
+4
+R
+Uint32
+unit kVar
+3 decimal places
+If value=11202,PT=10,CT=10; then value=value*PT*CT= 11202*0.001*10*10=1120.2 
+kVar
+0072H~0073H
+114-115
+Occur time
+4
+R
+Minute, hour, day, month
+0074H
+116
+THDUa
+2
+R
+Total distortion rate of voltage and current on each phase
+Uint16
+2 decimal places
+If value= 2425,then value=2425*0.01=25.24%
+0075H
+117
+THDUb
+2
+R
+0076H
+118
+THDUc
+2
+R
+0077H
+119
+THDIa
+2
+R
+0078H
+120
+THDIb
+2
+R
+0079H
+121
+THDIc
+2
+R
+007AH
+122
+THUa
+(Harmonic on 2nd-31st)
+2Ã—30
+R
+Harmonic voltage on 2nd-31st
+Uint16
+2 decimal places
+If value= 2425,then value=2425*0.01=25.24%
+0098H
+152
+THUa
+(Harmonic on 2nd-31st)
+2Ã—30
+R
+00B6H
+182
+THUb
+(Harmonic on 2nd-31st)
+2Ã—30
+R
+00D4H
+212
+THUc
+(Harmonic on 2nd-31st)
+2Ã—30
+R
+Harmonic current on 2nd-31st
+Uint16
+2 decimal places
+If value= 2425,then value=2425*0.01=25.24%
+00F2H
+242
+THIa
+(Harmonic on 2nd-31st)
+2Ã—30
+R
+0110H
+272
+THIb
+(Harmonic on 2nd-31st)
+2Ã—30
+R
+012EH
+302
+Fundamental voltage on A phase
+2
+R
+Uint16
+unit V
+1 decimal places
+If U=1010
+ï¼Œ
+PT=6; then  U=U*PT=1010*0.1*6=606V
+012FH
+303
+Fundamental voltage on B phase
+2
+R
+0130H
+304
+Fundamental voltage on C phase
+2
+R
+0131H
+305
+Harmonic voltage on A phase
+2
+R
+0132H
+306
+Harmonic voltage on B phase
+2
+R
+0133H
+307
+Harmonic voltage on C phase
+2
+R
+0134H
+308
+Fundamental current on A phase
+2
+R
+Uint16
+unit A
+2 decimal places
+If I=200
+ï¼Œ
+CT=10; I=I*CT=200*0.01*10=20A
+0135H
+309
+Fundamental current on B phase
+2
+R
+0136H
+310
+Fundamental current on C phase
+2
+R
+0137H
+311
+Harmonic current on A phase
+2
+R
+0138H
+312
+Harmonic current on B phase
+2
+R
+0139H
+313
+Harmonic current on C phase
+2
+R
+013AH
+314
+Fundamental active power on A phase
+4
+R
+Int32
+unit kW
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kW
+013CH
+316
+Fundamental active power on B phase
+4
+R
+013EH
+318
+Fundamental active power on C phase
+4
+R
+0140H
+320
+Fundamental active power
+4
+R
+0142H
+322
+Fundamental reactive power on A phase
+4
+R
+Int32
+unit kVar
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 
+11720*0.001*10*10=1172.0 kVar
+0144H
+324
+Fundamental reactive power on B phase
+4
+R
+0146H
+326
+Fundamental reactive power on C phase
+4
+R
+0148H
+328
+Fundamental reactive power
+4
+R
+014AH
+330
+Harmonic active power on A phase
+4
+R
+Int32
+unit kW
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kW
+014CH
+332
+Harmonic active power on B phase
+4
+R
+014EH
+334
+Harmonic active power on C phase
+4
+R
+0150H
+336
+Harmonic active power
+4
+R
+0152H
+338
+Harmonic reactive power on A phase
+4
+R
+Int32
+unit kVar
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kVar
+0154H
+340
+Harmonic reactive power on B phase
+4
+R
+0156H
+342
+Harmonic reactive power on C phase
+4
+R
+0158H
+344
+Harmonic reactive power
+4
+R
+015AH
+346
+Current forward active demand
+4
+R
+Uint32
+unit kW
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 
+kW
+015CH
+348
+Current reversing active demand
+4
+R
+015EH
+350
+Current forward reactive demand
+4
+R
+Uint32
+unit kVar
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 kVar
+0160H
+352
+Current reversing reactive demand
+4
+R
+0162H
+354
+Voltage imbalance
+2
+R
+Uint16
+unit 0.01%
+If value=2201,then 
+value= 2201*0.01=22.01%
+0163H
+355
+Current imbalance
+2
+R
+0164H
+356
+Temperature on A phase
+2
+R
+Int16
+unit 0.1â„ƒ
+0165H
+357
+Temperature on B phase
+2
+R
+0166H
+358
+Temperature on C phase
+2
+R
+0167H
+359
+Time zone number/Time zone date: day
+2
+R/W
+Time list
+0168H
+360
+Time zone date: month/Time zone number
+2
+R/W
+0169H
+361
+Time zone date: day/ Time zone date: month
+2
+R/W
+016AH
+362
+Time zone number/Time zone date: day
+2
+R/W
+016BH
+363
+Time zone date: month/Time zone number
+2
+R/W
+016CH
+364
+Time zone date: day/ Time zone date: month
+2
+R/W
+016DH
+â€¦
+0181H
+365-385
+1-14 period of time Parameters setting information
+2
+R/W
+1# time list
+0182H
+â€¦
+0196H
+386-406
+1-14 period of time Parameters setting information
+2
+R/W
+2# time list
+0197H
+407
+Current total spike active energy
+4
+R
+Uint32
+unit kWh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=*PT*CT= 120201*0.01*10*10=120201 kWh
+0199H
+409
+Current total peak active energy
+4
+R
+019BH
+411
+Current total flat active energy
+4
+R
+019DH
+413
+Current total valley active energy
+4
+R
+019FH
+415
+Current total spike forward active energy
+4
+R
+01A1H
+417
+Current total peak forward active energy
+4
+R
+01A3H
+419
+Current total flat forward active energy
+4
+R
+01A5H
+421
+Current total valley forward active energy
+4
+R
+01A7H
+423
+Current total spike reversing active energy
+4
+R
+01A9H
+425
+Current total peak reversing active energy
+4
+R
+01ABH
+427
+Current total flat reversing active energy
+4
+R
+01ADH
+429
+Current total valley reversing active energy
+4
+R
+01AFH
+431
+Current total spike forward reactive energy
+4
+R
+Uint32
+unit kVarh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10,CT=10;then value=*PT*CT= 120201*0.01*10*10=120201
+kVarh 
+01B1H
+433
+Current total peak forward reactive energy
+4
+R
+01B3H
+435
+Current total flat forward reactive energy
+4
+R
+01B5H
+437
+Current total valley forward reactive energy
+4
+R
+01B7H
+439
+Current total spike reversing reactive energy
+4
+R
+01B9H
+441
+Current total peak reversing reactive energy
+4
+R
+01BBH
+443
+Current total flat reversing reactive energy
+4
+R
+01BDH
+445
+Current total valley reversing reactive energy
+4
+R
+01BFH
+447
+wireless signal strength
+2
+R
+Int16
+01C0H
+448
+Freeze time
+2
+R/W
+High byte:Hour
+ï¼Œ
+low byte:DAY
+01C1H
+449
+Aftercurrent
+2
+R
+Uint16
+unit mA
+If  I=20
+ï¼Œ
+CT=10; then I=I*CT=20*10=200mA
+01C2H
+450
+DO1
+2
+R/W
+Uint16
+Bit0 effective
+01C3H
+451
+DO2
+2
+R/W
+Uint16
+Bit0 effective
+01C4H
+452
+Demand cycle
+2
+R/W
+1
+ï¼š
+15min
+2
+ï¼š
+30min
+3
+ï¼š
+45min
+4
+ï¼š
+60min
+01C5H-01CFH
+453-463
+reserved
+01D0H-01EBH
+464-491
+Related data of alarm 1, see section 6.3.1 for details
+01ECH
+492
+A phase voltage Angle
+2
+R
+Uint16
+2 decimal places
+If value= 9011, then value=9011*0.01=90.11Â°
+01EDH
+493
+B phase voltage Angle
+2
+R
+01EEH
+494
+C phase voltage Angle
+2
+R
+01EFH
+495
+reserved
+01F0H
+496
+Protocol selection bit
+2
+R/W
+0
+ï¼šå®‰å…¨ç”¨ç”µ
+1
+ï¼šç”µåŠ›è¿ç»´
+01F2H
+498
+Real-time perceived demand
+4
+R
+Uint32
+unit kVA
+3 decimal places
+If value=11720
+ï¼Œ
+ PT=10,CT=10; then value=value*PT*CT= 11720*0.001*10*10=1172.0 
+kVA
+01F4H
+500
+Combined reactive electric energy
+4
+R
+Uint32
+unit kVarh
+2 decimal places
+If value=120201
+ï¼Œ
+ PT=10.0,CT=10; then value=value*PT*CT= 120201*0.01*10*10=120201 
+kVarh
+01F6H
+502
+Current first quadrant of reactive energy
+4
+R
+01F8H
+504
+Current second quadrant reactive energy
+4
+R
+01FAH
+506
+Current third quadrant of reactive energy
+4
+R
+01FCH
+508
+Current fourth quadrant reactive energy
+4
+R
+01FEH
+510
+A phase current Angle
+2
+R
+Uint16
+2 decimal places
+If value=9011,then value=9011*0.01=90.11Â°
+01FFH
+511
+B phase current Angle
+2
+R
+0200H
+512
+C phase current Angle
+2
+R
+0201H-0215H
+513-533
+1-14 period of time Parameters setting information
+2
+R/W
+3# time list
+0216H-0249H
+534-585
+Related data of alarm 2 and alarm 3, see section 6.3.2 for details
+024AH-0267H
+586-615
+reserved
+0268H-0169H
+616-617
+Alarm status of alarm 2 and alarm 3, see section 6.3.2 for details
+Secondary Value Part 2
+Table 
+2
+. Secondary Value
+Start Address
+ï¼ˆ
+Hexadecimal
+ï¼‰
+Start Address
+ï¼ˆ
+Decimal
+ï¼‰
+Variable
+Length
+(
+B
+ytes)
+R/W
+Notes
+8800
+34816
+Total active energy
+4
+R
+U
+int 32
+unit kWh
+8802
+34818
+Forward active energy consumption
+4
+R
+8804
+34820
+Reversing active energy consumption
+4
+R
+8806
+34822
+reserved
+4
+R
+U
+int 32
+unit kVar
+8808
+34824
+Forward reactive energy consumption
+4
+R
+880A
+34826
+Reversing reactive energy consumption
+4
+R
+880C
+3
+4828
+reserved
+4
+R
+U
+int 
+32
+unit kVAh
+880E
+34830
+Current total spike active energy
+4
+R
+U
+int 
+32
+unit kWh
+8810
+34832
+Current total peak active energy
+4
+R
+8812
+34834
+Current total flat active energy
+4
+R
+8814
+34836
+Current total valley active energy
+4
+R
+8816
+34838
+Current total spike forward active energy
+4
+R
+8818
+34840
+Current total peak forward active energy
+4
+R
+881A
+34842
+Current total flat forward active energy
+4
+R
+881C
+34844
+Current total valley forward active energy
+4
+R
+881E
+34846
+Current total spike reversing active energy
+4
+R
+8820
+34848
+Current total peak reversing active energy
+4
+R
+8822
+34850
+Current total flat reversing active energy
+4
+R
+8824
+34852
+Current total valley reversing active energy
+4
+R
+8826
+34854
+Current total spike forward reactive energy
+4
+R
+U
+int 
+32
+unit kVar
+8828
+34856
+Current total peak forward reactive energy
+4
+R
+882A
+34858
+Current total flat forward reactive energy
+4
+R
+882C
+34860
+Current total valley forward reactive energy
+4
+R
+882E
+34862
+Current total spike reversing reactive energy
+4
+R
+8830
+34864
+Current total peak reversing reactive energy
+4
+R
+8832
+34866
+Current total flat reversing reactive energy
+4
+R
+8834
+34868
+Current total valley reversing reactive energy
+4
+R
+8836
+34870
+Total active energy of A phase
+4
+R
+U
+int 
+32
+unit kWh
+8838
+34872
+Forward active energy consumption of A phase
+4
+R
+883A
+34874
+Reversing active energy consumption of A phase
+4
+R
+883C
+34876
+reserved
+4
+R
+U
+int 
+32
+unit kVar
+883E
+34878
+Forward reactive energy consumption of A phase
+4
+R
+U
+int 
+32
+unit kVar
+8840
+34880
+Reversing reactive energy consumption of A phase
+4
+R
+8842
+34882
+reserved
+4
+R
+U
+int 
+32
+unit kWh
+8844
+34884
+reserved
+4
+R
+8846
+34886
+reserved
+4
+R
+8848
+34888
+reserved
+4
+R
+884A
+34890
+Total active energy of B phase
+4
+R
+U
+int 
+32
+unit kWh
+884C
+34892
+Forward active energy consumption of B phase
+4
+R
+884E
+34894
+Reversing active energy consumption of B phase
+4
+R
+8850
+34896
+reserved
+4
+R
+U
+int 
+32
+unit kVar
+8852
+34898
+Forward reactive energy consumption of B phase
+4
+R
+U
+int 
+32
+unit kVar
+8854
+34900
+Reversing reactive energy consumption of B phase
+4
+R
+8856
+34902
+reserved
+4
+R
+U
+int 
+32
+unit kVar
+8858
+34904
+reserved
+4
+R
+885A
+3490
+6
+reserved
+4
+R
+885
+C
+3490
+8
+reserved
+4
+R
+88
+5E
+34910
+Total active energy of 
+C
+ phase
+4
+R
+U
+int 
+32
+unit kWh
+8860
+34912
+Forward active energy consumption of 
+C
+ phase
+4
+R
+8862
+34914
+Reversing active energy consumption of 
+C
+ phase
+4
+R
+88
+64
+34
+916
+reserved
+4
+R
+U
+int 
+32
+unit kVar
+88
+66
+34
+918
+Forward reactive energy consumption of 
+C
+ phase
+4
+R
+U
+int 
+32
+unit kVar
+88
+68
+349
+20
+Reversing reactive energy consumption of 
+C
+ phase
+4
+R
+88
+6A
+349
+2
+2
+reserved
+4
+R
+U
+int 
+32
+unit kVar
+88
+6C
+349
+24
+reserved
+4
+R
+88
+6E
+349
+26
+reserved
+4
+R
+88
+70
+349
+28
+reserved
+4
+R
+88
+72
+349
+30
+Quadrant 1 Total Reactive Energy
+4
+R
+U
+int 
+32
+unit kVar
+88
+74
+349
+32
+Quadrant 
+2
+ Total Reactive Energy
+4
+R
+88
+76
+349
+34
+Quadrant 
+3
+ Total Reactive Energy
+4
+R
+88
+78
+349
+36
+Quadrant 
+4
+ Total Reactive Energy
+4
+R
+88
+7A
+349
+38
+reserved
+4
+R
+88
+7C
+349
+40
+reserved
+4
+R
+Primary Value
+ (Real Value)
+ Part 1
+Table
+3
+.primary value
+Start Address
+ï¼ˆ
+Hexadecimal
+ï¼‰
+Start Address
+ï¼ˆ
+Decimal
+ï¼‰
+Variable
+Length
+(
+B
+ytes)
+R/W
+Notes
+8000
+32768
+Voltage of Aphase
+4
+R
+float32
+unit V
+8002
+32770
+Voltage of B phase
+4
+R
+8004
+32772
+Voltage of C phase
+4
+R
+8006
+32774
+Voltage between A-B
+4
+R
+8008
+32776
+Voltage between B-C
+4
+R
+800A
+32778
+Voltage between C-A
+4
+R
+800C
+32780
+Current of Aphase
+4
+R
+float32
+ unit A
+800E
+32782
+Current of B phase
+4
+R
+8010
+32784
+Current of C phase
+4
+R
+8012
+32786
+Vector sum of 
+3-phase current
+4
+R
+8014
+32788
+Active power of A phase
+4
+R
+float32
+unit kW
+8016
+32790
+Active power of B phase
+4
+R
+8018
+32792
+Active power of C phase
+4
+R
+801A
+32794
+Total active power
+4
+R
+801C
+32796
+Reactive power of A phase
+4
+R
+float32
+unit kVar
+801E
+32798
+Reactive power of B phase
+4
+R
+8020
+32800
+Reactive power of C phase
+4
+R
+8022
+32802
+Total reactive  power
+4
+R
+8024
+32804
+Apparent power of A phase
+4
+R
+float32
+unit kVA
+8026
+32806
+Apparent power of B phase
+4
+R
+8028
+32808
+Apparent power of C phase
+4
+R
+802A
+32810
+Total apparent power
+4
+R
+802C
+32812
+Power factor of A phase
+4
+R
+float32
+802E
+32814
+Power factor of B phase
+4
+R
+8030
+32816
+Power factor of C phase
+4
+R
+8032
+32818
+Total power factor
+4
+R
+8034
+32820
+Frequency of power
+4
+R
+float32
+unit HZ
+8036
+32822
+The average phase voltage
+4
+R
+float32
+unit v
+8038
+32824
+Line voltage average
+4
+R
+803A
+32826
+Current average
+4
+R
+float32
+unit A
+803C
+32828
+Voltage imbalance
+4
+R
+float32
+unit 0.1%
+803E
+32830
+Current imbalance
+4
+R
+8040
+32832
+residual voltage
+4
+R
+float32
+unit v
+8042
+32834
+residual current
+4
+R
+float32
+unit A
+8044
+32836
+A Power Angle
+4
+R
+float32
+unit 0.1Â°
+8046
+32838
+B
+
+Power Angle
+4
+R
+8048
+32840
+C Power Angle
+4
+R
+804A
+32842
+Phase A voltage angle
+4
+R
+804C
+32844
+Phase B voltage angle
+4
+R
+Primary Value
+ (Real Value)
+ Part 2
+Table
+4
+.primary value
+Start Address
+ï¼ˆ
+Hexadecimal
+ï¼‰
+Start Address
+ï¼ˆ
+Decimal
+ï¼‰
+Variable
+Length
+(
+B
+ytes)
+R/W
+Notes
+887E
+34942
+Total active ene
+r
+gy
+4
+R
+Float
+ 32
+unit kWh
+8880
+34944
+Forward active energy consumption
+4
+R
+8882
+34946
+Reversing active energy consumption
+4
+R
+8884
+34948
+reserved
+4
+R
+Float
+ 32
+unit kVar
+8886
+34950
+Forward reactive energy consumption
+4
+R
+8888
+34952
+Reversing reactive energy consumption
+4
+R
+888A
+34954
+reserved
+4
+R
+Float
+ 32
+unit kVAh
+888C
+34956
+Current total spike active energy
+4
+R
+Float
+ 32
+unit kWh
+888E
+34958
+Current total peak active energy
+4
+R
+8890
+34960
+Current total flat active energy
+4
+R
+8892
+34962
+Current total valley active energy
+4
+R
+8894
+34964
+Current total spike forward active energy
+4
+R
+8896
+34966
+Current total peak forward active energy
+4
+R
+8898
+34968
+Current total flat forward active energy
+4
+R
+889A
+34970
+Current total valley forward active energy
+4
+R
+889C
+34972
+Current total spike reversing active energy
+4
+R
+889E
+34974
+Current total peak reversing active energy
+4
+R
+88A0
+34976
+Current total flat reversing active energy
+4
+R
+88A2
+34978
+Current total valley reversing active energy
+4
+R
+88A4
+34980
+Current total spike forward reactive energy
+4
+R
+Float
+ 32
+unit kVar
+88A6
+34982
+Current total peak forward reactive energy
+4
+R
+88A8
+34984
+Current total flat forward reactive energy
+4
+R
+88AA
+34986
+Current total valley forward reactive energy
+4
+R
+88AC
+34988
+Current total spike reversing reactive energy
+4
+R
+8
+8AE
+34990
+Current total peak reversing reactive energy
+4
+R
+88B0
+34992
+Current total flat reversing reactive energy
+4
+R
+88B2
+34994
+Current total valley reversing reactive energy
+4
+R
+88B4
+34996
+Total active energy of A phase
+4
+R
+Float
+ 32
+unit kWh
+88B6
+34998
+Forward active energy
+
+consumption of A phase
+4
+R
+88B8
+35000
+Reversing active energy consumption of A phase
+4
+R
+88BA
+35002
+reserved
+4
+R
+Float
+ 32
+unit kVar
+88BC
+35004
+Forward reactive energy consumption of A phase
+4
+R
+Float
+ 32
+unit kVar
+88BE
+35006
+Reversing reactive energy consumption of A phase
+4
+R
+88C0
+35008
+reserved
+4
+R
+Float
+ 32
+unit kWh
+88C2
+35010
+reserved
+4
+R
+88C4
+35012
+reserved
+4
+R
+88C6
+35014
+reserved
+4
+R
+88C8
+35016
+Total active energy of B phase
+4
+R
+Float
+ 32
+unit kWh
+88CA
+35018
+Forward active energy consumption of B phase
+4
+R
+88CC
+35020
+Reversing active energy consumption of B phase
+4
+R
+88CE
+35022
+reserved
+4
+R
+Float
+ 32
+unit kVar
+88D0
+35024
+Forward reactive energy consumption of B phase
+4
+R
+Float
+ 32
+unit kVar
+88D2
+35026
+Reversing reactive energy consumption of B phase
+4
+R
+88D4
+35028
+reserved
+4
+R
+Float
+ 32
+unit kWh
+88D6
+35030
+reserved
+4
+R
+88D
+8
+350
+32
+reserved
+4
+R
+88D
+A
+3503
+4
+reserved
+4
+R
+88
+DC
+3503
+6
+Total active energy of 
+C
+ phase
+4
+R
+float 32
+unit kWh
+88DE
+35038
+Forward active energy consumption of 
+C
+ phase
+4
+R
+88E0
+35040
+Reversing active energy consumption of 
+C
+ phase
+4
+R
+88E2
+35042
+reserved
+4
+R
+Float
+
+32
+unit kVar
+88E4
+35044
+Forward reactive energy consumption of 
+C
+ phase
+4
+R
+float 32
+unit kVar
+88E6
+35046
+Reversing reactive energy consumption of 
+C
+ phase
+4
+R
+88E8
+35048
+reserved
+4
+R
+float 32
+unit kVar
+88EA
+35050
+reserved
+4
+R
+88EC
+35052
+reserved
+4
+R
+88EE
+35054
+reserved
+4
+R
+88F0
+35056
+Quadrant 1 Total Reactive Energy
+4
+R
+float 32
+unit kVar
+88F2
+35058
+Quadrant 
+2
+ Total Reactive Energy
+4
+R
+88F4
+35060
+Quadrant 
+3
+ Total Reactive Energy
+4
+R
+88F6
+35062
+Quadrant 
+4
+ Total Reactive Energy
+4
+R
+88F8
+35064
+reserved
+4
+R
+88FA
+35066
+reserved
+4
+R

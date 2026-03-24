@@ -1,0 +1,21 @@
+﻿flowchart LR
+    A["Compteurs ADW300"] -->|LoRaWAN| G["Gateway UG67"]
+    G --> N["Node-RED Edge"]
+
+    N -->|POST /ingest/milesight| T["Traefik"]
+    U["Utilisateurs"] -->|HTTP| T
+
+    T -->|/| F["Frontend Web"]
+    T -->|/api| API["API Core"]
+    T -->|/ingest| ING["Ingestion Service"]
+
+    API --> C[("Core DB")]
+    API --> D[("Telemetry DB")]
+    ING --> D
+    ING --> R[("Redis")]
+
+    R --> W["Worker Jobs"]
+    W --> C
+    W --> D
+    W --> ML["ML Service"]
+    W --> O["MinIO"]
