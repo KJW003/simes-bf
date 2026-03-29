@@ -28,6 +28,14 @@ TELEMETRY_DB = {
     "password": os.getenv("TELEMETRY_DB_PASSWORD", "simes"),
 }
 
+CORE_DB = {
+    "host": os.getenv("CORE_DB_HOST", "core-db"),
+    "port": int(os.getenv("CORE_DB_PORT", "5432")),
+    "dbname": os.getenv("CORE_DB_NAME", "simes_core"),
+    "user": os.getenv("CORE_DB_USER", "simes"),
+    "password": os.getenv("CORE_DB_PASSWORD", "simes"),
+}
+
 MODEL_DIR = os.getenv("MODEL_DIR", "/data/models")
 os.makedirs(MODEL_DIR, exist_ok=True)
 
@@ -38,6 +46,21 @@ model_cache: dict = {}
 # ─── DB helpers ───────────────────────────────────────────────
 def get_conn():
     return psycopg2.connect(**TELEMETRY_DB)
+
+
+def get_core_conn():
+    return psycopg2.connect(**CORE_DB)
+
+
+def get_billing_point_ids(terrain_id: str) -> list[str]:
+    """Fetch billing point IDs from core DB (avoids double-counting hierarchical sub-points)."""
+    with get_core_conn() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM measurement_points WHERE terrain_id = %s AND status = 'active' AND is_billing = true",
+                (terrain_id,)
+            )
+            return [str(row[0]) for row in cur.fetchall()]
 
 
 def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
@@ -65,6 +88,7 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
     FROM acrel_agg_daily
     WHERE terrain_id = %s
       AND day > NOW() - INTERVAL '365 days'
+      AND point_id = ANY(%s)
     WINDOW w AS (PARTITION BY point_id ORDER BY day)
     ORDER BY point_id, day;
     """
@@ -82,6 +106,7 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
         WHERE terrain_id = %s
           AND active_power_total IS NOT NULL
           AND time > NOW() - INTERVAL '365 days'
+          AND point_id = ANY(%s)
         GROUP BY 1, 2
         ORDER BY point_id, day
     )
@@ -102,15 +127,20 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
     ORDER BY point_id, day;
     """
 
+    billing_ids = get_billing_point_ids(terrain_id)
+    if not billing_ids:
+        logger.warning(f"No billing points found for {terrain_id}")
+        return pd.DataFrame()
+
     with get_conn() as conn:
         try:
-            df = pd.read_sql(agg_query, conn, params=(terrain_id,))
+            df = pd.read_sql(agg_query, conn, params=(terrain_id, billing_ids))
             if df.empty:
                 logger.info(f"acrel_agg_daily empty for {terrain_id}, falling back to raw readings")
-                df = pd.read_sql(raw_query, conn, params=(terrain_id,))
+                df = pd.read_sql(raw_query, conn, params=(terrain_id, billing_ids))
         except Exception as e:
             logger.warning(f"acrel_agg_daily query failed for {terrain_id}, fallback to raw readings: {e}")
-            df = pd.read_sql(raw_query, conn, params=(terrain_id,))
+            df = pd.read_sql(raw_query, conn, params=(terrain_id, billing_ids))
 
     # Normalize dtypes to prevent pandas aggregation errors on object columns.
     numeric_cols = [
@@ -137,6 +167,7 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
            EXTRACT(DOW FROM day)::int AS day_of_week
     FROM acrel_agg_daily
     WHERE terrain_id = %s AND day > NOW() - INTERVAL '365 days'
+      AND point_id = ANY(%s)
     GROUP BY day
     ORDER BY day;
     """
@@ -150,6 +181,7 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
         FROM acrel_readings
         WHERE terrain_id = %s AND active_power_total IS NOT NULL
           AND time > NOW() - INTERVAL '365 days'
+          AND point_id = ANY(%s)
         GROUP BY 1, 2
     )
     SELECT
@@ -161,14 +193,18 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
     GROUP BY day
     ORDER BY day;
     """
+    billing_ids = get_billing_point_ids(terrain_id)
+    if not billing_ids:
+        return pd.DataFrame()
+
     with get_conn() as conn:
         try:
-            df = pd.read_sql(query, conn, params=(terrain_id,))
+            df = pd.read_sql(query, conn, params=(terrain_id, billing_ids))
             if df.empty:
-                df = pd.read_sql(raw_fallback, conn, params=(terrain_id,))
+                df = pd.read_sql(raw_fallback, conn, params=(terrain_id, billing_ids))
         except Exception as e:
             logger.warning(f"Simple daily agg query failed for {terrain_id}, fallback to raw readings: {e}")
-            df = pd.read_sql(raw_fallback, conn, params=(terrain_id,))
+            df = pd.read_sql(raw_fallback, conn, params=(terrain_id, billing_ids))
 
     # Force numerics for robust statistics (mean/std) in simple_forecast.
     for col in ("energy_delta", "power_avg", "day_of_week"):
@@ -1284,15 +1320,19 @@ def fetch_raw_readings(terrain_id: str, point_id: str | None, history_days: int)
                 ORDER BY time
             """, conn, params=(terrain_id, point_id, history_days))
         else:
-            # Aggregate across all points per time bucket (5-min)
+            # Aggregate across billing points per time bucket (5-min)
+            billing_ids = get_billing_point_ids(terrain_id)
+            if not billing_ids:
+                return pd.DataFrame(columns=["time", "active_power_total"])
             df = pd.read_sql("""
                 SELECT DATE_TRUNC('minute', time) - (EXTRACT(MINUTE FROM time)::int %% 5) * INTERVAL '1 minute' AS time,
                        SUM(active_power_total) AS active_power_total
                 FROM acrel_readings
                 WHERE terrain_id = %s AND time >= NOW() - (%s * INTERVAL '1 day')
+                  AND point_id = ANY(%s)
                 GROUP BY 1
                 ORDER BY 1
-            """, conn, params=(terrain_id, history_days))
+            """, conn, params=(terrain_id, history_days, billing_ids))
     return df
 
 
@@ -1583,26 +1623,33 @@ def get_comparison_profiles(terrain_id: str, point_id: str | None = None):
                     ORDER BY 1
                 """, conn, params=(terrain_id, point_id))
             else:
-                # Aggregate all points
-                today_df = pd.read_sql("""
-                    SELECT EXTRACT(HOUR FROM time)::int AS hour,
-                           SUM(active_power_total) / COUNT(DISTINCT point_id) AS avg_kw
-                    FROM acrel_readings
-                    WHERE terrain_id = %s AND time >= CURRENT_DATE
-                    GROUP BY 1
-                    ORDER BY 1
-                """, conn, params=(terrain_id,))
+                # Aggregate billing points only (avoids double-counting)
+                billing_ids = get_billing_point_ids(terrain_id)
+                if not billing_ids:
+                    today_df = pd.DataFrame(columns=["hour", "avg_kw"])
+                    yesterday_df = pd.DataFrame(columns=["hour", "avg_kw"])
+                else:
+                    today_df = pd.read_sql("""
+                        SELECT EXTRACT(HOUR FROM time)::int AS hour,
+                               SUM(active_power_total) / COUNT(DISTINCT point_id) AS avg_kw
+                        FROM acrel_readings
+                        WHERE terrain_id = %s AND time >= CURRENT_DATE
+                          AND point_id = ANY(%s)
+                        GROUP BY 1
+                        ORDER BY 1
+                    """, conn, params=(terrain_id, billing_ids))
 
-                yesterday_df = pd.read_sql("""
-                    SELECT EXTRACT(HOUR FROM time)::int AS hour,
-                           SUM(active_power_total) / COUNT(DISTINCT point_id) AS avg_kw
-                    FROM acrel_readings
-                    WHERE terrain_id = %s
-                      AND time >= CURRENT_DATE - INTERVAL '1 day'
-                      AND time < CURRENT_DATE
-                    GROUP BY 1
-                    ORDER BY 1
-                """, conn, params=(terrain_id,))
+                    yesterday_df = pd.read_sql("""
+                        SELECT EXTRACT(HOUR FROM time)::int AS hour,
+                               SUM(active_power_total) / COUNT(DISTINCT point_id) AS avg_kw
+                        FROM acrel_readings
+                        WHERE terrain_id = %s
+                          AND time >= CURRENT_DATE - INTERVAL '1 day'
+                          AND time < CURRENT_DATE
+                          AND point_id = ANY(%s)
+                        GROUP BY 1
+                        ORDER BY 1
+                    """, conn, params=(terrain_id, billing_ids))
 
         # Build 24-hour arrays
         today_profile = [None] * 24
@@ -1645,6 +1692,7 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
         # Use separate connections for agg and raw-fallback: if the first query fails at
         # the SQL level, psycopg2 puts that connection into an aborted-transaction state
         # and any subsequent query on the same connection raises InFailedSqlTransaction.
+        billing_ids = get_billing_point_ids(terrain_id)
         history_df = None
         try:
             with get_conn() as conn:
@@ -1657,9 +1705,10 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                     WHERE terrain_id = %s
                       AND day >= CURRENT_DATE - (%s * INTERVAL '1 day')
                       AND day < CURRENT_DATE
+                      AND point_id = ANY(%s)
                     GROUP BY day
                     ORDER BY day
-                """, conn, params=(terrain_id, history_days))
+                """, conn, params=(terrain_id, history_days, billing_ids if billing_ids else []))
         except Exception as e:
             logger.warning(f"Daily chart agg query failed for {terrain_id}, fallback to raw readings: {e}")
             try:
@@ -1676,6 +1725,7 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                             WHERE terrain_id = %s
                               AND time >= NOW() - (%s * INTERVAL '1 day')
                               AND time < CURRENT_DATE
+                              AND point_id = ANY(%s)
                             GROUP BY 1, 2
                         )
                         SELECT
@@ -1686,7 +1736,7 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                         FROM daily
                         GROUP BY day
                         ORDER BY day
-                    """, conn2, params=(terrain_id, history_days))
+                    """, conn2, params=(terrain_id, history_days, billing_ids if billing_ids else []))
             except Exception as e2:
                 logger.warning(f"Daily chart raw fallback also failed for {terrain_id}: {e2}")
                 history_df = pd.DataFrame(columns=["day", "energy_kwh", "avg_kw", "max_kw"])

@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { useAppContext } from '@/contexts/AppContext';
+import { useCreateSolarScenario, useSolarScenarios } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
 import {
   Sun,
@@ -16,6 +18,11 @@ import {
   ArrowLeft,
   CheckCircle,
   Zap,
+  Loader2,
+  History,
+  Maximize2,
+  Gauge,
+  BarChart3,
 } from 'lucide-react';
 import {
   XAxis,
@@ -30,84 +37,204 @@ import {
   ReferenceLine,
 } from 'recharts';
 
-// Steps
-const steps = [
-  { id: 1, label: 'Périmètre', icon: Zap },
-  { id: 2, label: 'Paramètres PV', icon: Sun },
-  { id: 3, label: 'Batterie', icon: Battery },
-  { id: 4, label: 'Résultats', icon: TrendingUp },
+type SolarMethod = 'average_load' | 'peak_demand' | 'theoretical_production' | 'available_surface';
+
+const METHODS: { id: SolarMethod; label: string; icon: React.ElementType; desc: string }[] = [
+  { id: 'average_load', label: 'Charge moyenne', icon: Zap, desc: 'Dimensionnement basé sur la consommation moyenne 24h' },
+  { id: 'peak_demand', label: 'Puissance de pointe', icon: Gauge, desc: 'Dimensionnement basé sur la demande maximale' },
+  { id: 'theoretical_production', label: 'Production théorique', icon: Sun, desc: 'Modèle gaussien d\'irradiance avec dérating thermique' },
+  { id: 'available_surface', label: 'Surface disponible', icon: Maximize2, desc: 'Dimensionnement maximal selon la surface de toiture' },
 ];
+
+// Steps per method
+const STEPS_BY_METHOD: Record<SolarMethod, { id: number; label: string; icon: React.ElementType }[]> = {
+  average_load: [
+    { id: 1, label: 'Méthode', icon: Calculator },
+    { id: 2, label: 'Paramètres PV', icon: Sun },
+    { id: 3, label: 'Batterie', icon: Battery },
+    { id: 4, label: 'Résumé & Lancement', icon: TrendingUp },
+  ],
+  peak_demand: [
+    { id: 1, label: 'Méthode', icon: Calculator },
+    { id: 2, label: 'Paramètres PV', icon: Sun },
+    { id: 3, label: 'Onduleur', icon: Zap },
+    { id: 4, label: 'Résumé & Lancement', icon: TrendingUp },
+  ],
+  theoretical_production: [
+    { id: 1, label: 'Méthode', icon: Calculator },
+    { id: 2, label: 'Irradiance', icon: Sun },
+    { id: 3, label: 'Module', icon: BarChart3 },
+    { id: 4, label: 'Résumé & Lancement', icon: TrendingUp },
+  ],
+  available_surface: [
+    { id: 1, label: 'Méthode', icon: Calculator },
+    { id: 2, label: 'Surface & Module', icon: Maximize2 },
+    { id: 3, label: 'Production', icon: Sun },
+    { id: 4, label: 'Résumé & Lancement', icon: TrendingUp },
+  ],
+};
 
 // Monthly irradiance factors for Ouagadougou region (ratio of daily avg)
 const MONTHLY_IRRADIANCE_FACTORS = [0.88, 0.94, 1.06, 1.10, 1.04, 0.96, 0.88, 0.85, 0.94, 1.02, 0.96, 0.86];
 const MONTHS = ['Jan', 'Fév', 'Mar', 'Avr', 'Mai', 'Jun', 'Jul', 'Aoû', 'Sep', 'Oct', 'Nov', 'Déc'];
 const DAYS_IN_MONTH = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
 
+const fmt = (v: number) => v.toLocaleString('fr-FR');
+
+// Default params per method (mirrors backend METHOD_DEFAULTS)
+const DEFAULTS: Record<SolarMethod, Record<string, number>> = {
+  average_load: {
+    hsp: 5.5, eta_sys: 0.80, k_sec: 1.20, p_module: 400,
+    autonomy_days: 2, battery_capacity_ah: 200, system_voltage: 48,
+    lever_soleil: 6.0, coucher_soleil: 18.5,
+    rendement_onduleur: 0.95, profondeur_decharge: 0.80,
+  },
+  peak_demand: {
+    hsp: 5.5, eta_sys: 0.80, k_sec: 1.20, p_module: 400,
+    cos_phi: 0.90, k_ond: 1.30,
+  },
+  theoretical_production: {
+    gj: 5.5, t_lever: 6.0, t_coucher: 18.0, pr: 0.78,
+    eta_mod: 0.20, eta_inv: 0.96, gamma_t: -0.004,
+    t_amb: 35, t_noct: 45, p_inst: 50,
+  },
+  available_surface: {
+    s_tot: 500, k_occ: 0.70, s_mod: 1.65, p_module: 400, hsp: 5.5, pr: 0.78,
+  },
+};
+
+const PARAM_LABELS: Record<string, { label: string; unit?: string; step?: number }> = {
+  hsp: { label: 'Heures solaires de pointe (HSP)', unit: 'h/j', step: 0.1 },
+  eta_sys: { label: 'Rendement système', step: 0.01 },
+  k_sec: { label: 'Coeff. sécurité', step: 0.05 },
+  p_module: { label: 'Puissance module', unit: 'Wc' },
+  autonomy_days: { label: 'Jours d\'autonomie', unit: 'j' },
+  battery_capacity_ah: { label: 'Capacité batterie unitaire', unit: 'Ah' },
+  system_voltage: { label: 'Tension système', unit: 'V' },
+  lever_soleil: { label: 'Lever du soleil', unit: 'h', step: 0.5 },
+  coucher_soleil: { label: 'Coucher du soleil', unit: 'h', step: 0.5 },
+  rendement_onduleur: { label: 'Rendement onduleur', step: 0.01 },
+  profondeur_decharge: { label: 'Profondeur de décharge', step: 0.05 },
+  cos_phi: { label: 'Facteur de puissance (cos φ)', step: 0.01 },
+  k_ond: { label: 'Coeff. surdimensionnement onduleur', step: 0.05 },
+  gj: { label: 'Irradiance journalière (Gj)', unit: 'kWh/m²/j', step: 0.1 },
+  t_lever: { label: 'Heure lever', unit: 'h', step: 0.5 },
+  t_coucher: { label: 'Heure coucher', unit: 'h', step: 0.5 },
+  pr: { label: 'Performance ratio (PR)', step: 0.01 },
+  eta_mod: { label: 'Rendement module', step: 0.01 },
+  eta_inv: { label: 'Rendement onduleur', step: 0.01 },
+  gamma_t: { label: 'Coeff. température (γ)', unit: '/°C', step: 0.001 },
+  t_amb: { label: 'Température ambiante', unit: '°C' },
+  t_noct: { label: 'Température NOCT', unit: '°C' },
+  p_inst: { label: 'Puissance installée', unit: 'kWc' },
+  s_tot: { label: 'Surface totale', unit: 'm²' },
+  k_occ: { label: 'Coeff. occupation', step: 0.05 },
+  s_mod: { label: 'Surface module', unit: 'm²', step: 0.01 },
+  install_cost_per_kwc: { label: 'Coût installation', unit: 'XOF/kWc' },
+  electricity_rate: { label: 'Tarif électricité', unit: 'XOF/kWh' },
+};
+
+// Which params go in which step for each method
+const STEP_PARAMS: Record<SolarMethod, Record<number, string[]>> = {
+  average_load: {
+    2: ['hsp', 'eta_sys', 'k_sec', 'p_module', 'lever_soleil', 'coucher_soleil'],
+    3: ['autonomy_days', 'battery_capacity_ah', 'system_voltage', 'rendement_onduleur', 'profondeur_decharge'],
+  },
+  peak_demand: {
+    2: ['hsp', 'eta_sys', 'k_sec', 'p_module'],
+    3: ['cos_phi', 'k_ond'],
+  },
+  theoretical_production: {
+    2: ['gj', 't_lever', 't_coucher', 'pr'],
+    3: ['p_inst', 'eta_mod', 'eta_inv', 'gamma_t', 't_amb', 't_noct'],
+  },
+  available_surface: {
+    2: ['s_tot', 'k_occ', 's_mod', 'p_module'],
+    3: ['hsp', 'pr'],
+  },
+};
+
 export default function Predimensionnement() {
-  const { selectedTerrain } = useAppContext();
+  const { selectedTerrain, selectedTerrainId } = useAppContext();
+  const navigate = useNavigate();
+  const createScenario = useCreateSolarScenario();
+  const { data: scenariosData } = useSolarScenarios(selectedTerrainId, { limit: 5 });
+  const scenariosCount = scenariosData?.total ?? 0;
+
+  const [method, setMethod] = useState<SolarMethod>('average_load');
   const [currentStep, setCurrentStep] = useState(1);
-  const [form, setForm] = useState({
-    location: 'Ouagadougou, BF',
-    latitude: 12.3714,
-    longitude: -1.5197,
-    roofArea: 500,
-    pvCapacity: 50,
-    tilt: 15,
-    azimuth: 180,
-    irradiance: 5.8,
-    losses: 14,
-    batteryCapacity: 100,
-    batteryPower: 25,
-    batteryEfficiency: 92,
-    investment: 18000000,
-    discount: 8,
-    tariff: 105,
-  });
+  const [params, setParams] = useState<Record<string, number>>({ ...DEFAULTS.average_load });
+  const [scenarioName, setScenarioName] = useState('');
 
-  const goNext = () => setCurrentStep((s) => Math.min(s + 1, 4));
+  const steps = STEPS_BY_METHOD[method];
+  const maxStep = steps.length;
+
+  const goNext = () => setCurrentStep((s) => Math.min(s + 1, maxStep));
   const goPrev = () => setCurrentStep((s) => Math.max(s - 1, 1));
-  const setField = (key: keyof typeof form, value: number | string) => setForm((f) => ({ ...f, [key]: value }));
 
-  // Computed results from form inputs
-  const annualProd = form.pvCapacity * form.irradiance * 365 * (1 - form.losses / 100);
-  const annualSavings = annualProd * form.tariff;
-  const payback = annualSavings > 0 ? form.investment / annualSavings : Infinity;
+  const handleMethodChange = (m: SolarMethod) => {
+    setMethod(m);
+    setParams({ ...DEFAULTS[m] });
+    setCurrentStep(2);
+  };
 
-  // Compute monthly production from irradiance factors
-  const monthlyProductionEstimate = useMemo(() =>
+  const setParam = (key: string, value: number) => setParams((p) => ({ ...p, [key]: value }));
+
+  // Quick client-side preview (step 4)
+  const pvKwc = params.p_inst || (params.p_module && params.k_sec ? ((params.hsp ? 10 / params.eta_sys / params.hsp : 10) * params.k_sec) : 50);
+  const irr = params.hsp || params.gj || 5.5;
+  const annualProdEst = pvKwc * irr * 365 * (params.pr || params.eta_sys || 0.80);
+  const rate = params.electricity_rate || 110;
+  const costPerKwc = params.install_cost_per_kwc || 750000;
+  const installCost = pvKwc * costPerKwc;
+  const annualSavings = annualProdEst * rate;
+  const payback = annualSavings > 0 ? installCost / annualSavings : Infinity;
+
+  const monthlyEst = useMemo(() =>
     MONTHS.map((month, i) => ({
       month,
-      kwh: Math.round(form.pvCapacity * form.irradiance * MONTHLY_IRRADIANCE_FACTORS[i] * DAYS_IN_MONTH[i] * (1 - form.losses / 100)),
+      kwh: Math.round(pvKwc * irr * MONTHLY_IRRADIANCE_FACTORS[i] * DAYS_IN_MONTH[i] * (params.pr || params.eta_sys || 0.80)),
     })),
-    [form.pvCapacity, form.irradiance, form.losses],
+    [pvKwc, irr, params.pr, params.eta_sys],
   );
 
-  // Compute cash flow over 20 years with discount rate + panel degradation (0.5%/yr)
-  const cashFlowData = useMemo(() => {
-    const yearlyData: Array<{ year: string; cumulative: number; annual: number }> = [];
-    let cumulative = -form.investment;
-    for (let i = 0; i < 20; i++) {
-      const degradation = 1 - 0.005 * i;
-      const prod = annualProd * degradation;
-      const savings = prod * form.tariff;
-      const discounted = savings / Math.pow(1 + form.discount / 100, i + 1);
-      cumulative += discounted;
-      yearlyData.push({ year: `A${i + 1}`, cumulative: Math.round(cumulative), annual: Math.round(discounted) });
-    }
-    return yearlyData;
-  }, [annualProd, form.tariff, form.investment, form.discount]);
+  const handleSubmit = async () => {
+    if (!selectedTerrainId) return;
+    try {
+      const res = await createScenario.mutateAsync({
+        terrain_id: selectedTerrainId,
+        name: scenarioName || `Scénario ${METHODS.find(m => m.id === method)?.label}`,
+        method,
+        params,
+      });
+      navigate(`/solar-history/${res.scenario_id}`);
+    } catch { /* handled by mutation */ }
+  };
 
-  // Self-consumption estimate based on battery capacity vs daily production
-  const dailyProd = annualProd / 365;
-  const selfConsumption = dailyProd > 0
-    ? Math.min(100, Math.round(((form.batteryCapacity * (form.batteryEfficiency / 100) + dailyProd * 0.4) / dailyProd) * 100))
-    : 0;
+  if (!selectedTerrainId) {
+    return (
+      <div className="space-y-6">
+        <PageHeader title="Prédimensionnement solaire" description="Sélectionnez un terrain" />
+        <Card><CardContent className="py-12 text-center text-muted-foreground">Aucun terrain sélectionné</CardContent></Card>
+      </div>
+    );
+  }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 animate-fade-in">
       <PageHeader
-        title="Prédimensionnement PV + Batterie"
-        description={`Simulation rapide — ${selectedTerrain?.name ?? 'Terrain'}`}
+        title="Prédimensionnement solaire"
+        description={`Simulation PV + Batterie — ${selectedTerrain?.name ?? 'Terrain'}`}
+        actions={
+          <div className="flex items-center gap-2">
+            {scenariosCount > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => navigate('/solar-history')}>
+                <History className="w-4 h-4 mr-2" />
+                Historique ({scenariosCount})
+              </Button>
+            )}
+          </div>
+        }
       />
 
       {/* Stepper */}
@@ -119,12 +246,7 @@ export default function Predimensionnement() {
           return (
             <React.Fragment key={step.id}>
               {i > 0 && (
-                <div
-                  className={cn(
-                    'h-0.5 flex-1 rounded-full',
-                    isCompleted ? 'bg-primary' : 'bg-muted'
-                  )}
-                />
+                <div className={cn('h-0.5 flex-1 rounded-full', isCompleted ? 'bg-primary' : 'bg-muted')} />
               )}
               <button
                 onClick={() => setCurrentStep(step.id)}
@@ -135,11 +257,7 @@ export default function Predimensionnement() {
                   !isCurrent && !isCompleted && 'bg-muted text-muted-foreground'
                 )}
               >
-                {isCompleted ? (
-                  <CheckCircle className="w-3.5 h-3.5" />
-                ) : (
-                  <Icon className="w-3.5 h-3.5" />
-                )}
+                {isCompleted ? <CheckCircle className="w-3.5 h-3.5" /> : <Icon className="w-3.5 h-3.5" />}
                 {step.label}
               </button>
             </React.Fragment>
@@ -147,138 +265,122 @@ export default function Predimensionnement() {
         })}
       </div>
 
-      {/* Step content */}
+      {/* Step 1: Method selection */}
       {currentStep === 1 && (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {METHODS.map((m) => {
+            const Icon = m.icon;
+            const isSelected = method === m.id;
+            return (
+              <Card
+                key={m.id}
+                className={cn(
+                  'cursor-pointer transition-all hover:shadow-md',
+                  isSelected && 'ring-2 ring-primary shadow-md'
+                )}
+                onClick={() => handleMethodChange(m.id)}
+              >
+                <CardContent className="py-5">
+                  <div className="flex items-start gap-3">
+                    <div className={cn(
+                      'p-2 rounded-lg',
+                      isSelected ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground'
+                    )}>
+                      <Icon className="w-5 h-5" />
+                    </div>
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">{m.label}</div>
+                      <div className="text-xs text-muted-foreground mt-1">{m.desc}</div>
+                    </div>
+                    {isSelected && <CheckCircle className="w-4 h-4 text-primary mt-0.5" />}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Steps 2 & 3: Parameter forms */}
+      {(currentStep === 2 || currentStep === 3) && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Périmètre du projet</CardTitle>
+            <CardTitle className="text-sm">{steps[currentStep - 1].label}</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
+          <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Localisation</Label>
-                <Input value={form.location} onChange={(e) => setField('location', e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Latitude</Label>
-                <Input type="number" value={form.latitude} onChange={(e) => setField('latitude', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Longitude</Label>
-                <Input type="number" value={form.longitude} onChange={(e) => setField('longitude', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Surface disponible (m²)</Label>
-                <Input type="number" value={form.roofArea} onChange={(e) => setField('roofArea', +e.target.value)} />
-              </div>
+              {(STEP_PARAMS[method][currentStep] ?? []).map((key) => {
+                const info = PARAM_LABELS[key] ?? { label: key };
+                return (
+                  <div key={key} className="space-y-2">
+                    <Label>{info.label}{info.unit ? ` (${info.unit})` : ''}</Label>
+                    <Input
+                      type="number"
+                      step={info.step ?? 1}
+                      value={params[key] ?? 0}
+                      onChange={(e) => setParam(key, +e.target.value)}
+                    />
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>
       )}
 
-      {currentStep === 2 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Paramètres PV</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Capacité PV (kWc)</Label>
-                <Input type="number" value={form.pvCapacity} onChange={(e) => setField('pvCapacity', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Inclinaison (°)</Label>
-                <Input type="number" value={form.tilt} onChange={(e) => setField('tilt', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Azimut (°)</Label>
-                <Input type="number" value={form.azimuth} onChange={(e) => setField('azimuth', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Irradiance (kWh/m²/j)</Label>
-                <Input type="number" step={0.1} value={form.irradiance} onChange={(e) => setField('irradiance', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Pertes système (%)</Label>
-                <Input type="number" value={form.losses} onChange={(e) => setField('losses', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Investissement estimé (XOF)</Label>
-                <Input type="number" value={form.investment} onChange={(e) => setField('investment', +e.target.value)} />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {currentStep === 3 && (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Paramètres Batterie</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Capacité batterie (kWh)</Label>
-                <Input type="number" value={form.batteryCapacity} onChange={(e) => setField('batteryCapacity', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Puissance batterie (kW)</Label>
-                <Input type="number" value={form.batteryPower} onChange={(e) => setField('batteryPower', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Efficacité aller-retour (%)</Label>
-                <Input type="number" value={form.batteryEfficiency} onChange={(e) => setField('batteryEfficiency', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Tarif électricité (XOF/kWh)</Label>
-                <Input type="number" value={form.tariff} onChange={(e) => setField('tariff', +e.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label>Taux d&apos;actualisation (%)</Label>
-                <Input type="number" value={form.discount} onChange={(e) => setField('discount', +e.target.value)} />
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {currentStep === 4 && (
+      {/* Step 4: Summary + Launch */}
+      {currentStep === maxStep && (
         <div className="space-y-4">
-          {/* KPIs */}
+          {/* Name input */}
+          <Card>
+            <CardContent className="py-4">
+              <div className="flex items-center gap-4">
+                <div className="flex-1 space-y-2">
+                  <Label>Nom du scénario</Label>
+                  <Input
+                    placeholder={`Scénario ${METHODS.find(m => m.id === method)?.label}`}
+                    value={scenarioName}
+                    onChange={(e) => setScenarioName(e.target.value)}
+                  />
+                </div>
+                <Badge variant="outline" className="text-[10px]">{METHODS.find(m => m.id === method)?.label}</Badge>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Quick preview KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <Card className="text-center p-4">
-              <div className="text-xs text-muted-foreground mb-1">Production annuelle</div>
-              <div className="text-xl font-semibold">{Math.round(annualProd).toLocaleString('fr-FR')}</div>
-              <div className="text-xs text-muted-foreground">kWh/an</div>
+              <div className="text-xs text-muted-foreground mb-1">PV estimé</div>
+              <div className="text-xl font-semibold">{pvKwc.toFixed(1)}</div>
+              <div className="text-xs text-muted-foreground">kWc</div>
             </Card>
             <Card className="text-center p-4">
-              <div className="text-xs text-muted-foreground mb-1">Économies annuelles</div>
-              <div className="text-xl font-semibold">{Math.round(annualSavings).toLocaleString('fr-FR')}</div>
-              <div className="text-xs text-muted-foreground">XOF/an</div>
+              <div className="text-xs text-muted-foreground mb-1">Production annuelle</div>
+              <div className="text-xl font-semibold">{fmt(Math.round(annualProdEst))}</div>
+              <div className="text-xs text-muted-foreground">kWh/an (est.)</div>
+            </Card>
+            <Card className="text-center p-4">
+              <div className="text-xs text-muted-foreground mb-1">Investissement</div>
+              <div className="text-xl font-semibold">{fmt(Math.round(installCost / 1e6))}M</div>
+              <div className="text-xs text-muted-foreground">XOF</div>
             </Card>
             <Card className="text-center p-4">
               <div className="text-xs text-muted-foreground mb-1">Retour sur invest.</div>
-              <div className="text-xl font-semibold">{payback.toFixed(1)}</div>
-              <div className="text-xs text-muted-foreground">ans</div>
-            </Card>
-            <Card className="text-center p-4">
-              <div className="text-xs text-muted-foreground mb-1">Autoconsommation</div>
-              <div className="text-xl font-semibold">{selfConsumption}%</div>
-              <div className="text-xs text-muted-foreground">estimé</div>
+              <div className="text-xl font-semibold">{payback < 100 ? payback.toFixed(1) : '—'}</div>
+              <div className="text-xs text-muted-foreground">ans (est.)</div>
             </Card>
           </div>
 
-          {/* Monthly production chart */}
+          {/* Monthly estimate chart */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Production mensuelle estimée</CardTitle>
+              <CardTitle className="text-sm">Production mensuelle estimée (aperçu)</CardTitle>
             </CardHeader>
             <CardContent>
               <div className="h-48">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={monthlyProductionEstimate}>
+                  <BarChart data={monthlyEst}>
                     <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
                     <XAxis dataKey="month" tick={{ fontSize: 10 }} />
                     <YAxis tick={{ fontSize: 10 }} />
@@ -290,37 +392,22 @@ export default function Predimensionnement() {
             </CardContent>
           </Card>
 
-          {/* Cash flow chart */}
+          {/* Parameters summary */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-sm">Flux de trésorerie cumulé (20 ans)</CardTitle>
+              <CardTitle className="text-sm">Paramètres envoyés au calcul</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-48">
-                <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={cashFlowData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                    <XAxis dataKey="year" tick={{ fontSize: 10 }} />
-                    <YAxis tick={{ fontSize: 10 }} tickFormatter={(v: number) => `${(v / 1e6).toFixed(0)}M`} />
-                    <Tooltip formatter={(val: number) => [`${(val / 1e6).toFixed(1)}M XOF`, 'Cumulé']} />
-                    <ReferenceLine y={0} stroke="hsl(var(--destructive))" strokeDasharray="5 3" />
-                    <Line dataKey="cumulative" stroke="hsl(var(--chart-1))" strokeWidth={2} dot={false} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Summary */}
-          <Card>
-            <CardContent className="py-3">
-              <div className="flex flex-wrap items-center gap-4 text-sm">
-                <Badge variant="outline" className="text-[10px]">PV {form.pvCapacity} kWc</Badge>
-                <Badge variant="outline" className="text-[10px]">Batterie {form.batteryCapacity} kWh</Badge>
-                <Badge variant="outline" className="text-[10px]">Irradiance {form.irradiance} kWh/m²/j</Badge>
-                <span className="text-muted-foreground ml-auto text-xs">
-                  Simulation indicative – données à confirmer avec étude terrain
-                </span>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                {Object.entries(params).map(([k, v]) => {
+                  const info = PARAM_LABELS[k];
+                  return (
+                    <div key={k} className="text-xs">
+                      <span className="text-muted-foreground">{info?.label ?? k}: </span>
+                      <span className="font-medium">{v}{info?.unit ? ` ${info.unit}` : ''}</span>
+                    </div>
+                  );
+                })}
               </div>
             </CardContent>
           </Card>
@@ -333,15 +420,19 @@ export default function Predimensionnement() {
           <ArrowLeft className="w-4 h-4 mr-2" />
           Précédent
         </Button>
-        {currentStep < 4 ? (
+        {currentStep < maxStep ? (
           <Button onClick={goNext}>
             Suivant
             <ArrowRight className="w-4 h-4 ml-2" />
           </Button>
         ) : (
-          <Button variant="outline" disabled>
-            <Calculator className="w-4 h-4 mr-2" />
-            Exporter le rapport (bientôt)
+          <Button onClick={handleSubmit} disabled={createScenario.isPending}>
+            {createScenario.isPending ? (
+              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+            ) : (
+              <Calculator className="w-4 h-4 mr-2" />
+            )}
+            Lancer le calcul serveur
           </Button>
         )}
       </div>

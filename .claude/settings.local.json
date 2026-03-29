@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(grep -r \"energy.audit\\\\|energyAudit\\\\|efficiency.score\\\\|audit.report\" /d/Documents/IC/IC3/PING/simes-bf/apps --include=*.ts --include=*.tsx --include=*.js)",
+      "Bash(xargs grep:*)",
+      "Bash(grep -E \"\\(tsx?|jsx?|md\\)$\")",
+      "Bash(npx tsc:*)",
+      "Bash(node -e \"try { require\\(''./src/app.js''\\); console.log\\(''app.js loads OK''\\); } catch\\(e\\) { console.error\\(''LOAD ERROR:'', e.message\\); }\")",
+      "Bash(node -e \"try { require\\(''''./src/shared.js''''\\); console.log\\(''''shared.js loads''''\\); } catch\\(e\\) { console.log\\(''''shared.js expected error \\(no DB\\):'''', e.message.slice\\(0,50\\)\\); }\")",
+      "Bash(node --check /d/Documents/IC/IC3/PING/simes-bf/apps/worker-jobs/src/reports.worker.js)",
+      "Bash(node --check /d/Documents/IC/IC3/PING/simes-bf/apps/worker-jobs/src/ai.worker.js)",
+      "Bash(node --check /d/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/modules/audits/audits.routes.js)",
+      "Bash(node --check /d/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/modules/solar/solar.routes.js)",
+      "Bash(node --check /d/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/modules/jobs/jobs.routes.js)",
+      "Bash(echo \"Exit: $?\")",
+      "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/worker-jobs/src/reports.worker.js)",
+      "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/worker-jobs/src/ai.worker.js)",
+      "Bash(grep -l \"measurement_points\\\\|devices\\\\|zones\\\\|terrains\\\\|acrel_readings\" /d/Documents/IC/IC3/PING/simes-bf/infra/db/migrations/*.sql)",
+      "Bash(grep -E \"\\\\.sql$\")",
+      "Bash(grep -r \"energy_type\\\\|point_type\\\\|CREATE TYPE\" /d/Documents/IC/IC3/PING/simes-bf/infra/db/*.sql)",
+      "Bash(ls -1 /d/Documents/IC/IC3/PING/simes-bf/infra/db/migrations/*.sql)",
+      "Bash(xargs -I {} basename {})",
+      "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/shared/schemas.js)",
+      "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/modules/referential/referential.routes.js)"
+    ]
+  }
+}

@@ -106,6 +106,8 @@ export interface ApiZone {
   created_at: string;
 }
 
+export type NodeType = 'source' | 'tableau' | 'depart' | 'charge';
+
 export interface ApiMeasurementPoint {
   id: string;
   terrain_id: string;
@@ -119,6 +121,10 @@ export interface ApiMeasurementPoint {
   meta: Record<string, unknown>;
   status: string;
   created_at: string;
+  // Hierarchical fields
+  parent_id: string | null;
+  node_type: NodeType;
+  is_billing: boolean;
 }
 
 export interface ApiUser {
@@ -151,6 +157,62 @@ export interface TerrainOverviewZone {
   id: string;
   name: string;
   [key: string]: unknown;
+}
+
+// ── Energy Audit Types ──
+export interface ApiAuditReport {
+  id: string;
+  terrain_id: string;
+  terrain_name?: string;
+  run_id: string | null;
+  period_from: string;
+  period_to: string;
+  efficiency_score: number;
+  score_label: string;
+  diagnostics: Array<{ label: string; status: 'ok' | 'warning' | 'critical'; detail: string }>;
+  recommendations: Array<{ priority: 'Haute' | 'Moyenne' | 'Basse'; title: string; impact: string; points?: string[] }>;
+  point_diagnostics: Array<{ point_id: string; name: string; pf: number | null; thdA: number | null; vUnbal: number | null; power: number; score: number }>;
+  kpi: {
+    points_count: number;
+    readings_count: number;
+    pf_global: number | null;
+    thd_max: number;
+    thd_avg: number | null;
+    v_unbalance_max: number;
+    data_completeness_pct: number;
+    energy_kwh: number;
+  };
+  status: 'pending' | 'computing' | 'ready' | 'failed';
+  error: string | null;
+  requested_by: string | null;
+  created_at: string;
+  computed_at: string | null;
+}
+
+// ── Solar Scenario Types ──
+export interface ApiSolarScenario {
+  id: string;
+  terrain_id: string;
+  terrain_name?: string;
+  run_id: string | null;
+  name: string;
+  method: 'average_load' | 'peak_demand' | 'theoretical_production' | 'available_surface';
+  params: Record<string, number>;
+  results: Record<string, unknown>;
+  financial: {
+    install_cost_xof?: number;
+    annual_production_kwh?: number;
+    annual_savings_xof?: number;
+    payback_years?: number;
+    roi_25y_pct?: number;
+    npv_xof?: number;
+    co2_avoided_kg_year?: number;
+  };
+  status: 'draft' | 'computing' | 'ready' | 'failed';
+  error: string | null;
+  created_by: string | null;
+  created_at: string;
+  computed_at: string | null;
 }
 
 export const api = {
@@ -241,7 +303,10 @@ export const api = {
       body: JSON.stringify({ zone_id: zoneId }),
     }),
 
-  updatePoint: (pointId: string, data: { name: string; device?: string; measure_category?: string; status?: string; ct_ratio?: number }) =>
+  updatePoint: (pointId: string, data: {
+    name: string; device?: string; measure_category?: string; status?: string; ct_ratio?: number;
+    parent_id?: string | null; node_type?: NodeType; is_billing?: boolean;
+  }) =>
     request<ApiMeasurementPoint>(`/points/${pointId}`, { method: 'PUT', body: JSON.stringify(data) }),
   deletePoint: (pointId: string) =>
     request<{ ok: boolean; deleted: string }>(`/points/${pointId}`, { method: 'DELETE' }),
@@ -600,7 +665,11 @@ export const api = {
     }
   },
 
-  createPoint: (terrainId: string, data: { name: string; device: string; measure_category?: string; lora_dev_eui?: string | null; modbus_addr?: number | null; zone_id?: string | null; ct_ratio?: number }) =>
+  createPoint: (terrainId: string, data: {
+    name: string; device: string; measure_category?: string;
+    lora_dev_eui?: string | null; modbus_addr?: number | null; zone_id?: string | null; ct_ratio?: number;
+    parent_id?: string | null; node_type?: NodeType; is_billing?: boolean;
+  }) =>
     request<ApiMeasurementPoint>(`/terrains/${terrainId}/points`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -983,6 +1052,40 @@ export const api = {
     request<{ anomalies: Array<{ id: number; terrain_id: number; point_id: string | null; anomaly_date: string; anomaly_type: string; severity: string; score: number; expected_kwh: number | null; actual_kwh: number | null; deviation_pct: number | null; description: string | null; resolved: boolean }> }>(`/ai/anomalies/${terrainId}?days=${days}`),
   detectAnomalies: (terrainId: string | number) =>
     request<{ residual: { found: number }; isolation_forest: { found: number } }>(`/ai/anomalies/detect/${terrainId}`, { method: 'POST' }),
+
+  // ── Energy Audits ──
+  getAuditReports: (terrainId: string, params?: { limit?: number; offset?: number }) =>
+    request<{ ok: boolean; audits: ApiAuditReport[]; total: number }>(
+      `/audits?terrain_id=${terrainId}&limit=${params?.limit ?? 50}&offset=${params?.offset ?? 0}`
+    ),
+  getAuditReport: (id: string) =>
+    request<{ ok: boolean; audit: ApiAuditReport }>(`/audits/${id}`),
+  getLatestAudit: (terrainId: string) =>
+    request<{ ok: boolean; audit: ApiAuditReport }>(`/audits/latest/${terrainId}`),
+  submitAudit: (terrainId: string) =>
+    request<{ ok: boolean; audit_id: string; run: { id: string; status: string } }>('/audits', {
+      method: 'POST',
+      body: JSON.stringify({ terrain_id: terrainId }),
+    }),
+  deleteAudit: (id: string) =>
+    request<{ ok: boolean; deleted: boolean }>(`/audits/${id}`, { method: 'DELETE' }),
+
+  // ── Solar Scenarios ──
+  getSolarScenarios: (terrainId: string, params?: { method?: string; limit?: number }) =>
+    request<{ ok: boolean; scenarios: ApiSolarScenario[]; total: number }>(
+      `/solar/scenarios?terrain_id=${terrainId}&limit=${params?.limit ?? 50}${params?.method ? `&method=${params.method}` : ''}`
+    ),
+  getSolarScenario: (id: string) =>
+    request<{ ok: boolean; scenario: ApiSolarScenario }>(`/solar/scenarios/${id}`),
+  createSolarScenario: (payload: { terrain_id: string; name?: string; method?: string; params?: Record<string, number> }) =>
+    request<{ ok: boolean; scenario_id: string; run: { id: string; status: string } }>('/solar/scenarios', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  deleteSolarScenario: (id: string) =>
+    request<{ ok: boolean; deleted: boolean }>(`/solar/scenarios/${id}`, { method: 'DELETE' }),
+  getSolarDefaults: (method: string) =>
+    request<{ ok: boolean; method: string; defaults: Record<string, number> }>(`/solar/defaults/${method}`),
 };
 
 export default api;

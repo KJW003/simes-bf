@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -6,11 +7,11 @@ import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RadialGauge } from '@/components/ui/radial-gauge';
-import { useTerrainOverview, useReadings } from '@/hooks/useApi';
+import { useTerrainOverview, useReadings, useSubmitAudit, useAuditReports } from '@/hooks/useApi';
 import { usePreferences, getCurrencySymbol } from '@/hooks/usePreferences';
 import {
   CheckCircle2, AlertTriangle, FileText, Gauge, Activity,
-  Zap, Loader2, TrendingUp, ShieldCheck, ThermometerSun,
+  Zap, Loader2, TrendingUp, ShieldCheck, ThermometerSun, History, Clock,
 } from 'lucide-react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, ReferenceLine,
@@ -20,8 +21,12 @@ const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) 
 
 export default function EnergyAudit() {
   const { selectedTerrainId } = useAppContext();
+  const navigate = useNavigate();
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
+  const submitAudit = useSubmitAudit();
+  const [submitting, setSubmitting] = useState(false);
+  const { data: auditsData } = useAuditReports(selectedTerrainId, { limit: 1 });
 
   const now = useMemo(() => new Date(), []);
   const from24h = useMemo(() => new Date(now.getTime() - 24 * 3600_000).toISOString(), [now]);
@@ -217,10 +222,32 @@ export default function EnergyAudit() {
         title="Audit énergétique"
         description="Diagnostic automatique et recommandations — basé sur les 24 dernières heures"
         actions={
-          <Button variant="outline" size="sm" disabled>
-            <FileText className="w-4 h-4 mr-2" />
-            Générer rapport
-          </Button>
+          <div className="flex items-center gap-2">
+            {auditsData && auditsData.total > 0 && (
+              <Button variant="ghost" size="sm" onClick={() => navigate('/audit-history')}>
+                <History className="w-4 h-4 mr-2" />
+                Historique ({auditsData.total})
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={submitting || !selectedTerrainId}
+              onClick={async () => {
+                if (!selectedTerrainId) return;
+                setSubmitting(true);
+                try {
+                  const res = await submitAudit.mutateAsync(selectedTerrainId);
+                  navigate(`/audit-history/${res.audit_id}`);
+                } catch {
+                  setSubmitting(false);
+                }
+              }}
+            >
+              {submitting ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <FileText className="w-4 h-4 mr-2" />}
+              Générer rapport
+            </Button>
+          </div>
         }
       />
 

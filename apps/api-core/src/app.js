@@ -21,6 +21,8 @@ const listenerRoutes = require("./modules/test-listener/test-listener.routes");
 const incidentsRoutes = require("./modules/incidents/incidents.routes");
 const logsRoutes = require("./modules/logs/logs.routes");
 const aiRoutes = require("./modules/ai/ai.routes");
+const auditsRoutes = require("./modules/audits/audits.routes");
+const solarRoutes = require("./modules/solar/solar.routes");
 const resultsMonthlyRouter = require('./modules/results/results.monthly');
 
 const app = express();
@@ -95,6 +97,8 @@ app.use("/runs", requireAuth, runsRoutes);
 app.use("/", requireAuth, incidentsRoutes);
 app.use("/", requireAuth, logsRoutes);
 app.use("/", requireAuth, aiRoutes);
+app.use("/", requireAuth, auditsRoutes);
+app.use("/", requireAuth, solarRoutes);
 
 //
 app.use(resultsMonthlyRouter);

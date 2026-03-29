@@ -556,7 +556,11 @@ export function useDeleteTerrain() {
 export function useCreatePoint() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ terrainId, ...data }: { terrainId: string; name: string; device: string; measure_category?: string; lora_dev_eui?: string; modbus_addr?: number; zone_id?: string; ct_ratio?: number }) =>
+    mutationFn: ({ terrainId, ...data }: {
+      terrainId: string; name: string; device: string; measure_category?: string;
+      lora_dev_eui?: string; modbus_addr?: number; zone_id?: string; ct_ratio?: number;
+      parent_id?: string | null; node_type?: 'source' | 'tableau' | 'depart' | 'charge'; is_billing?: boolean;
+    }) =>
       api.createPoint(terrainId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['points'] });
@@ -569,7 +573,10 @@ export function useCreatePoint() {
 export function useUpdatePoint() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ pointId, ...data }: { pointId: string; name: string; device?: string; measure_category?: string; status?: string; ct_ratio?: number }) =>
+    mutationFn: ({ pointId, ...data }: {
+      pointId: string; name: string; device?: string; measure_category?: string; status?: string; ct_ratio?: number;
+      parent_id?: string | null; node_type?: 'source' | 'tableau' | 'depart' | 'charge'; is_billing?: boolean;
+    }) =>
       api.updatePoint(pointId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['points'] });
@@ -822,5 +829,81 @@ export function usePipelineHealth() {
     refetchInterval: 30_000,
     staleTime: 15_000,
     retry: 1,
+  });
+}
+
+// ─── Energy Audits ────────────────────────────────────────
+
+export function useAuditReports(terrainId: string | null, params?: { limit?: number; offset?: number }) {
+  return useQuery({
+    queryKey: ['audit-reports', terrainId, params],
+    queryFn: () => api.getAuditReports(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useAuditReport(id: string | null) {
+  return useQuery({
+    queryKey: ['audit-report', id],
+    queryFn: () => api.getAuditReport(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useLatestAudit(terrainId: string | null) {
+  return useQuery({
+    queryKey: ['audit-latest', terrainId],
+    queryFn: () => api.getLatestAudit(terrainId!),
+    enabled: !!terrainId,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useSubmitAudit() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (terrainId: string) => api.submitAudit(terrainId),
+    onSuccess: (_d, terrainId) => {
+      qc.invalidateQueries({ queryKey: ['audit-reports', terrainId] });
+      qc.invalidateQueries({ queryKey: ['audit-latest', terrainId] });
+    },
+  });
+}
+
+// ─── Solar Scenarios ──────────────────────────────────────
+
+export function useSolarScenarios(terrainId: string | null, params?: { method?: string; limit?: number }) {
+  return useQuery({
+    queryKey: ['solar-scenarios', terrainId, params],
+    queryFn: () => api.getSolarScenarios(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 30_000,
+    retry: 1,
+  });
+}
+
+export function useSolarScenario(id: string | null) {
+  return useQuery({
+    queryKey: ['solar-scenario', id],
+    queryFn: () => api.getSolarScenario(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useCreateSolarScenario() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: { terrain_id: string; name?: string; method?: string; params?: Record<string, number> }) =>
+      api.createSolarScenario(payload),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['solar-scenarios', vars.terrain_id] });
+    },
   });
 }

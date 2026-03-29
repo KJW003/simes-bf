@@ -15,6 +15,7 @@ import {
   Settings,
   Calculator,
   ShieldCheck,
+  History,
   X,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
@@ -127,6 +128,9 @@ export function OrgSidebar({ onClose }: { onClose?: () => void } = {}) {
             {canAccessOrgRoute(role, 'energyAudit') && (
               <NavItem to="/energy-audit" icon={ShieldCheck} label="Audit énergétique" />
             )}
+            {canAccessOrgRoute(role, 'energyAudit') && (
+              <NavItem to="/audit-history" icon={History} label="Historique audits" />
+            )}
             {canAccessOrgRoute(role, 'exports') && (
               <NavItem to="/exports" icon={FileText} label="Exports" />
             )}
@@ -142,6 +146,9 @@ export function OrgSidebar({ onClose }: { onClose?: () => void } = {}) {
               )}
               {canAccessOrgRoute(role, 'predimensionnement') && (
                 <NavItem to="/predimensionnement" icon={Calculator} label="Prédimensionnement" />
+              )}
+              {canAccessOrgRoute(role, 'predimensionnement') && (
+                <NavItem to="/solar-history" icon={History} label="Historique solaire" />
               )}
             </NavSection>
           )}

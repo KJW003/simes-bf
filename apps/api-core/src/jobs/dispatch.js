@@ -9,7 +9,10 @@ function pickQueue(jobType) {
     case JobTypes.ROI:
       return aiQueue;
     case JobTypes.REPORT:
+    case JobTypes.ENERGY_AUDIT:
       return reportsQueue;
+    case JobTypes.SOLAR_SCENARIO:
+      return aiQueue;
     default:
       return telemetryQueue;
   }

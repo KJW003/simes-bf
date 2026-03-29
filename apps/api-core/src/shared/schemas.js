@@ -50,6 +50,8 @@ const zoneSchema = z.object({
 });
 
 // ── Points ──────────────────────────────────────────────────
+const NODE_TYPES = ['source', 'tableau', 'depart', 'charge'];
+
 const createPointSchema = z.object({
   name: z.string().min(1).max(255).transform(s => s.trim()),
   device: z.string().min(1).max(255),
@@ -60,6 +62,10 @@ const createPointSchema = z.object({
   ct_ratio: z.number().positive().optional().default(1),
   meta: z.record(z.unknown()).optional(),
   status: z.enum(['active', 'inactive', 'maintenance']).optional().default('active'),
+  // Hierarchical fields
+  parent_id: z.string().uuid().nullable().optional(),
+  node_type: z.enum(NODE_TYPES).optional().default('charge'),
+  is_billing: z.boolean().optional().default(true),
 });
 
 const updatePointSchema = z.object({
@@ -72,6 +78,10 @@ const updatePointSchema = z.object({
   ct_ratio: z.number().positive().optional(),
   meta: z.record(z.unknown()).optional(),
   status: z.enum(['active', 'inactive', 'maintenance']).optional(),
+  // Hierarchical fields
+  parent_id: z.string().uuid().nullable().optional(),
+  node_type: z.enum(NODE_TYPES).optional(),
+  is_billing: z.boolean().optional(),
 });
 
 const assignZoneSchema = z.object({

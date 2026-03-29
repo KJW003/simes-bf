@@ -183,6 +183,24 @@ router.post("/jobs/report", requireAuth, requireRole("platform_super_admin", "or
   }
 });
 
+router.post("/jobs/energy-audit", requireAuth, requireRole("platform_super_admin", "org_admin"), verifyTerrainAccess("body.terrain_id"), async (req, res) => {
+  try {
+    const run = await createRunAndEnqueue(JobTypes.ENERGY_AUDIT, req.body);
+    res.status(201).json(run);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post("/jobs/solar-scenario", requireAuth, requireRole("platform_super_admin", "org_admin"), verifyTerrainAccess("body.terrain_id"), async (req, res) => {
+  try {
+    const run = await createRunAndEnqueue(JobTypes.SOLAR_SCENARIO, req.body);
+    res.status(201).json(run);
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
 router.post("/jobs/aggregate", requireAuth, requireRole("platform_super_admin"), async (req, res) => {
   try {
     const run = await createRunAndEnqueue(JobTypes.AGGREGATE, req.body);

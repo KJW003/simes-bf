@@ -463,13 +463,28 @@ router.post("/terrains/:terrainId/points", requireAuth, requireRole("platform_su
       ct_ratio,
       meta,
       status,
+      parent_id,
+      node_type,
+      is_billing,
     } = req.body;
+
+    // Validate parent belongs to same terrain
+    if (parent_id) {
+      const parentCheck = await db.query(
+        `SELECT id FROM measurement_points WHERE id = $1 AND terrain_id = $2`,
+        [parent_id, terrainId]
+      );
+      if (parentCheck.rowCount === 0) {
+        return res.status(400).json({ ok: false, error: "parent_id must belong to the same terrain" });
+      }
+    }
 
     const r = await db.query(
       `INSERT INTO measurement_points
-       (terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10)
-       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at`,
+       (terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, parent_id, node_type, is_billing)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10,$11,$12,$13)
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr,
+                 COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at, parent_id, node_type, is_billing`,
       [
         terrainId,
         zone_id ?? null,
@@ -481,6 +496,9 @@ router.post("/terrains/:terrainId/points", requireAuth, requireRole("platform_su
         ct_ratio ?? 1,
         JSON.stringify(meta ?? {}),
         status ?? "active",
+        parent_id ?? null,
+        node_type ?? "charge",
+        is_billing !== undefined ? is_billing : true,
       ]
     );
 
@@ -494,7 +512,9 @@ router.get("/terrains/:terrainId/points", requireAuth, async (req, res) => {
   try {
     const { terrainId } = req.params;
     const r = await db.query(
-      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr,
+              COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at,
+              parent_id, node_type, is_billing
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY created_at DESC`,
@@ -509,16 +529,36 @@ router.get("/terrains/:terrainId/points", requireAuth, async (req, res) => {
 router.put("/points/:pointId", requireAuth, requireRole("platform_super_admin", "org_admin"), validate(updatePointSchema), async (req, res) => {
   try {
     const { pointId } = req.params;
-    const { name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, zone_id } = req.body;
+    const { name, device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta, status, zone_id,
+            parent_id, node_type, is_billing } = req.body;
+
+    // Validate parent belongs to same terrain (if changing parent)
+    if (parent_id !== undefined && parent_id !== null) {
+      const ptTerrain = await db.query(`SELECT terrain_id FROM measurement_points WHERE id = $1`, [pointId]);
+      if (ptTerrain.rowCount > 0) {
+        const parentCheck = await db.query(
+          `SELECT id FROM measurement_points WHERE id = $1 AND terrain_id = $2`,
+          [parent_id, ptTerrain.rows[0].terrain_id]
+        );
+        if (parentCheck.rowCount === 0) {
+          return res.status(400).json({ ok: false, error: "parent_id must belong to the same terrain" });
+        }
+      }
+    }
+
     const r = await db.query(
       `UPDATE measurement_points
        SET name = $2, device = COALESCE($3, device), measure_category = COALESCE($4, measure_category),
            lora_dev_eui = COALESCE($5, lora_dev_eui), modbus_addr = COALESCE($6, modbus_addr),
            ct_ratio = COALESCE($7, ct_ratio),
-           meta = COALESCE($8::jsonb, meta), status = COALESCE($9, status), zone_id = COALESCE($10, zone_id)
+           meta = COALESCE($8::jsonb, meta), status = COALESCE($9, status), zone_id = COALESCE($10, zone_id),
+           parent_id = $11, node_type = COALESCE($12, node_type), is_billing = COALESCE($13, is_billing)
        WHERE id = $1
-       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at`,
-      [pointId, name.trim(), device, measure_category, lora_dev_eui, modbus_addr, ct_ratio, meta ? JSON.stringify(meta) : null, status, zone_id]
+       RETURNING id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr,
+                 COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at, parent_id, node_type, is_billing`,
+      [pointId, name.trim(), device, measure_category, lora_dev_eui, modbus_addr, ct_ratio,
+       meta ? JSON.stringify(meta) : null, status, zone_id,
+       parent_id !== undefined ? parent_id : null, node_type, is_billing]
     );
     if (r.rowCount === 0) return res.status(404).json({ ok: false, error: "point not found" });
     res.json(r.rows[0]);

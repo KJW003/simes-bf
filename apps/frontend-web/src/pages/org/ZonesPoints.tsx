@@ -140,15 +140,16 @@ export default function ZonesPoints() {
     return all;
   }, [grouped, unassigned]);
 
-  // KPIs
+  // KPIs — only billing points to avoid double-counting hierarchical sub-points
+  const billingPoints = useMemo(() => points.filter(p => p.is_billing !== false), [points]);
   const totalPower = useMemo(
-    () => points.reduce((s, p) => s + (p.readings?.active_power_total != null ? Number(p.readings.active_power_total) : 0), 0),
-    [points],
+    () => billingPoints.reduce((s, p) => s + (p.readings?.active_power_total != null ? Number(p.readings.active_power_total) : 0), 0),
+    [billingPoints],
   );
   const avgPF = useMemo(() => {
-    const pfs = points.map(p => p.readings?.power_factor_total).filter((v: any) => v != null).map(Number);
+    const pfs = billingPoints.map(p => p.readings?.power_factor_total).filter((v: any) => v != null).map(Number);
     return pfs.length ? pfs.reduce((s, v) => s + v, 0) / pfs.length : null;
-  }, [points]);
+  }, [billingPoints]);
 
   const toggleZone = (id: string) => {
     setExpandedZones(prev => {

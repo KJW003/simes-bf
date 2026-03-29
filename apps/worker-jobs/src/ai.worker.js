@@ -201,7 +201,18 @@ async function computeFacture(payload = {}) {
 
   log.info("Pre-aggregation complete for facture period");
 
-  // 3b) fetch 15m aggs for terrain within window
+  // 3b) Get billing point IDs (avoids double-counting hierarchical sub-points)
+  const billingPts = await db.query(
+    `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND is_billing = true`,
+    [terrainId]
+  );
+  const billingIds = billingPts.rows.map(r => r.id);
+
+  if (billingIds.length === 0) {
+    throw new Error("No billing measurement points found for terrain");
+  }
+
+  // 3c) fetch 15m aggs for billing points within window
   const rows = await telemetryDb.query(
     `SELECT bucket_start, point_id, samples_count,
             active_power_max,
@@ -210,8 +221,9 @@ async function computeFacture(payload = {}) {
             COALESCE(power_factor_avg, 1) AS power_factor_avg
      FROM acrel_agg_15m
      WHERE terrain_id = $1 AND bucket_start >= $2 AND bucket_start < $3
+       AND point_id = ANY($4)
      ORDER BY bucket_start ASC`,
-    [terrainId, from.toISOString(), to.toISOString()]
+    [terrainId, from.toISOString(), to.toISOString(), billingIds]
   );
 
   // 4) classification HP vs HPT by time-of-day + accumulate reactive energy
@@ -427,6 +439,329 @@ async function computeFacture(payload = {}) {
   };
 }
 
+// ═══════════════════════════════════════════════════════════════
+//  SOLAR SCENARIO — 4 dimensioning methods
+// ═══════════════════════════════════════════════════════════════
+
+async function computeSolarScenario(payload) {
+  const { terrain_id, scenario_id, method, params } = payload;
+  if (!terrain_id) throw new Error("terrain_id is required");
+  if (!scenario_id) throw new Error("scenario_id is required");
+
+  // Mark as computing
+  await db.query(
+    `UPDATE solar_scenarios SET status = 'computing', updated_at = now() WHERE id = $1`,
+    [scenario_id]
+  );
+
+  // Fetch last 24h of readings for load curve
+  const now = new Date();
+  const from24h = new Date(now.getTime() - 24 * 3600_000);
+
+  const readingsRes = await telemetryDb.query(
+    `SELECT time, point_id, active_power_total, energy_total, energy_import, power_factor_total
+     FROM acrel_readings
+     WHERE terrain_id = $1 AND time >= $2 AND time < $3
+     ORDER BY time ASC`,
+    [terrain_id, from24h.toISOString(), now.toISOString()]
+  );
+
+  // Aggregate power per timestep (sum all points)
+  const powerByTime = new Map();
+  for (const r of readingsRes.rows) {
+    const t = new Date(r.time).toISOString();
+    const p = Number(r.active_power_total || 0);
+    powerByTime.set(t, (powerByTime.get(t) || 0) + p);
+  }
+  const powerTimeSeries = [...powerByTime.values()]; // kW values
+  const dt = 15 / 60; // 0.25h (15min intervals)
+
+  // Energy delta from readings (same as audit)
+  const energyByPoint = new Map();
+  for (const r of readingsRes.rows) {
+    const val = r.energy_total != null ? Number(r.energy_total) : r.energy_import != null ? Number(r.energy_import) : NaN;
+    if (isNaN(val)) continue;
+    const pid = String(r.point_id);
+    const entry = energyByPoint.get(pid);
+    if (!entry) energyByPoint.set(pid, { min: val, max: val });
+    else { entry.min = Math.min(entry.min, val); entry.max = Math.max(entry.max, val); }
+  }
+  let measuredEnergyKwh = 0;
+  for (const { min, max } of energyByPoint.values()) measuredEnergyKwh += Math.max(0, max - min);
+
+  // Fallback: compute E_jour from power integration if energy delta is too small
+  const E_jour_integrated = powerTimeSeries.reduce((s, p) => s + p * dt, 0);
+  const E_jour = measuredEnergyKwh > 0 ? measuredEnergyKwh : E_jour_integrated;
+
+  // PF average
+  const pfValues = readingsRes.rows.map(r => r.power_factor_total).filter(v => v != null).map(Number);
+  const cos_phi_measured = pfValues.length ? pfValues.reduce((s, v) => s + v, 0) / pfValues.length : 0.90;
+
+  const P_max = powerTimeSeries.length ? Math.max(...powerTimeSeries) : 0;
+  const P_moy = E_jour / 24;
+
+  let results = {};
+  let financial = {};
+
+  // ── Method: Average Load ──────────────────────────────────────
+  if (method === "average_load") {
+    const { hsp, eta_sys, k_sec, p_module, autonomy_days, battery_capacity_ah, system_voltage,
+            lever_soleil, coucher_soleil, rendement_onduleur, profondeur_decharge } = params;
+
+    const E_PV = E_jour / eta_sys;
+    const P_PV = E_PV / hsp;
+    const P_PV_final = P_PV * k_sec;
+    const N_modules = Math.ceil((P_PV_final * 1000) / p_module);
+    const puissance_crete_Wc = N_modules * p_module;
+
+    // Battery sizing
+    const energie_necessaire_Wh = (E_jour * 1000) / rendement_onduleur;
+    const capacite_batterie_Wh = (energie_necessaire_Wh * autonomy_days) / profondeur_decharge;
+    const capacite_batterie_Ah = capacite_batterie_Wh / system_voltage;
+    const nb_batteries = Math.ceil(capacite_batterie_Ah / battery_capacity_ah);
+
+    // Inverter sizing
+    const puissance_onduleur_W = P_max * 1000 * 1.25;
+    const courant_mppt_A = (puissance_crete_Wc / system_voltage) * 1.25;
+
+    // Production simulation (sinusoidal irradiance model)
+    const duree_jour = coucher_soleil - lever_soleil;
+    const IRRADIANCE_MAX = 1000;
+    const TEMP_COEFF = -0.004;
+    const TEMP_AMBIANTE = 35;
+    const TEMP_NOCT = 45;
+
+    const productionProfile = [];
+    const socProfile = [];
+    const capacite_totale_Wh = nb_batteries * battery_capacity_ah * system_voltage;
+    let soc = capacite_totale_Wh * 0.5;
+    const soc_min = capacite_totale_Wh * (1 - profondeur_decharge);
+    let prodTotalWh = 0;
+    let surplusWh = 0;
+    let deficitWh = 0;
+
+    for (let h = 0; h < 24; h += 0.25) {
+      const irradiance = (h >= lever_soleil && h <= coucher_soleil)
+        ? IRRADIANCE_MAX * Math.sin(Math.PI * (h - lever_soleil) / duree_jour)
+        : 0;
+      const temp_cellule = TEMP_AMBIANTE + (TEMP_NOCT - 20) * (irradiance / 800);
+      const facteur_temp = 1 + TEMP_COEFF * (temp_cellule - 25);
+      const production_W = Math.max(puissance_crete_Wc * (irradiance / IRRADIANCE_MAX) * facteur_temp * eta_sys, 0);
+
+      // Approximate consumption at this hour from average
+      const idx = Math.floor(h / 0.25);
+      const conso_W = idx < powerTimeSeries.length ? powerTimeSeries[idx] * 1000 : P_moy * 1000;
+      const bilan_W = production_W - conso_W;
+      const energie_pas = bilan_W * 0.25;
+
+      if (energie_pas > 0) {
+        soc = Math.min(soc + energie_pas * eta_sys, capacite_totale_Wh);
+        surplusWh += energie_pas;
+      } else {
+        soc = Math.max(soc + energie_pas, soc_min);
+        deficitWh += Math.abs(energie_pas);
+      }
+
+      prodTotalWh += production_W * 0.25;
+      productionProfile.push({ hour: h, production_w: Math.round(production_W), consumption_w: Math.round(conso_W), irradiance: Math.round(irradiance) });
+      socProfile.push({ hour: h, soc_pct: Math.round((soc / capacite_totale_Wh) * 100) });
+    }
+
+    const taux_couverture = E_jour > 0 ? Math.min((prodTotalWh / 1000) / E_jour * 100, 100) : 0;
+
+    results = {
+      e_jour_kwh: round2(E_jour),
+      e_pv_kwh: round2(E_PV),
+      p_pv_kwc: round2(P_PV),
+      p_pv_final_kwc: round2(P_PV_final),
+      n_modules: N_modules,
+      puissance_crete_kwc: round2(puissance_crete_Wc / 1000),
+      nb_batteries,
+      battery_capacity_wh: Math.round(capacite_totale_Wh),
+      battery_capacity_ah: Math.round(capacite_batterie_Ah),
+      inverter_w: Math.round(puissance_onduleur_W),
+      mppt_current_a: Math.round(courant_mppt_A),
+      production_total_kwh: round2(prodTotalWh / 1000),
+      coverage_pct: round2(taux_couverture),
+      surplus_kwh: round2(surplusWh / 1000),
+      deficit_kwh: round2(deficitWh / 1000),
+      soc_end_pct: socProfile.length ? socProfile[socProfile.length - 1].soc_pct : 0,
+      production_profile: productionProfile,
+      soc_profile: socProfile,
+    };
+  }
+
+  // ── Method: Peak Demand ───────────────────────────────────────
+  if (method === "peak_demand") {
+    const { hsp, eta_sys, k_sec, p_module, cos_phi, k_ond } = params;
+
+    const FC = P_max > 0 ? P_moy / P_max : 0;
+    const P_ond = k_ond * P_max;
+    const S_ond = cos_phi > 0 ? P_ond / cos_phi : P_ond;
+    const P_surge = 2 * P_ond;
+
+    const P_PV_pic = (E_jour / eta_sys / hsp) * k_sec;
+    const N_modules = Math.ceil((P_PV_pic * 1000) / p_module);
+    const puissance_crete_Wc = N_modules * p_module;
+
+    const ratio_ond_pv = P_PV_pic > 0 ? P_ond / P_PV_pic : 0;
+    const inverter_clipping_ok = ratio_ond_pv >= 0.80;
+
+    results = {
+      e_jour_kwh: round2(E_jour),
+      p_max_kw: round2(P_max),
+      p_moy_kw: round2(P_moy),
+      load_factor: round2(FC),
+      p_ond_kw: round2(P_ond),
+      s_ond_kva: round2(S_ond),
+      p_surge_kw: round2(P_surge),
+      p_pv_pic_kwc: round2(P_PV_pic),
+      n_modules: N_modules,
+      puissance_crete_kwc: round2(puissance_crete_Wc / 1000),
+      ratio_ond_pv: round2(ratio_ond_pv),
+      inverter_clipping_ok,
+      cos_phi_measured: round2(cos_phi_measured),
+    };
+  }
+
+  // ── Method: Theoretical Production ────────────────────────────
+  if (method === "theoretical_production") {
+    const { gj, t_lever, t_coucher, pr, eta_mod, eta_inv, gamma_t, t_amb, t_noct } = params;
+    const p_inst = params.p_inst || (results.puissance_crete_kwc || 10); // kWc
+
+    const t_midi = (t_lever + t_coucher) / 2;
+    const sigma = (t_coucher - t_lever) / 6;
+    const G_STC = 1.0; // kW/m²
+
+    // G_max normalized so integral of G(t) = Gj
+    const G_max = gj / (sigma * Math.sqrt(2 * Math.PI));
+
+    const eta_tot = eta_mod * eta_inv;
+    const productionProfile = [];
+    let E_th_integral = 0;
+    let P_prod_max = 0;
+
+    for (let h = 0; h < 24; h += 0.25) {
+      const G_t = (h >= t_lever && h <= t_coucher)
+        ? G_max * Math.exp(-Math.pow(h - t_midi, 2) / (2 * sigma * sigma))
+        : 0;
+
+      const T_cell = t_amb + (t_noct - 20) * (G_t / 0.8);
+      const f_T = 1 + gamma_t * (T_cell - 25);
+      const P_prod = Math.max(p_inst * (G_t / G_STC) * eta_tot * f_T, 0);
+
+      E_th_integral += G_t * 0.25;
+      if (P_prod > P_prod_max) P_prod_max = P_prod;
+
+      productionProfile.push({
+        hour: h,
+        irradiance_kw_m2: round4(G_t),
+        temp_cell: round2(T_cell),
+        f_temp: round4(f_T),
+        production_kw: round2(P_prod),
+      });
+    }
+
+    const E_th = p_inst * E_th_integral;
+    const E_reelle = E_th * pr;
+    const HSP_calc = E_th_integral;
+
+    results = {
+      p_inst_kwc: round2(p_inst),
+      e_th_kwh: round2(E_th),
+      e_reelle_kwh: round2(E_reelle),
+      p_prod_max_kw: round2(P_prod_max),
+      t_pic_h: round2(t_midi),
+      hsp_calc: round2(HSP_calc),
+      production_profile: productionProfile,
+    };
+  }
+
+  // ── Method: Available Surface ─────────────────────────────────
+  if (method === "available_surface") {
+    const { s_tot, k_occ, s_mod, p_module, hsp, pr } = params;
+    const e_demand = params.e_demand || E_jour;
+
+    const S_utile = s_tot * k_occ;
+    const N_mod_max = Math.floor(S_utile / s_mod);
+    const P_inst_max = (N_mod_max * p_module) / 1000;
+    const E_prod = P_inst_max * hsp * pr;
+    const TC = e_demand > 0 ? (E_prod / e_demand) * 100 : 0;
+    const Delta_E = E_prod - e_demand;
+
+    results = {
+      s_utile_m2: round2(S_utile),
+      n_mod_max: N_mod_max,
+      p_inst_max_kwc: round2(P_inst_max),
+      e_prod_kwh: round2(E_prod),
+      e_demand_kwh: round2(e_demand),
+      coverage_pct: round2(TC),
+      delta_e_kwh: round2(Delta_E),
+    };
+  }
+
+  // ── Financial estimates (common to all methods) ───────────────
+  const pvKwc = results.puissance_crete_kwc || results.p_pv_final_kwc || results.p_inst_max_kwc || results.p_inst_kwc || 0;
+  const annualProdKwh = (results.e_reelle_kwh || results.production_total_kwh || results.e_prod_kwh || E_jour) * 365;
+  const installCostPerKwc = params.install_cost_per_kwc || 750000; // XOF
+  const electricityRate = params.electricity_rate || 110; // XOF/kWh
+  const degradation = params.panel_degradation_pct || 0.5;
+
+  if (pvKwc > 0) {
+    const installCost = pvKwc * installCostPerKwc;
+    const annualSavings = annualProdKwh * electricityRate;
+    const paybackYears = annualSavings > 0 ? installCost / annualSavings : Infinity;
+
+    // 25-year NPV (discount rate 8%)
+    const discountRate = params.discount_rate || 0.08;
+    let npv = -installCost;
+    let totalSavings25y = 0;
+    for (let y = 1; y <= 25; y++) {
+      const yearProd = annualSavings * Math.pow(1 - degradation / 100, y);
+      npv += yearProd / Math.pow(1 + discountRate, y);
+      totalSavings25y += yearProd;
+    }
+
+    const roi25y = installCost > 0 ? ((totalSavings25y - installCost) / installCost) * 100 : 0;
+    const co2Factor = 0.5; // kg CO2 per kWh (grid average for Burkina Faso)
+    const co2AvoidedKg = annualProdKwh * co2Factor;
+
+    financial = {
+      install_cost_xof: Math.round(installCost),
+      annual_production_kwh: Math.round(annualProdKwh),
+      annual_savings_xof: Math.round(annualSavings),
+      payback_years: round2(paybackYears),
+      roi_25y_pct: round2(roi25y),
+      npv_xof: Math.round(npv),
+      co2_avoided_kg_year: Math.round(co2AvoidedKg),
+    };
+  }
+
+  // ── Persist results ───────────────────────────────────────────
+  await db.query(
+    `UPDATE solar_scenarios
+     SET results = $2::jsonb,
+         financial = $3::jsonb,
+         status = 'ready',
+         computed_at = now(),
+         updated_at = now(),
+         error = NULL
+     WHERE id = $1`,
+    [scenario_id, JSON.stringify(results), JSON.stringify(financial)]
+  );
+
+  return {
+    scenario_id,
+    terrain_id,
+    method,
+    results,
+    financial,
+  };
+}
+
+function round2(v) { return Math.round(v * 100) / 100; }
+function round4(v) { return Math.round(v * 10000) / 10000; }
+
 new Worker(
   "ai",
   async (job) => {
@@ -598,6 +933,17 @@ new Worker(
         return { ok: true, ...summary };
       }
 
+      if (job.name === "solar_scenario") {
+        const result = await computeSolarScenario(payload);
+        await insertJobResult(runId, job.name, result);
+        await setRunStatus(runId, "success", {
+          finished_at: new Date().toISOString(),
+          result,
+        });
+        log.info({ scenario_id: payload.scenario_id, method: payload.method }, "Solar scenario computed");
+        return { ok: true };
+      }
+
       // default mock for other ai jobs
       await new Promise((r) => setTimeout(r, 1200));
 
@@ -611,6 +957,18 @@ new Worker(
 
       return { ok: true };
     } catch (e) {
+      // Mark solar scenario as failed if applicable
+      if (payload?.scenario_id) {
+        try {
+          await db.query(
+            `UPDATE solar_scenarios SET status = 'failed', error = $2, updated_at = now() WHERE id = $1`,
+            [payload.scenario_id, e.message]
+          );
+        } catch (dbErr) {
+          log.error({ err: dbErr.message }, "Failed to mark solar scenario as failed");
+        }
+      }
+
       await setRunStatus(runId, "failed", {
         finished_at: new Date().toISOString(),
         error: e.message,

@@ -357,6 +357,20 @@ const MEASURE_CATEGORIES = [
   { value: "UNKNOWN", label: "Inconnu (UNKNOWN)" },
 ];
 
+const NODE_TYPES = [
+  { value: "source", label: "Source (arrivée)" },
+  { value: "tableau", label: "Tableau (TGBT)" },
+  { value: "depart", label: "Départ" },
+  { value: "charge", label: "Charge" },
+];
+
+const NODE_TYPE_BADGE: Record<string, string> = {
+  source: "bg-blue-100 text-blue-700",
+  tableau: "bg-green-100 text-green-700",
+  depart: "bg-amber-100 text-amber-700",
+  charge: "bg-gray-100 text-gray-700",
+};
+
 function terrainLabelFn(t: any) {
   const parts: string[] = [];
   if (t.org_name) parts.push(t.org_name);
@@ -1642,6 +1656,9 @@ function MeasurementPointsTab() {
   const [newModbus, setNewModbus] = useState("");
   const [newDevEui, setNewDevEui] = useState("");
   const [newCtRatio, setNewCtRatio] = useState("1");
+  const [newNodeType, setNewNodeType] = useState("charge");
+  const [newParentId, setNewParentId] = useState<string>("none");
+  const [newIsBilling, setNewIsBilling] = useState(true);
 
   // Edit state
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -1649,11 +1666,35 @@ function MeasurementPointsTab() {
   const [editDevice, setEditDevice] = useState("");
   const [editCategory, setEditCategory] = useState("");
   const [editCtRatio, setEditCtRatio] = useState("1");
+  const [editNodeType, setEditNodeType] = useState("charge");
+  const [editParentId, setEditParentId] = useState<string>("none");
+  const [editIsBilling, setEditIsBilling] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
   const requiredDeleteKeyword = "CONFIRM-DELETE-POINT";
+
+  // Points that can be parents (exclude self for edit, exclude children to prevent cycles)
+  const parentOptions = (excludeId?: string) =>
+    (points as any[]).filter((p: any) => p.id !== excludeId);
+
+  // Build hierarchy tree for display
+  const hasHierarchy = (points as any[]).some((p: any) => p.parent_id);
+  const buildTree = () => {
+    const pts = points as any[];
+    const roots = pts.filter(p => !p.parent_id);
+    const childrenOf = (pid: string): any[] => pts.filter(p => p.parent_id === pid);
+    const renderNode = (p: any, depth: number): string => {
+      const indent = depth > 0 ? "  ".repeat(depth) + "\u2514\u2500 " : "";
+      const icon = p.measure_category === "GRID" ? "\u26A1" : p.measure_category === "PV" ? "\u2600\uFE0F" : p.measure_category === "GENSET" ? "\u2699\uFE0F" : "\uD83D\uDD0C";
+      const billing = p.is_billing ? " \u2190 facturation" : "";
+      const label = `${indent}${icon} ${p.name} (${NODE_TYPES.find(n => n.value === p.node_type)?.label ?? p.node_type})${billing}`;
+      const children = childrenOf(p.id);
+      return [label, ...children.map(c => renderNode(c, depth + 1))].join("\n");
+    };
+    return roots.map(r => renderNode(r, 0)).join("\n");
+  };
 
   const handleCreate = async () => {
     if (!selectedTerrainId || !newName.trim()) return;
@@ -1666,10 +1707,14 @@ function MeasurementPointsTab() {
         modbus_addr: newModbus ? Number(newModbus) : undefined,
         lora_dev_eui: newDevEui || undefined,
         ct_ratio: newCtRatio ? Number(newCtRatio) : 1,
+        node_type: newNodeType as any,
+        parent_id: newParentId === "none" ? null : newParentId,
+        is_billing: newIsBilling,
       });
       toast.success("Point de mesure créé");
       setShowCreate(false);
       setNewName(""); setNewDevice("ADW300"); setNewCategory("LOAD"); setNewModbus(""); setNewDevEui(""); setNewCtRatio("1");
+      setNewNodeType("charge"); setNewParentId("none"); setNewIsBilling(true);
     } catch { toast.error("Erreur création du point"); }
   };
 
@@ -1681,10 +1726,24 @@ function MeasurementPointsTab() {
         device: editDevice,
         measure_category: editCategory,
         ct_ratio: editCtRatio ? Number(editCtRatio) : 1,
+        node_type: editNodeType as any,
+        parent_id: editParentId === "none" ? null : editParentId,
+        is_billing: editIsBilling,
       });
       toast.success("Point mis à jour");
       setEditingId(null);
     } catch { toast.error("Erreur mise à jour"); }
+  };
+
+  // Quick toggle is_billing without entering full edit mode
+  const handleToggleBilling = async (p: any) => {
+    try {
+      await updatePointMut.mutateAsync({
+        pointId: p.id,
+        name: p.name,
+        is_billing: !p.is_billing,
+      });
+    } catch { toast.error("Erreur toggle facturation"); }
   };
 
   const handleDelete = (pointId: string, name: string) => {
@@ -1704,6 +1763,12 @@ function MeasurementPointsTab() {
     } catch {
       setDeleteError("Erreur suppression");
     }
+  };
+
+  const getParentName = (parentId: string | null) => {
+    if (!parentId) return "—";
+    const parent = (points as any[]).find((p: any) => p.id === parentId);
+    return parent ? parent.name : "—";
   };
 
   return (
@@ -1738,6 +1803,20 @@ function MeasurementPointsTab() {
         </Card>
       )}
 
+      {/* Hierarchy tree view (shown only when parent-child relationships exist) */}
+      {selectedTerrainId && hasHierarchy && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium flex items-center gap-2">
+              <Layers className="w-4 h-4" /> Hiérarchie du terrain
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <pre className="text-xs text-muted-foreground whitespace-pre font-mono leading-relaxed">{buildTree()}</pre>
+          </CardContent>
+        </Card>
+      )}
+
       {selectedTerrainId && (
         <Card>
           <CardHeader className="pb-2 flex-row items-center justify-between">
@@ -1761,7 +1840,7 @@ function MeasurementPointsTab() {
                     <Input className="h-8 text-xs" value={newDevice} onChange={(e) => setNewDevice(e.target.value)} placeholder="ADW300" />
                   </div>
                   <div className="space-y-1">
-                    <Label className="text-xs">Catégorie</Label>
+                    <Label className="text-xs">Catégorie énergie</Label>
                     <Select value={newCategory} onValueChange={setNewCategory}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -1772,16 +1851,45 @@ function MeasurementPointsTab() {
                     </Select>
                   </div>
                   <div className="space-y-1">
+                    <Label className="text-xs">Rôle dans le réseau</Label>
+                    <Select value={newNodeType} onValueChange={setNewNodeType}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {NODE_TYPES.map((n) => (
+                          <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1">
+                    <Label className="text-xs">Point parent <span className="text-muted-foreground">(hiérarchie)</span></Label>
+                    <Select value={newParentId} onValueChange={setNewParentId}>
+                      <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="none">(Aucun — point racine)</SelectItem>
+                        {parentOptions().map((p: any) => (
+                          <SelectItem key={p.id} value={p.id}>{p.name} ({p.measure_category})</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-1 flex items-end gap-2 pb-1">
+                    <div className="flex items-center gap-2">
+                      <Switch checked={newIsBilling} onCheckedChange={setNewIsBilling} className="scale-75" />
+                      <Label className="text-xs">Point de facturation</Label>
+                    </div>
+                  </div>
+                  <div className="space-y-1">
                     <Label className="text-xs">Adresse Modbus <span className="text-muted-foreground">(optionnel)</span></Label>
                     <Input className="h-8 text-xs" value={newModbus} onChange={(e) => setNewModbus(e.target.value)} placeholder="Ex: 1" type="number" />
-                  </div>
-                  <div className="space-y-1 col-span-2">
-                    <Label className="text-xs">DevEUI LoRa <span className="text-muted-foreground">(optionnel)</span></Label>
-                    <Input className="h-8 text-xs font-mono" value={newDevEui} onChange={(e) => setNewDevEui(e.target.value)} placeholder="Ex: 24E124710D470399" />
                   </div>
                   <div className="space-y-1">
                     <Label className="text-xs">Ratio TC <span className="text-muted-foreground">(CT ratio)</span></Label>
                     <Input className="h-8 text-xs" value={newCtRatio} onChange={(e) => setNewCtRatio(e.target.value)} placeholder="1" type="number" min="1" step="1" />
+                  </div>
+                  <div className="space-y-1 col-span-2">
+                    <Label className="text-xs">DevEUI LoRa <span className="text-muted-foreground">(optionnel)</span></Label>
+                    <Input className="h-8 text-xs font-mono" value={newDevEui} onChange={(e) => setNewDevEui(e.target.value)} placeholder="Ex: 24E124710D470399" />
                   </div>
                 </div>
                 <div className="flex gap-2 justify-end">
@@ -1805,14 +1913,17 @@ function MeasurementPointsTab() {
             )}
 
             {points.length > 0 && (
-              <div className="rounded-lg border overflow-hidden">
+              <div className="rounded-lg border overflow-x-auto">
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="bg-muted/50 text-left text-muted-foreground">
                       <th className="py-2 px-3 font-medium">Nom</th>
                       <th className="py-2 px-3 font-medium">Appareil</th>
                       <th className="py-2 px-3 font-medium">Catégorie</th>
-                      <th className="py-2 px-3 font-medium">Ratio TC</th>
+                      <th className="py-2 px-3 font-medium">Rôle</th>
+                      <th className="py-2 px-3 font-medium">Parent</th>
+                      <th className="py-2 px-3 font-medium text-center" title="Point de facturation">Fact.</th>
+                      <th className="py-2 px-3 font-medium">TC</th>
                       <th className="py-2 px-3 font-medium">Modbus</th>
                       <th className="py-2 px-3 font-medium">DevEUI</th>
                       <th className="py-2 px-3 font-medium">Statut</th>
@@ -1836,6 +1947,30 @@ function MeasurementPointsTab() {
                                 </SelectContent>
                               </Select>
                             </td>
+                            <td className="py-2 px-3">
+                              <Select value={editNodeType} onValueChange={setEditNodeType}>
+                                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  {NODE_TYPES.map((n) => (
+                                    <SelectItem key={n.value} value={n.value}>{n.label}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="py-2 px-3">
+                              <Select value={editParentId} onValueChange={setEditParentId}>
+                                <SelectTrigger className="h-7 text-xs"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="none">(Aucun)</SelectItem>
+                                  {parentOptions(p.id).map((pp: any) => (
+                                    <SelectItem key={pp.id} value={pp.id}>{pp.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </td>
+                            <td className="py-2 px-3 text-center">
+                              <Switch checked={editIsBilling} onCheckedChange={setEditIsBilling} className="scale-75" />
+                            </td>
                             <td className="py-2 px-3"><Input className="h-7 text-xs w-16" type="number" min="1" step="1" value={editCtRatio} onChange={(e) => setEditCtRatio(e.target.value)} /></td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.modbus_addr ?? "—"}</td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.lora_dev_eui ? (p.lora_dev_eui as string).slice(-8) : "—"}</td>
@@ -1849,16 +1984,27 @@ function MeasurementPointsTab() {
                           </>
                         ) : (
                           <>
-                            <td className="py-2 px-3 font-medium">{p.name}</td>
+                            <td className="py-2 px-3 font-medium">{p.parent_id ? <span className="text-muted-foreground mr-1">\u2514</span> : null}{p.name}</td>
                             <td className="py-2 px-3">{p.device}</td>
                             <td className="py-2 px-3"><Badge variant="outline" className="text-[10px]">{p.measure_category}</Badge></td>
+                            <td className="py-2 px-3"><Badge className={`text-[10px] ${NODE_TYPE_BADGE[p.node_type] ?? NODE_TYPE_BADGE.charge}`}>{NODE_TYPES.find(n => n.value === p.node_type)?.label ?? p.node_type}</Badge></td>
+                            <td className="py-2 px-3 text-muted-foreground">{getParentName(p.parent_id)}</td>
+                            <td className="py-2 px-3 text-center">
+                              <button
+                                onClick={() => handleToggleBilling(p)}
+                                className={`w-5 h-5 rounded flex items-center justify-center text-[10px] transition-colors ${p.is_billing ? "bg-green-100 text-green-700" : "bg-muted text-muted-foreground hover:bg-muted/80"}`}
+                                title={p.is_billing ? "Point de facturation (cliquer pour désactiver)" : "Non utilisé pour la facturation (cliquer pour activer)"}
+                              >
+                                {p.is_billing ? <Check className="w-3 h-3" /> : null}
+                              </button>
+                            </td>
                             <td className="py-2 px-3 font-mono">{p.ct_ratio ?? 1}</td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.modbus_addr ?? "—"}</td>
                             <td className="py-2 px-3 font-mono text-muted-foreground">{p.lora_dev_eui ? (p.lora_dev_eui as string).slice(-8) : "—"}</td>
                             <td className="py-2 px-3"><Badge variant="outline" className="text-[10px]">{p.status}</Badge></td>
                             <td className="py-2 px-3">
                               <div className="flex gap-0.5">
-                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditingId(p.id); setEditName(p.name); setEditDevice(p.device); setEditCategory(p.measure_category); setEditCtRatio(String(p.ct_ratio ?? 1)); }}>
+                                <Button size="sm" variant="ghost" className="h-7 w-7 p-0" onClick={() => { setEditingId(p.id); setEditName(p.name); setEditDevice(p.device); setEditCategory(p.measure_category); setEditCtRatio(String(p.ct_ratio ?? 1)); setEditNodeType(p.node_type ?? "charge"); setEditParentId(p.parent_id ?? "none"); setEditIsBilling(p.is_billing ?? true); }}>
                                   <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
                                 </Button>
                                 <Button size="sm" variant="ghost" className="h-7 w-7 p-0 text-destructive" onClick={() => handleDelete(p.id, p.name)}>

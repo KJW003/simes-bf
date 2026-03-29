@@ -235,9 +235,9 @@ router.get("/terrains/:terrainId/energy-history", async (req, res) => {
     const from = req.query.from || defaultFrom.toISOString();
     const to = req.query.to || now.toISOString();
 
-    // Get LOAD point IDs (only include LOAD measurements)
+    // Get LOAD billing point IDs (avoids double-counting hierarchical sub-points)
     const loadPts = await corePool.query(
-      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'LOAD'`,
+      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'LOAD' AND is_billing = true`,
       [terrainId]
     );
     const loadIds = loadPts.rows.map(r => r.id);
@@ -307,28 +307,39 @@ router.get("/terrains/:terrainId/dashboard", async (req, res) => {
       [terrainId]
     );
 
-    // Latest total power across all points
-    const latestPower = await telemetryPool.query(
-      `SELECT DISTINCT ON (point_id) point_id, time, active_power_total
-       FROM acrel_readings
-       WHERE terrain_id = $1
-       ORDER BY point_id, time DESC`,
+    // Get billing point IDs (avoids double-counting hierarchical sub-points)
+    const billingPts = await corePool.query(
+      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND is_billing = true`,
       [terrainId]
     );
+    const billingIds = billingPts.rows.map(r => r.id);
 
-    const totalPowerNow = latestPower.rows.reduce((s, r) => s + (Number(r.active_power_total) || 0), 0);
-    const lastUpdate = latestPower.rows.reduce(
-      (max, r) => (r.time > max ? r.time : max),
-      latestPower.rows[0]?.time || null
-    );
+    // Latest total power across billing points only
+    let totalPowerNow = 0;
+    let lastUpdate = null;
+    if (billingIds.length > 0) {
+      const latestPower = await telemetryPool.query(
+        `SELECT DISTINCT ON (point_id) point_id, time, active_power_total
+         FROM acrel_readings
+         WHERE terrain_id = $1 AND point_id = ANY($2)
+         ORDER BY point_id, time DESC`,
+        [terrainId, billingIds]
+      );
 
-    // Energy today (from raw readings, per-point delta then sum — Load meters only)
+      totalPowerNow = latestPower.rows.reduce((s, r) => s + (Number(r.active_power_total) || 0), 0);
+      lastUpdate = latestPower.rows.reduce(
+        (max, r) => (r.time > max ? r.time : max),
+        latestPower.rows[0]?.time || null
+      );
+    }
+
+    // Energy today (from raw readings, per-point delta then sum — billing LOAD meters only)
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
 
-    // Get Load-type point IDs from core DB
+    // Get Load-type billing point IDs (avoids double-counting hierarchical sub-points)
     const loadPts = await corePool.query(
-      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'LOAD'`,
+      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'LOAD' AND is_billing = true`,
       [terrainId]
     );
     const loadIds = loadPts.rows.map(r => r.id);
@@ -391,8 +402,9 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
 
     // 1) Points (include ct_ratio for frontend display, default to 1 if missing)
     const ptsR = await corePool.query(
-      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status, 
-              COALESCE(ct_ratio, 1) AS ct_ratio, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status,
+              COALESCE(ct_ratio, 1) AS ct_ratio, created_at,
+              parent_id, node_type, is_billing
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY name`,

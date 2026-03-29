@@ -22,7 +22,11 @@ const Forecasts = React.lazy(() => import("./pages/org/Forecasts"));
 const Invoice = React.lazy(() => import("./pages/org/Invoice.improved"));
 const PvBattery = React.lazy(() => import("./pages/org/SolairePerformance"));
 const Predimensionnement = React.lazy(() => import("./pages/org/Predimensionnement"));
+const SolarHistory = React.lazy(() => import("./pages/org/SolarHistory"));
+const SolarScenarioDetail = React.lazy(() => import("./pages/org/SolarScenarioDetail"));
 const EnergyAudit = React.lazy(() => import("./pages/org/EnergyAudit"));
+const AuditHistory = React.lazy(() => import("./pages/org/AuditHistory"));
+const AuditDetail = React.lazy(() => import("./pages/org/AuditDetail"));
 const Exports = React.lazy(() => import("./pages/org/Exports"));
 const Administration = React.lazy(() => import("./pages/org/Administration"));
 const ZonePage = React.lazy(() => import("./pages/org/ZonePage"));
@@ -102,7 +106,11 @@ function AppRoutes() {
         {canAccessOrgRoute(role, "invoice") && <Route path="/invoice" element={<ErrorBoundary><Invoice /></ErrorBoundary>} />}
         {hasSolar && canAccessOrgRoute(role, "pvBattery") && <Route path="/pv-battery" element={<ErrorBoundary><PvBattery /></ErrorBoundary>} />}
         {canAccessOrgRoute(role, "predimensionnement") && <Route path="/predimensionnement" element={<ErrorBoundary><Predimensionnement /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "predimensionnement") && <Route path="/solar-history" element={<ErrorBoundary><SolarHistory /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "predimensionnement") && <Route path="/solar-history/:id" element={<ErrorBoundary><SolarScenarioDetail /></ErrorBoundary>} />}
         {canAccessOrgRoute(role, "energyAudit") && <Route path="/energy-audit" element={<ErrorBoundary><EnergyAudit /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "energyAudit") && <Route path="/audit-history" element={<ErrorBoundary><AuditHistory /></ErrorBoundary>} />}
+        {canAccessOrgRoute(role, "energyAudit") && <Route path="/audit-history/:id" element={<ErrorBoundary><AuditDetail /></ErrorBoundary>} />}
         {canAccessOrgRoute(role, "anomalies") && <Route path="/anomalies" element={<ErrorBoundary><Anomalies /></ErrorBoundary>} />}
         {canAccessOrgRoute(role, "exports") && <Route path="/exports" element={<ErrorBoundary><Exports /></ErrorBoundary>} />}
         {canAccessOrgRoute(role, "admin") && <Route path="/admin" element={<ErrorBoundary><Administration /></ErrorBoundary>} />}
