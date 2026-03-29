@@ -21,7 +21,18 @@
       "Bash(ls -1 /d/Documents/IC/IC3/PING/simes-bf/infra/db/migrations/*.sql)",
       "Bash(xargs -I {} basename {})",
       "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/shared/schemas.js)",
-      "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/modules/referential/referential.routes.js)"
+      "Bash(node --check d:/Documents/IC/IC3/PING/simes-bf/apps/api-core/src/modules/referential/referential.routes.js)",
+      "Bash(grep -E \"^-.*\\\\.sql$\")",
+      "Bash(done)",
+      "Bash(mv 013_backfill_agg_from_readings.sql 013_telemetry_backfill_agg_from_readings.sql)",
+      "Bash(mv 018_backfill_daily_agg.sql 018_telemetry_backfill_daily_agg.sql)",
+      "Bash(grep -r \"CREATE TABLE.*anomaly_analysis_state\\\\|CREATE TABLE.*energy_anomalies\" d:/Documents/IC/IC3/PING/simes-bf/infra/db/*.sql)",
+      "Bash(grep -l \"energy_anomalies\" d:/Documents/IC/IC3/PING/simes-bf/infra/db/migrations/*.sql)",
+      "Bash(mv 015_anomaly_analysis_state.sql 015_telemetry_anomaly_analysis_state.sql)",
+      "Bash(rm 017_anomaly_analysis_state.sql)",
+      "Bash(ls -l d:/Documents/IC/IC3/PING/simes-bf/infra/db/migrations/004*.sql)",
+      "Bash(rm 015_billing_v2_columns.sql.deprecated)",
+      "Bash(mv 004_facture_monthly.sql 004a_core_facture_monthly.sql)"
     ]
   }
 }
