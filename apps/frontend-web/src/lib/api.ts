@@ -127,6 +127,13 @@ export interface ApiMeasurementPoint {
   is_billing: boolean;
   // PV system assignment
   pv_system_id: string | null;
+  // Live readings (injected by some endpoints)
+  readings?: {
+    active_power_total?: number;
+    energy_import_total?: number;
+    energy_export_total?: number;
+    [key: string]: unknown;
+  };
 }
 
 export interface ApiPvSystem {

@@ -911,9 +911,9 @@ export function useCreateSolarScenario() {
 // ─── PV Systems ───────────────────────────────────────────
 
 export function usePvSystems(terrainId: string | null) {
-  return useQuery({
+  return useQuery<ApiPvSystem[]>({
     queryKey: ['pv-systems', terrainId],
-    queryFn: () => api.getPvSystems(terrainId!),
+    queryFn: () => api.getPvSystems(terrainId!).then(r => r.systems),
     enabled: !!terrainId,
     staleTime: 60_000,
     retry: 1,
@@ -921,9 +921,9 @@ export function usePvSystems(terrainId: string | null) {
 }
 
 export function usePvSystem(id: string | null) {
-  return useQuery({
+  return useQuery<ApiPvSystem>({
     queryKey: ['pv-system', id],
-    queryFn: () => api.getPvSystem(id!),
+    queryFn: () => api.getPvSystem(id!).then(r => r.system),
     enabled: !!id,
     staleTime: 60_000,
     retry: 1,

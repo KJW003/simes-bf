@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
@@ -12,7 +12,7 @@ import {
   ArrowRight, Clock, Cpu, BarChart3, Activity,
 } from 'lucide-react';
 import {
-  usePvSystems, usePoints, useDashboard,
+  usePvSystems, usePoints,
   usePvTerrainProduction, usePvSystemProduction,
 } from '@/hooks/useApi';
 import {
@@ -25,13 +25,12 @@ export default function SolairePerformance() {
   const { selectedTerrainId } = useAppContext();
   const { data: systems = [] } = usePvSystems(selectedTerrainId);
   const { data: points = [] } = usePoints(selectedTerrainId);
-  const { data: dashData } = useDashboard(selectedTerrainId);
 
   const [days, setDays] = useState(30);
   const [selectedSystemId, setSelectedSystemId] = useState<string | null>(null);
 
   // Terrain-level production
-  const { data: terrainProd, isLoading: terrainLoading } = usePvTerrainProduction(selectedTerrainId, days);
+  const { data: terrainProd } = usePvTerrainProduction(selectedTerrainId, days);
   // Per-system production (when a system is selected)
   const { data: systemProd, isLoading: systemLoading } = usePvSystemProduction(selectedSystemId, days);
 
