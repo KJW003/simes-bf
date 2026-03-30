@@ -12,7 +12,7 @@ import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import { Plus, Pencil, Trash2, Sun } from 'lucide-react';
+import { Plus, Pencil, Trash2 } from 'lucide-react';
 
 import { usePvSystems, useCreatePvSystem, useUpdatePvSystem, useDeletePvSystem, useAssignPointToPvSystem, usePoints, useAllTerrains } from '@/hooks/useApi';
 
@@ -118,32 +118,27 @@ export function PvSystemsTab() {
   const pvPoints = useMemo(() => points.filter(p => p.measure_category === 'PV'), [points]);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Terrain Selector */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Sun className="w-4 h-4 text-amber-500" />
-            Systèmes PV
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center gap-2">
-            <Label className="text-sm font-medium">Terrain</Label>
-            <Select value={selectedTerrainId ?? "none"} onValueChange={(v) => setSelectedTerrainId(v === "none" ? null : v)}>
-              <SelectTrigger className="w-[220px] h-9">
-                <SelectValue placeholder="Choisir un terrain…" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">— Sélectionnez un terrain —</SelectItem>
-                {(allTerrains as any[]).map((t: any) => (
-                  <SelectItem key={t.id} value={t.id}>{terrainLabelFn(t)}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex gap-3 items-end">
+        <div className="space-y-1.5 flex-1 max-w-md">
+          <Label className="text-sm font-medium">Terrain</Label>
+          <Select value={selectedTerrainId ?? "none"} onValueChange={(v) => setSelectedTerrainId(v === "none" ? null : v)}>
+            <SelectTrigger className="h-9"><SelectValue placeholder="Choisir un terrain…" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="none">— Sélectionnez un terrain —</SelectItem>
+              {(allTerrains as any[]).map((t: any) => (
+                <SelectItem key={t.id} value={t.id}>{terrainLabelFn(t)}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        {selectedTerrainId && (
+          <Button size="sm" onClick={() => setShowCreate(true)}>
+            <Plus className="w-4 h-4 mr-1" /> Nouveau système
+          </Button>
+        )}
+      </div>
 
       {!selectedTerrainId && (
         <Card>
@@ -158,17 +153,9 @@ export function PvSystemsTab() {
       {/* Systems List */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-base flex items-center gap-2">
-            <Sun className="w-4 h-4 text-amber-500" />
-            Systèmes PV
-          </CardTitle>
+          <CardTitle className="text-sm font-medium">Systèmes PV</CardTitle>
         </CardHeader>
         <CardContent>
-          <Button onClick={() => setShowCreate(true)} size="sm" className="mb-4">
-            <Plus className="w-4 h-4 mr-1" />
-            Nouveau système
-          </Button>
-
           {systemsLoading ? (
             <p className="text-sm text-muted-foreground">Chargement...</p>
           ) : systems.length === 0 ? (
@@ -258,6 +245,7 @@ export function PvSystemsTab() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{editingId ? 'Éditer le système PV' : 'Nouveau système PV'}</DialogTitle>
+            <DialogDescription>{editingId ? 'Modifier les propriétés du système' : 'Créer un nouveau système PV'}</DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
@@ -285,12 +273,12 @@ export function PvSystemsTab() {
             <div className="grid grid-cols-2 gap-4">
               <div>
                 <Label htmlFor="orient">Orientation</Label>
-                <Select value={formData.expected_orientation} onValueChange={(v) => setFormData({ ...formData, expected_orientation: v })}>
+                <Select value={formData.expected_orientation || "none"} onValueChange={(v) => setFormData({ ...formData, expected_orientation: v === "none" ? "" : v })}>
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Aucune</SelectItem>
+                    <SelectItem value="none">Aucune</SelectItem>
                     {ORIENTATIONS.map(o => <SelectItem key={o} value={o}>{o}</SelectItem>)}
                   </SelectContent>
                 </Select>
