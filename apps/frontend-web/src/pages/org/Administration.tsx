@@ -42,6 +42,7 @@ import {
   useCreateZone, useUpdateZone, useDeleteZone,
 } from "@/hooks/useApi";
 import api from "@/lib/api";
+import { PvSystemsTab } from "@/components/admin/PvSystemsTab";
 
 // ─── Error Boundary ────────────────────────────────────────
 class TabErrorBoundary extends Component<{ children: ReactNode; name: string }, { error: Error | null }> {
@@ -2510,7 +2511,7 @@ export default function Administration() {
   const [flowView, setFlowView] = useState<"hub" | "setup" | "operations" | "maintenance" | "access">("hub");
   const [setupStep, setSetupStep] = useState(1);
   const [opsTab, setOpsTab] = useState<"topology" | "mapping" | "messages">("topology");
-  const [maintenanceTab, setMaintenanceTab] = useState<"points" | "zones">("points");
+  const [maintenanceTab, setMaintenanceTab] = useState<"points" | "zones" | "pv-systems">("points");
 
   const mappedGateways = gateways.filter((g: any) => !!g.terrain_id).length;
   const unmappedGateways = Math.max(0, gateways.length - mappedGateways);
@@ -2714,9 +2715,11 @@ export default function Administration() {
           <TabsList>
             <TabsTrigger value="points">Points de mesure</TabsTrigger>
             <TabsTrigger value="zones">Zones</TabsTrigger>
+            <TabsTrigger value="pv-systems">Systèmes PV</TabsTrigger>
           </TabsList>
           <TabsContent value="points"><TabErrorBoundary name="Points de mesure"><MeasurementPointsTab /></TabErrorBoundary></TabsContent>
           <TabsContent value="zones"><TabErrorBoundary name="Zones"><ZonesTab /></TabErrorBoundary></TabsContent>
+          <TabsContent value="pv-systems"><TabErrorBoundary name="Systèmes PV"><PvSystemsTab /></TabErrorBoundary></TabsContent>
         </Tabs>
       )}
 

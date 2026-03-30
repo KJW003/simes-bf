@@ -125,6 +125,25 @@ export interface ApiMeasurementPoint {
   parent_id: string | null;
   node_type: NodeType;
   is_billing: boolean;
+  // PV system assignment
+  pv_system_id: string | null;
+}
+
+export interface ApiPvSystem {
+  id: string;
+  terrain_id: string;
+  name: string;
+  description?: string;
+  location?: string;
+  installed_capacity_kwc?: number;
+  installation_date?: string;
+  expected_tilt_degrees?: number;
+  expected_orientation?: string;
+  created_at: string;
+  updated_at: string;
+  point_count?: number;
+  active_point_count?: number;
+  points?: ApiMeasurementPoint[];
 }
 
 export interface ApiUser {
@@ -1086,6 +1105,29 @@ export const api = {
     request<{ ok: boolean; deleted: boolean }>(`/solar/scenarios/${id}`, { method: 'DELETE' }),
   getSolarDefaults: (method: string) =>
     request<{ ok: boolean; method: string; defaults: Record<string, number> }>(`/solar/defaults/${method}`),
+
+  // ── PV Systems ──
+  getPvSystems: (terrainId: string) =>
+    request<{ ok: boolean; systems: ApiPvSystem[] }>(`/pv/systems?terrain_id=${terrainId}`),
+  getPvSystem: (id: string) =>
+    request<{ ok: boolean; system: ApiPvSystem }>(`/pv/systems/${id}`),
+  createPvSystem: (payload: Omit<ApiPvSystem, 'id' | 'created_at' | 'updated_at'>) =>
+    request<{ ok: boolean; system: ApiPvSystem }>('/pv/systems', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+  updatePvSystem: (id: string, payload: Partial<ApiPvSystem>) =>
+    request<{ ok: boolean; system: ApiPvSystem }>(`/pv/systems/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    }),
+  deletePvSystem: (id: string) =>
+    request<{ ok: boolean; deleted: boolean }>(`/pv/systems/${id}`, { method: 'DELETE' }),
+  assignPointToPvSystem: (pointId: string, pvSystemId: string | null) =>
+    request<{ ok: boolean; point: ApiMeasurementPoint }>('/pv/assign', {
+      method: 'POST',
+      body: JSON.stringify({ point_id: pointId, pv_system_id: pvSystemId }),
+    }),
 };
 
 export default api;

@@ -106,7 +106,7 @@ def fetch_daily_features(terrain_id: str) -> pd.DataFrame:
         WHERE terrain_id = %s
           AND active_power_total IS NOT NULL
           AND time > NOW() - INTERVAL '365 days'
-          AND point_id = ANY(%s)
+          AND point_id = ANY(%s::uuid[])
         GROUP BY 1, 2
         ORDER BY point_id, day
     )
@@ -181,7 +181,7 @@ def fetch_daily_simple(terrain_id: str) -> pd.DataFrame:
         FROM acrel_readings
         WHERE terrain_id = %s AND active_power_total IS NOT NULL
           AND time > NOW() - INTERVAL '365 days'
-          AND point_id = ANY(%s)
+          AND point_id = ANY(%s::uuid[])
         GROUP BY 1, 2
     )
     SELECT
@@ -1329,7 +1329,7 @@ def fetch_raw_readings(terrain_id: str, point_id: str | None, history_days: int)
                        SUM(active_power_total) AS active_power_total
                 FROM acrel_readings
                 WHERE terrain_id = %s AND time >= NOW() - (%s * INTERVAL '1 day')
-                  AND point_id = ANY(%s)
+                  AND point_id = ANY(%s::uuid[])
                 GROUP BY 1
                 ORDER BY 1
             """, conn, params=(terrain_id, history_days, billing_ids))
@@ -1634,7 +1634,7 @@ def get_comparison_profiles(terrain_id: str, point_id: str | None = None):
                                SUM(active_power_total) / COUNT(DISTINCT point_id) AS avg_kw
                         FROM acrel_readings
                         WHERE terrain_id = %s AND time >= CURRENT_DATE
-                          AND point_id = ANY(%s)
+                          AND point_id = ANY(%s::uuid[])
                         GROUP BY 1
                         ORDER BY 1
                     """, conn, params=(terrain_id, billing_ids))
@@ -1646,7 +1646,7 @@ def get_comparison_profiles(terrain_id: str, point_id: str | None = None):
                         WHERE terrain_id = %s
                           AND time >= CURRENT_DATE - INTERVAL '1 day'
                           AND time < CURRENT_DATE
-                          AND point_id = ANY(%s)
+                          AND point_id = ANY(%s::uuid[])
                         GROUP BY 1
                         ORDER BY 1
                     """, conn, params=(terrain_id, billing_ids))
@@ -1705,7 +1705,7 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                     WHERE terrain_id = %s
                       AND day >= CURRENT_DATE - (%s * INTERVAL '1 day')
                       AND day < CURRENT_DATE
-                      AND point_id = ANY(%s)
+                      AND point_id = ANY(%s::uuid[])
                     GROUP BY day
                     ORDER BY day
                 """, conn, params=(terrain_id, history_days, billing_ids if billing_ids else []))
@@ -1725,7 +1725,7 @@ def get_daily_chart_data(terrain_id: str, history_days: int = 14, forecast_days:
                             WHERE terrain_id = %s
                               AND time >= NOW() - (%s * INTERVAL '1 day')
                               AND time < CURRENT_DATE
-                              AND point_id = ANY(%s)
+                              AND point_id = ANY(%s::uuid[])
                             GROUP BY 1, 2
                         )
                         SELECT

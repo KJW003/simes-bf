@@ -23,6 +23,7 @@ const logsRoutes = require("./modules/logs/logs.routes");
 const aiRoutes = require("./modules/ai/ai.routes");
 const auditsRoutes = require("./modules/audits/audits.routes");
 const solarRoutes = require("./modules/solar/solar.routes");
+const pvRoutes = require("./modules/pv/pv.routes");
 const resultsMonthlyRouter = require('./modules/results/results.monthly');
 
 const app = express();
@@ -99,6 +100,7 @@ app.use("/", requireAuth, logsRoutes);
 app.use("/", requireAuth, aiRoutes);
 app.use("/", requireAuth, auditsRoutes);
 app.use("/", requireAuth, solarRoutes);
+app.use("/", requireAuth, pvRoutes);
 
 //
 app.use(resultsMonthlyRouter);

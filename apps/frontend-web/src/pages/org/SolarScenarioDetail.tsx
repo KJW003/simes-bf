@@ -55,7 +55,7 @@ export default function SolarScenarioDetail() {
     if (!isPending) return;
     const timer = setInterval(() => refetch(), 3000);
     return () => clearInterval(timer);
-  }, [isPending, refetch]);
+  }, [isPending, refetch, scenario]);
 
   if (isPending) {
     return (

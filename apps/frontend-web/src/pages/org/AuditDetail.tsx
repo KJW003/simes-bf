@@ -47,7 +47,7 @@ export default function AuditDetail() {
     if (!isPending) return;
     const timer = setInterval(() => refetch(), 3000);
     return () => clearInterval(timer);
-  }, [isPending, refetch]);
+  }, [isPending, refetch, audit]);
 
   if (isPending) {
     return (

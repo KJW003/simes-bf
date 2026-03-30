@@ -23,7 +23,7 @@ export function stableNow(slotMin = 15): string {
   const slot = slotMin * 60_000;
   return new Date(Math.floor(Date.now() / slot) * slot).toISOString();
 }
-import type { ApiOrg, ApiSite, ApiTerrain, ApiZone, ApiMeasurementPoint, TerrainOverviewPoint, TerrainOverviewZone } from '@/lib/api';
+import type { ApiOrg, ApiSite, ApiTerrain, ApiZone, ApiMeasurementPoint, ApiPvSystem, TerrainOverviewPoint, TerrainOverviewZone } from '@/lib/api';
 
 // ─── Type Definitions ──────────────────────────────────────
 
@@ -904,6 +904,74 @@ export function useCreateSolarScenario() {
       api.createSolarScenario(payload),
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ['solar-scenarios', vars.terrain_id] });
+    },
+  });
+}
+
+// ─── PV Systems ───────────────────────────────────────────
+
+export function usePvSystems(terrainId: string | null) {
+  return useQuery({
+    queryKey: ['pv-systems', terrainId],
+    queryFn: () => api.getPvSystems(terrainId!),
+    enabled: !!terrainId,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function usePvSystem(id: string | null) {
+  return useQuery({
+    queryKey: ['pv-system', id],
+    queryFn: () => api.getPvSystem(id!),
+    enabled: !!id,
+    staleTime: 60_000,
+    retry: 1,
+  });
+}
+
+export function useCreatePvSystem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (payload: Omit<ApiPvSystem, 'id' | 'created_at' | 'updated_at'>) =>
+      api.createPvSystem(payload),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['pv-systems', vars.terrain_id] });
+    },
+  });
+}
+
+export function useUpdatePvSystem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, payload }: { id: string; payload: Partial<ApiPvSystem> }) =>
+      api.updatePvSystem(id, payload),
+    onSuccess: (d) => {
+      qc.invalidateQueries({ queryKey: ['pv-system', d.system.id] });
+      qc.invalidateQueries({ queryKey: ['pv-systems', d.system.terrain_id] });
+    },
+  });
+}
+
+export function useDeletePvSystem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.deletePvSystem(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['pv-systems'] });
+    },
+  });
+}
+
+export function useAssignPointToPvSystem() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ pointId, pvSystemId }: { pointId: string; pvSystemId: string | null }) =>
+      api.assignPointToPvSystem(pointId, pvSystemId),
+    onSuccess: (_d, vars) => {
+      qc.invalidateQueries({ queryKey: ['points'] });
+      qc.invalidateQueries({ queryKey: ['pv-systems'] });
+      qc.invalidateQueries({ queryKey: ['pv-system', vars.pvSystemId] });
     },
   });
 }

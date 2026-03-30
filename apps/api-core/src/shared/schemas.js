@@ -93,6 +93,33 @@ const settingsSchema = z.object({
   settings: z.object({}).passthrough().optional(),
 }).passthrough();
 
+// ── PV Systems ──────────────────────────────────────────
+const createPvSystemSchema = z.object({
+  terrain_id: z.string().uuid('Invalid terrain ID'),
+  name: z.string().min(1).max(255).transform(s => s.trim()),
+  description: z.string().max(1000).nullable().optional(),
+  location: z.string().max(255).nullable().optional(),
+  installed_capacity_kwc: z.number().positive().nullable().optional(),
+  installation_date: z.string().datetime().nullable().optional(),
+  expected_tilt_degrees: z.number().int().min(0).max(90).nullable().optional(),
+  expected_orientation: z.enum(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']).nullable().optional(),
+});
+
+const updatePvSystemSchema = z.object({
+  name: z.string().min(1).max(255).transform(s => s.trim()).optional(),
+  description: z.string().max(1000).nullable().optional(),
+  location: z.string().max(255).nullable().optional(),
+  installed_capacity_kwc: z.number().positive().nullable().optional(),
+  installation_date: z.string().datetime().nullable().optional(),
+  expected_tilt_degrees: z.number().int().min(0).max(90).nullable().optional(),
+  expected_orientation: z.enum(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']).nullable().optional(),
+});
+
+const assignPointToPvSystemSchema = z.object({
+  point_id: z.string().uuid('Invalid point ID'),
+  pv_system_id: z.string().uuid('Invalid PV system ID').nullable().optional(),
+});
+
 module.exports = {
   loginSchema,
   createUserSchema,
@@ -105,4 +132,7 @@ module.exports = {
   updatePointSchema,
   assignZoneSchema,
   settingsSchema,
+  createPvSystemSchema,
+  updatePvSystemSchema,
+  assignPointToPvSystemSchema,
 };
