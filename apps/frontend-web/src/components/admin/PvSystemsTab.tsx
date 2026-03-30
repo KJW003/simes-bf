@@ -14,13 +14,17 @@ import {
 } from '@/components/ui/select';
 import { Plus, Pencil, Trash2, Sun } from 'lucide-react';
 
-import { usePvSystems, useCreatePvSystem, useUpdatePvSystem, useDeletePvSystem, useAssignPointToPvSystem, usePoints } from '@/hooks/useApi';
-import { useAppContext } from '@/contexts/AppContext';
+import { usePvSystems, useCreatePvSystem, useUpdatePvSystem, useDeletePvSystem, useAssignPointToPvSystem, usePoints, useAllTerrains } from '@/hooks/useApi';
 
 const ORIENTATIONS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
 
+function terrainLabelFn(t: any) {
+  return t.gateway_id ? `${t.name} (${t.gateway_id})` : t.name;
+}
+
 export function PvSystemsTab() {
-  const { selectedTerrainId } = useAppContext();
+  const { data: allTerrains = [] } = useAllTerrains();
+  const [selectedTerrainId, setSelectedTerrainId] = useState<string | null>(null);
   const { data: systems = [], isLoading: systemsLoading } = usePvSystems(selectedTerrainId);
   const { data: points = [] } = usePoints(selectedTerrainId);
 
@@ -113,13 +117,45 @@ export function PvSystemsTab() {
 
   const pvPoints = useMemo(() => points.filter(p => p.measure_category === 'PV'), [points]);
 
-  if (!selectedTerrainId) {
-    return <Card><CardContent className="py-12 text-center text-muted-foreground">Sélectionnez un terrain.</CardContent></Card>;
-  }
-
   return (
     <div className="space-y-6">
-      {/* Create */}
+      {/* Terrain Selector */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <Sun className="w-4 h-4 text-amber-500" />
+            Systèmes PV
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center gap-2">
+            <Label className="text-sm font-medium">Terrain</Label>
+            <Select value={selectedTerrainId ?? "none"} onValueChange={(v) => setSelectedTerrainId(v === "none" ? null : v)}>
+              <SelectTrigger className="w-[220px] h-9">
+                <SelectValue placeholder="Choisir un terrain…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="none">— Sélectionnez un terrain —</SelectItem>
+                {(allTerrains as any[]).map((t: any) => (
+                  <SelectItem key={t.id} value={t.id}>{terrainLabelFn(t)}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        </CardContent>
+      </Card>
+
+      {!selectedTerrainId && (
+        <Card>
+          <CardContent className="py-12 text-center text-muted-foreground">
+            Sélectionnez un terrain pour gérer ses systèmes PV.
+          </CardContent>
+        </Card>
+      )}
+
+      {selectedTerrainId && (
+        <>
+      {/* Systems List */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -273,6 +309,8 @@ export function PvSystemsTab() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+        </>
+      )}
     </div>
   );
 }
