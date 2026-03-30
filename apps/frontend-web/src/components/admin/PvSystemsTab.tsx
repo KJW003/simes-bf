@@ -31,6 +31,9 @@ export function PvSystemsTab() {
   const [showCreate, setShowCreate] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [assigningPointId, setAssigningPointId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
+  const requiredDeleteKeyword = "CONFIRM-DELETE";
 
   const createMutation = useCreatePvSystem();
   const updateMutation = useUpdatePvSystem();
@@ -184,12 +187,12 @@ export function PvSystemsTab() {
                     }}>
                       <Pencil className="w-4 h-4" />
                     </Button>
-                    <ConfirmActionDialog
-                      title="Supprimer le système PV"
-                      description="Cette action ne peut pas être annulée."
-                      onConfirm={() => handleDelete(sys.id)}
-                      trigger={<Button variant="ghost" size="sm"><Trash2 className="w-4 h-4 text-destructive" /></Button>}
-                    />
+                    <Button variant="ghost" size="sm" onClick={() => {
+                      setDeleteTarget({ id: sys.id, name: sys.name });
+                      setDeleteConfirmText("");
+                    }}>
+                      <Trash2 className="w-4 h-4 text-destructive" />
+                    </Button>
                   </div>
                 </div>
               ))}
@@ -237,6 +240,21 @@ export function PvSystemsTab() {
           )}
         </CardContent>
       </Card>
+
+      {/* Delete Confirm */}
+      <ConfirmActionDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => { if (!open) setDeleteTarget(null); }}
+        title="Supprimer le système PV"
+        description={`Êtes-vous sûr ? Le système "${deleteTarget?.name}" et ses assignations de points seront supprimés.`}
+        requiredKeyword={requiredDeleteKeyword}
+        confirmText={deleteConfirmText}
+        onConfirmTextChange={setDeleteConfirmText}
+        onConfirm={() => {
+          if (deleteTarget) handleDelete(deleteTarget.id);
+        }}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {/* Create/Edit Dialog */}
       <Dialog open={showCreate || !!editingId} onOpenChange={(open) => {
