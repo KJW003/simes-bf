@@ -100,7 +100,7 @@ const createPvSystemSchema = z.object({
   description: z.string().max(1000).nullable().optional(),
   location: z.string().max(255).nullable().optional(),
   installed_capacity_kwc: z.number().positive().nullable().optional(),
-  installation_date: z.string().datetime().nullable().optional(),
+  installation_date: z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'Date format YYYY-MM-DD').nullable().optional(),
   expected_tilt_degrees: z.number().int().min(0).max(90).nullable().optional(),
   expected_orientation: z.enum(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']).nullable().optional(),
 });
@@ -110,7 +110,7 @@ const updatePvSystemSchema = z.object({
   description: z.string().max(1000).nullable().optional(),
   location: z.string().max(255).nullable().optional(),
   installed_capacity_kwc: z.number().positive().nullable().optional(),
-  installation_date: z.string().datetime().nullable().optional(),
+  installation_date: z.string().regex(/^\d{4}-\d{2}-\d{2}/, 'Date format YYYY-MM-DD').nullable().optional(),
   expected_tilt_degrees: z.number().int().min(0).max(90).nullable().optional(),
   expected_orientation: z.enum(['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW']).nullable().optional(),
 });

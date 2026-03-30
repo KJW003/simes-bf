@@ -146,6 +146,47 @@ export interface ApiPvSystem {
   points?: ApiMeasurementPoint[];
 }
 
+export interface ApiPvProductionDay {
+  day: string;
+  export_kwh: number;
+  total_kwh: number;
+  avg_power_kw: number;
+  peak_power_kw: number;
+  samples?: number;
+  specific_yield?: number | null;
+}
+
+export interface ApiPvSystemProductionResponse {
+  ok: boolean;
+  system_id: string;
+  capacity_kwc: number | null;
+  days_requested: number;
+  days_with_data: number;
+  summary: {
+    total_production_kwh: number;
+    total_export_kwh: number;
+    avg_daily_production_kwh: number;
+    peak_power_kw: number;
+    specific_yield: number | null;
+    performance_ratio: number | null;
+  };
+  data: ApiPvProductionDay[];
+}
+
+export interface ApiPvTerrainProductionResponse {
+  ok: boolean;
+  terrain_id: string;
+  total_capacity_kwc: number | null;
+  point_count: number;
+  days_with_data: number;
+  summary: {
+    total_production_kwh: number;
+    avg_daily_kwh: number;
+    specific_yield: number | null;
+  };
+  data: ApiPvProductionDay[];
+}
+
 export interface ApiUser {
   id: string;
   email: string;
@@ -1128,6 +1169,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ point_id: pointId, pv_system_id: pvSystemId }),
     }),
+
+  // ── PV Production ──
+  getPvSystemProduction: (id: string, days = 30) =>
+    request<ApiPvSystemProductionResponse>(`/pv/systems/${id}/production?days=${days}`),
+  getPvTerrainProduction: (terrainId: string, days = 30) =>
+    request<ApiPvTerrainProductionResponse>(`/pv/terrain/${terrainId}/production?days=${days}`),
 };
 
 export default api;

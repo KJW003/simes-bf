@@ -514,7 +514,7 @@ router.get("/terrains/:terrainId/points", requireAuth, async (req, res) => {
     const r = await db.query(
       `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr,
               COALESCE(ct_ratio, 1) AS ct_ratio, meta, status, created_at,
-              parent_id, node_type, is_billing
+              parent_id, node_type, is_billing, pv_system_id
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY created_at DESC`,

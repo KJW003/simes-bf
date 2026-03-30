@@ -404,7 +404,7 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
     const ptsR = await corePool.query(
       `SELECT id, terrain_id, zone_id, name, device, measure_category, lora_dev_eui, modbus_addr, meta, status,
               COALESCE(ct_ratio, 1) AS ct_ratio, created_at,
-              parent_id, node_type, is_billing
+              parent_id, node_type, is_billing, pv_system_id
        FROM measurement_points
        WHERE terrain_id = $1
        ORDER BY name`,

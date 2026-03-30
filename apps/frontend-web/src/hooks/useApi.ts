@@ -971,7 +971,28 @@ export function useAssignPointToPvSystem() {
     onSuccess: (_d, vars) => {
       qc.invalidateQueries({ queryKey: ['points'] });
       qc.invalidateQueries({ queryKey: ['pv-systems'] });
-      qc.invalidateQueries({ queryKey: ['pv-system', vars.pvSystemId] });
+      if (vars.pvSystemId) {
+        qc.invalidateQueries({ queryKey: ['pv-system', vars.pvSystemId] });
+      }
     },
+  });
+}
+
+// ── PV Production ──────────────────────────────────────────
+export function usePvSystemProduction(systemId: string | null, days = 30) {
+  return useQuery({
+    queryKey: ['pv-system-production', systemId, days],
+    queryFn: () => api.getPvSystemProduction(systemId!, days),
+    enabled: !!systemId,
+    staleTime: 5 * 60_000,
+  });
+}
+
+export function usePvTerrainProduction(terrainId: string | null, days = 30) {
+  return useQuery({
+    queryKey: ['pv-terrain-production', terrainId, days],
+    queryFn: () => api.getPvTerrainProduction(terrainId!, days),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
   });
 }

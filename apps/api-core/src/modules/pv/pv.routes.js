@@ -32,7 +32,7 @@ router.post(
 );
 
 // ── GET /pv/systems — list PV systems for a terrain
-router.get("/pv/systems", async (req, res) => {
+router.get("/pv/systems", requireAuth, async (req, res) => {
   try {
     const { terrain_id } = req.query;
     if (!terrain_id) return res.status(400).json({ ok: false, error: "terrain_id is required" });
@@ -60,7 +60,7 @@ router.get("/pv/systems", async (req, res) => {
 });
 
 // ── GET /pv/systems/:id — get a PV system with points
-router.get("/pv/systems/:id", async (req, res) => {
+router.get("/pv/systems/:id", requireAuth, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -80,7 +80,9 @@ router.get("/pv/systems/:id", async (req, res) => {
 
     // Get associated points
     const ptsRes = await db.query(
-      `SELECT id, name, device, measure_category, status, created_at
+      `SELECT id, terrain_id, zone_id, name, device, measure_category,
+              lora_dev_eui, modbus_addr, COALESCE(ct_ratio, 1) AS ct_ratio,
+              meta, status, created_at, parent_id, node_type, is_billing, pv_system_id
        FROM measurement_points
        WHERE pv_system_id = $1
        ORDER BY created_at ASC`,
@@ -206,5 +208,159 @@ router.post(
     }
   }
 );
+
+// ── GET /pv/systems/:id/production — historical production data for a PV system
+router.get("/pv/systems/:id/production", requireAuth, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+
+    // Get point IDs belonging to this system
+    const ptsRes = await db.query(
+      `SELECT id FROM measurement_points WHERE pv_system_id = $1 AND status = 'active'`,
+      [id]
+    );
+    const pointIds = ptsRes.rows.map(r => r.id);
+
+    if (pointIds.length === 0) {
+      return res.json({ ok: true, system_id: id, days, data: [] });
+    }
+
+    // Get system info for capacity
+    const sysRes = await db.query(
+      `SELECT installed_capacity_kwc FROM pv_systems WHERE id = $1`,
+      [id]
+    );
+    const capacityKwc = sysRes.rows[0]?.installed_capacity_kwc || null;
+
+    // Query telemetry DB for daily production
+    const { telemetryPool } = require("../../config/db");
+    const prodRes = await telemetryPool.query(
+      `SELECT
+         day,
+         SUM(energy_export_delta) AS export_kwh,
+         SUM(energy_total_delta) AS total_kwh,
+         AVG(active_power_avg) AS avg_power_kw,
+         MAX(active_power_max) AS peak_power_kw,
+         SUM(samples_count) AS samples
+       FROM acrel_agg_daily
+       WHERE point_id = ANY($1)
+         AND day >= CURRENT_DATE - ($2 * INTERVAL '1 day')
+         AND day < CURRENT_DATE
+       GROUP BY day
+       ORDER BY day ASC`,
+      [pointIds, days]
+    );
+
+    const data = prodRes.rows.map(row => ({
+      day: row.day,
+      export_kwh: Number(row.export_kwh || 0),
+      total_kwh: Number(row.total_kwh || 0),
+      avg_power_kw: Number(row.avg_power_kw || 0),
+      peak_power_kw: Number(row.peak_power_kw || 0),
+      samples: Number(row.samples || 0),
+      // Specific yield = daily production / capacity
+      specific_yield: capacityKwc ? Number(row.total_kwh || 0) / capacityKwc : null,
+    }));
+
+    // Summary KPIs
+    const totalProduction = data.reduce((s, d) => s + d.total_kwh, 0);
+    const totalExport = data.reduce((s, d) => s + d.export_kwh, 0);
+    const peakPower = Math.max(...data.map(d => d.peak_power_kw), 0);
+    const avgDailyProd = data.length > 0 ? totalProduction / data.length : 0;
+
+    res.json({
+      ok: true,
+      system_id: id,
+      capacity_kwc: capacityKwc,
+      days_requested: days,
+      days_with_data: data.length,
+      summary: {
+        total_production_kwh: Number(totalProduction.toFixed(2)),
+        total_export_kwh: Number(totalExport.toFixed(2)),
+        avg_daily_production_kwh: Number(avgDailyProd.toFixed(2)),
+        peak_power_kw: Number(peakPower.toFixed(3)),
+        specific_yield: capacityKwc ? Number((totalProduction / capacityKwc).toFixed(1)) : null,
+        performance_ratio: capacityKwc && data.length > 0
+          ? Number(((totalProduction / (capacityKwc * data.length * 5.5)) * 100).toFixed(1))
+          : null,
+      },
+      data,
+    });
+  } catch (e) {
+    log.error({ err: e.message }, "[pv] production history error");
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// ── GET /pv/terrain/:terrainId/production — aggregate PV production for entire terrain
+router.get("/pv/terrain/:terrainId/production", requireAuth, async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const days = Math.min(Math.max(Number(req.query.days) || 30, 1), 365);
+
+    // All PV points on this terrain (regardless of system assignment)
+    const ptsRes = await db.query(
+      `SELECT id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' AND measure_category = 'PV'`,
+      [terrainId]
+    );
+    const pointIds = ptsRes.rows.map(r => r.id);
+
+    if (pointIds.length === 0) {
+      return res.json({ ok: true, terrain_id: terrainId, days, point_count: 0, data: [] });
+    }
+
+    // Total installed capacity across all systems on this terrain
+    const capRes = await db.query(
+      `SELECT COALESCE(SUM(installed_capacity_kwc), 0) AS total_kwc FROM pv_systems WHERE terrain_id = $1`,
+      [terrainId]
+    );
+    const totalCapacity = Number(capRes.rows[0].total_kwc) || null;
+
+    const { telemetryPool } = require("../../config/db");
+    const prodRes = await telemetryPool.query(
+      `SELECT
+         day,
+         SUM(energy_export_delta) AS export_kwh,
+         SUM(energy_total_delta) AS total_kwh,
+         AVG(active_power_avg) AS avg_power_kw,
+         MAX(active_power_max) AS peak_power_kw
+       FROM acrel_agg_daily
+       WHERE point_id = ANY($1)
+         AND day >= CURRENT_DATE - ($2 * INTERVAL '1 day')
+         AND day < CURRENT_DATE
+       GROUP BY day
+       ORDER BY day ASC`,
+      [pointIds, days]
+    );
+
+    const data = prodRes.rows.map(row => ({
+      day: row.day,
+      export_kwh: Number(row.export_kwh || 0),
+      total_kwh: Number(row.total_kwh || 0),
+      avg_power_kw: Number(row.avg_power_kw || 0),
+      peak_power_kw: Number(row.peak_power_kw || 0),
+    }));
+
+    const totalProduction = data.reduce((s, d) => s + d.total_kwh, 0);
+
+    res.json({
+      ok: true,
+      terrain_id: terrainId,
+      total_capacity_kwc: totalCapacity,
+      point_count: pointIds.length,
+      days_with_data: data.length,
+      summary: {
+        total_production_kwh: Number(totalProduction.toFixed(2)),
+        avg_daily_kwh: data.length > 0 ? Number((totalProduction / data.length).toFixed(2)) : 0,
+        specific_yield: totalCapacity ? Number((totalProduction / totalCapacity).toFixed(1)) : null,
+      },
+      data,
+    });
+  } catch (e) {
+    log.error({ err: e.message }, "[pv] terrain production error");
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 module.exports = router;

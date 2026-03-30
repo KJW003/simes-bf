@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAppContext } from '@/contexts/AppContext';
 import { PageHeader } from '@/components/ui/page-header';
@@ -6,29 +6,34 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { KpiCard } from '@/components/ui/kpi-card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Sun, Zap, AlertTriangle, TrendingUp, Calculator, Gauge, Settings,
-  ArrowRight, Calendar, Clock, Cpu,
+  ArrowRight, Clock, Cpu, BarChart3, Activity,
 } from 'lucide-react';
-import { usePvSystems, usePoints, useReadings, useDashboard } from '@/hooks/useApi';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  usePvSystems, usePoints, useDashboard,
+  usePvTerrainProduction, usePvSystemProduction,
+} from '@/hooks/useApi';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend,
 } from 'recharts';
 
 const fmt = (v: unknown, d = 2) => v != null && v !== '' ? Number(v).toFixed(d) : '—';
-
-interface PointMetrics {
-  pointId: string;
-  pointName: string;
-  powerNow: number;
-  today: { import: number; export: number; total: number };
-}
 
 export default function SolairePerformance() {
   const { selectedTerrainId } = useAppContext();
   const { data: systems = [] } = usePvSystems(selectedTerrainId);
   const { data: points = [] } = usePoints(selectedTerrainId);
   const { data: dashData } = useDashboard(selectedTerrainId);
+
+  const [days, setDays] = useState(30);
+  const [selectedSystemId, setSelectedSystemId] = useState<string | null>(null);
+
+  // Terrain-level production
+  const { data: terrainProd, isLoading: terrainLoading } = usePvTerrainProduction(selectedTerrainId, days);
+  // Per-system production (when a system is selected)
+  const { data: systemProd, isLoading: systemLoading } = usePvSystemProduction(selectedSystemId, days);
 
   // Filter PV points
   const pvPoints = useMemo(
@@ -57,7 +62,25 @@ export default function SolairePerformance() {
     [pvPoints]
   );
 
-  const energyToday = dashData?.energy_today || { import_kwh: 0, export_kwh: 0, total_kwh: 0 };
+  // Chart data formatting
+  const terrainChartData = useMemo(
+    () => (terrainProd?.data || []).map(d => ({
+      day: new Date(d.day).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+      total_kwh: Number(d.total_kwh.toFixed(1)),
+      export_kwh: Number(d.export_kwh.toFixed(1)),
+    })),
+    [terrainProd]
+  );
+
+  const systemChartData = useMemo(
+    () => (systemProd?.data || []).map(d => ({
+      day: new Date(d.day).toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' }),
+      total_kwh: Number(d.total_kwh.toFixed(1)),
+      export_kwh: Number(d.export_kwh.toFixed(1)),
+      peak_power_kw: Number(d.peak_power_kw.toFixed(2)),
+    })),
+    [systemProd]
+  );
 
   if (!selectedTerrainId) {
     return (
@@ -74,18 +97,31 @@ export default function SolairePerformance() {
         title="Performance Solaire"
         description="Suivi des performances réelles des systèmes et points PV"
         actions={
-          <Link to="/org/predimensionnement">
-            <Button variant="outline" size="sm">
-              <Calculator className="w-4 h-4 mr-1" />
-              Prédimensionnement
-              <ArrowRight className="w-3 h-3 ml-1" />
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            <Select value={String(days)} onValueChange={v => setDays(Number(v))}>
+              <SelectTrigger className="w-[130px] h-8 text-xs">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="7">7 jours</SelectItem>
+                <SelectItem value="30">30 jours</SelectItem>
+                <SelectItem value="90">90 jours</SelectItem>
+                <SelectItem value="365">365 jours</SelectItem>
+              </SelectContent>
+            </Select>
+            <Link to="/org/predimensionnement">
+              <Button variant="outline" size="sm">
+                <Calculator className="w-4 h-4 mr-1" />
+                Prédimensionnement
+                <ArrowRight className="w-3 h-3 ml-1" />
+              </Button>
+            </Link>
+          </div>
         }
       />
 
-      {/* PV Power Overview */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      {/* KPI Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <KpiCard
           label="Points PV détectés"
           value={String(pvPoints.length)}
@@ -102,7 +138,145 @@ export default function SolairePerformance() {
           unit="kW"
           icon={<Zap className="w-4 h-4 text-yellow-500" />}
         />
+        <KpiCard
+          label={`Production (${days}j)`}
+          value={terrainProd ? fmt(terrainProd.summary.total_production_kwh, 1) : '—'}
+          unit="kWh"
+          icon={<TrendingUp className="w-4 h-4 text-green-500" />}
+        />
       </div>
+
+      {/* Terrain Production Summary */}
+      {terrainProd && terrainProd.summary.total_production_kwh > 0 && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <KpiCard
+            label="Capacité installée"
+            value={terrainProd.total_capacity_kwc ? fmt(terrainProd.total_capacity_kwc, 1) : '—'}
+            unit="kWc"
+            icon={<Sun className="w-4 h-4" />}
+          />
+          <KpiCard
+            label="Moy. journalière"
+            value={fmt(terrainProd.summary.avg_daily_kwh, 1)}
+            unit="kWh/j"
+            icon={<Activity className="w-4 h-4" />}
+          />
+          <KpiCard
+            label="Rendement spécifique"
+            value={terrainProd.summary.specific_yield != null ? fmt(terrainProd.summary.specific_yield, 1) : '—'}
+            unit="kWh/kWc"
+            icon={<Gauge className="w-4 h-4" />}
+          />
+          <KpiCard
+            label="Jours avec données"
+            value={String(terrainProd.days_with_data)}
+            unit={`/ ${days}`}
+            icon={<BarChart3 className="w-4 h-4" />}
+          />
+        </div>
+      )}
+
+      {/* Terrain Production Chart */}
+      {terrainChartData.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base flex items-center gap-2">
+              <BarChart3 className="w-4 h-4 text-amber-500" />
+              Production PV — Terrain ({days} jours)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={terrainChartData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                <YAxis tick={{ fontSize: 11 }} unit=" kWh" />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="total_kwh" name="Production totale" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="export_kwh" name="Export" fill="#10b981" radius={[2, 2, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Per-System Drill-Down */}
+      {systemsWithPoints.length > 0 && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-base flex items-center gap-2">
+                <Sun className="w-4 h-4 text-amber-500" />
+                Détail par Système
+              </CardTitle>
+              <Select
+                value={selectedSystemId || ''}
+                onValueChange={v => setSelectedSystemId(v || null)}
+              >
+                <SelectTrigger className="w-[220px] h-8 text-xs">
+                  <SelectValue placeholder="Sélectionner un système" />
+                </SelectTrigger>
+                <SelectContent>
+                  {systemsWithPoints.map(sys => (
+                    <SelectItem key={sys.id} value={sys.id}>{sys.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {!selectedSystemId ? (
+              <p className="text-sm text-muted-foreground text-center py-8">
+                Sélectionnez un système pour voir ses performances détaillées.
+              </p>
+            ) : systemLoading ? (
+              <p className="text-sm text-muted-foreground text-center py-8">Chargement...</p>
+            ) : systemProd ? (
+              <div className="space-y-4">
+                {/* System KPIs */}
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <div className="p-3 border rounded-lg text-center">
+                    <p className="text-xs text-muted-foreground">Production totale</p>
+                    <p className="text-lg font-semibold">{fmt(systemProd.summary.total_production_kwh, 1)} <span className="text-xs font-normal">kWh</span></p>
+                  </div>
+                  <div className="p-3 border rounded-lg text-center">
+                    <p className="text-xs text-muted-foreground">Export</p>
+                    <p className="text-lg font-semibold">{fmt(systemProd.summary.total_export_kwh, 1)} <span className="text-xs font-normal">kWh</span></p>
+                  </div>
+                  <div className="p-3 border rounded-lg text-center">
+                    <p className="text-xs text-muted-foreground">Puissance crête</p>
+                    <p className="text-lg font-semibold">{fmt(systemProd.summary.peak_power_kw, 2)} <span className="text-xs font-normal">kW</span></p>
+                  </div>
+                  <div className="p-3 border rounded-lg text-center">
+                    <p className="text-xs text-muted-foreground">Ratio perf.</p>
+                    <p className="text-lg font-semibold">
+                      {systemProd.summary.performance_ratio != null ? `${systemProd.summary.performance_ratio}%` : '—'}
+                    </p>
+                  </div>
+                </div>
+
+                {/* System Chart */}
+                {systemChartData.length > 0 && (
+                  <ResponsiveContainer width="100%" height={280}>
+                    <BarChart data={systemChartData}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="day" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                      <YAxis tick={{ fontSize: 11 }} unit=" kWh" />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="total_kwh" name="Production" fill="#f59e0b" radius={[2, 2, 0, 0]} />
+                      <Bar dataKey="export_kwh" name="Export" fill="#10b981" radius={[2, 2, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground text-center py-8">Aucune donnée de production.</p>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Systems Overview */}
       {systemsWithPoints.length > 0 && (
@@ -126,6 +300,14 @@ export default function SolairePerformance() {
                       <div className="flex items-center gap-2 mb-2">
                         <p className="font-medium">{sys.name}</p>
                         {sys.location && <Badge variant="outline" className="text-xs">{sys.location}</Badge>}
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 text-xs"
+                          onClick={() => setSelectedSystemId(sys.id)}
+                        >
+                          Voir détails
+                        </Button>
                       </div>
 
                       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
@@ -234,7 +416,7 @@ export default function SolairePerformance() {
                   <TrendingUp className="w-4 h-4 text-green-600 mt-0.5 flex-shrink-0" />
                   <div>
                     <p className="font-medium text-green-900">Suivi des performances actif</p>
-                    <p className="text-xs text-green-800">Données de production en temps réel disponibles.</p>
+                    <p className="text-xs text-green-800">Données de production en temps réel et historiques disponibles.</p>
                   </div>
                 </div>
               </>
