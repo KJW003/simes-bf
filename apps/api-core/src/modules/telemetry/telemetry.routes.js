@@ -468,8 +468,9 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
 // GET /reports/point/:pointId/excel
 // Exports all acrel_readings for a measurement point to Excel
 router.get("/reports/point/:pointId/excel", async (req, res) => {
+  let streaming = false;
   try {
-    if (!ExcelJS) {
+    if (!ExcelJS || !(ExcelJS.stream && ExcelJS.stream.xlsx && ExcelJS.stream.xlsx.WorkbookWriter)) {
       return res.status(503).json({
         ok: false,
         error: "Excel export not available. Install exceljs: npm install exceljs"
@@ -477,8 +478,10 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
     }
 
     const { pointId } = req.params;
-    const limit = parseInt(req.query.limit) || 1000; // max records to export
-    const days = parseInt(req.query.days) || 30; // default last 30 days
+    const days = parseInt(req.query.days) || 30; // range in days (large value = full history)
+    // Optional safety ceiling; default = no practical cap (full export via streaming)
+    const maxRows = req.query.limit ? Math.max(parseInt(req.query.limit) || 0, 0) : Infinity;
+    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
 
     // Get point details
     const ptRes = await corePool.query(
@@ -490,18 +493,12 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
     }
     const point = ptRes.rows[0];
 
-    // Fetch acrel_readings for this point (last N days, sorted newest first)
-    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
-    const sqlReadings = `
-      SELECT ${ACREL_COLS_SQL}, time, point_id
-      FROM acrel_readings
-      WHERE point_id = $1 AND time >= $2
-      ORDER BY time DESC
-      LIMIT $3
-    `;
-    const readings = await telemetryPool.query(sqlReadings, [pointId, fromTime, limit]);
-
-    if (!readings.rows.length) {
+    // Existence check BEFORE committing to a streaming response (so we can still return JSON)
+    const probe = await telemetryPool.query(
+      `SELECT 1 FROM acrel_readings WHERE point_id = $1 AND time >= $2 LIMIT 1`,
+      [pointId, fromTime]
+    );
+    if (!probe.rows.length) {
       return res.json({
         ok: true,
         message: "No readings found for this point in the specified time range",
@@ -510,54 +507,84 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
       });
     }
 
-    // Create workbook & worksheet
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet("Readings");
+    // Stop fetching if the client disconnects mid-download
+    let aborted = false;
+    req.on("close", () => { aborted = true; });
 
-    // Header row with point info
+    // ── Begin streaming response (no in-memory row cap) ──
+    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="simes-point-${point.id}-${new Date().toISOString().slice(0, 10)}.xlsx"`
+    );
+    streaming = true;
+
+    const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({ stream: res });
+    const sheet = workbook.addWorksheet("Readings");
+    // Column widths must be defined before rows are committed in streaming mode
+    sheet.columns = [{ width: 25 }, ...ACREL_METRIC_COLS.map(() => ({ width: 14 }))];
+
+    // Info row
     const infoRow = sheet.addRow([
       `Measurement Point: ${point.name}`,
       `Category: ${point.measure_category}`,
-      `Records: ${readings.rows.length}`,
       `Period: last ${days} days`
     ]);
     infoRow.font = { bold: true, size: 12 };
     infoRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFE0E0E0" } };
-
-    // Empty row
-    sheet.addRow([]);
+    infoRow.commit();
+    sheet.addRow([]).commit();
 
     // Column headers (all acrel fields)
     const headers = ["Time", ...ACREL_METRIC_COLS];
     const headerRow = sheet.addRow(headers);
     headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } };
+    headerRow.commit();
 
-    // Data rows
-    for (const row of readings.rows) {
-      const values = [
-        row.time ? new Date(row.time).toISOString() : "",
-        ...ACREL_METRIC_COLS.map(col => Number(row[col]) || null),
-      ];
-      sheet.addRow(values);
+    // Fetch in batches via keyset pagination. (point_id, time) is unique, so paging
+    // on `time` never skips or duplicates rows (unlike OFFSET on a live table).
+    const BATCH = 5000;
+    let cursor = fromTime;
+    let firstBatch = true;
+    let fetched = 0;
+    while (!aborted && fetched < maxRows) {
+      const remaining = maxRows === Infinity ? BATCH : Math.min(BATCH, maxRows - fetched);
+      const batch = await telemetryPool.query(
+        `SELECT ${ACREL_COLS_SQL}, time
+         FROM acrel_readings
+         WHERE point_id = $1 AND time ${firstBatch ? ">=" : ">"} $2
+         ORDER BY time ASC
+         LIMIT $3`,
+        [pointId, cursor, remaining]
+      );
+      if (!batch.rows.length) break;
+      for (const row of batch.rows) {
+        const values = [
+          row.time ? new Date(row.time).toISOString() : "",
+          ...ACREL_METRIC_COLS.map(col => {
+            const n = Number(row[col]);
+            return Number.isFinite(n) ? n : null;
+          }),
+        ];
+        sheet.addRow(values).commit();
+      }
+      fetched += batch.rows.length;
+      cursor = batch.rows[batch.rows.length - 1].time;
+      firstBatch = false;
+      if (batch.rows.length < remaining) break;
     }
 
-    // Adjust column widths
-    sheet.columns.forEach((col, idx) => {
-      col.width = idx === 0 ? 25 : 14; // Time column wider, others fixed
-    });
-
-    // Set file response
-    res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    res.setHeader(
-      "Content-Disposition",
-      `attachment; filename="simes-point-${point.id}-${new Date().toISOString().slice(0, 10)}.xlsx"`
-    );
-
-    await workbook.xlsx.write(res);
+    sheet.commit();
+    await workbook.commit(); // finalizes the xlsx and ends the response
   } catch (e) {
     log.error({ err: e.message }, "[telemetry/reports/point/excel]");
-    res.status(500).json({ ok: false, error: 'Internal server error' });
+    if (!streaming && !res.headersSent) {
+      res.status(500).json({ ok: false, error: 'Internal server error' });
+    } else {
+      // Headers already sent mid-stream — cannot send JSON, just terminate
+      try { res.destroy(); } catch { /* noop */ }
+    }
   }
 });
 

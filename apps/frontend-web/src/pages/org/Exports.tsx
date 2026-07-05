@@ -28,9 +28,11 @@ export default function Exports() {
   const prefs = usePreferences();
   const currSym = getCurrencySymbol(prefs.currency);
   const [exportingId, setExportingId] = useState<string | null>(null);
-  const [days, setDays] = useState(30);
+  const [days, setDays] = useState(9999);
   const [selectedPoints, setSelectedPoints] = useState<Set<string>>(new Set());
   const [batchExporting, setBatchExporting] = useState(false);
+  const exportReadingsLimit = 500000;
+  const isAllHistory = days >= 9000;
 
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(selectedTerrainId);
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
@@ -38,7 +40,7 @@ export default function Exports() {
   // Fetch readings for CSV terrain summary
   const from = useMemo(() => stableFrom(days * 86400_000), [days]);
   const to = useMemo(() => stableNow(), []);
-  const { data: readingsData } = useReadings(selectedTerrainId, { from, to });
+  const { data: readingsData } = useReadings(selectedTerrainId, { from, to, limit: exportReadingsLimit });
   const readings = (readingsData?.readings ?? []) as Array<Record<string, unknown>>;
 
   // Summary stats
@@ -60,7 +62,8 @@ export default function Exports() {
   const handleExportExcel = async (pointId: string) => {
     try {
       setExportingId(pointId);
-      const url = `/reports/point/${pointId}/excel?days=${days}&limit=50000`;
+      // No row cap: the backend streams the full range for this point (days = 9999 → all history)
+      const url = `/reports/point/${pointId}/excel?days=${days}`;
 
       const response = await fetch(api.baseURL + url, {
         headers: {
@@ -87,7 +90,7 @@ export default function Exports() {
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = `${terrainLabel}_${pointName}_${days}j_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.xlsx`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(downloadUrl);
@@ -147,9 +150,9 @@ export default function Exports() {
       .join('\n');
     downloadBlob(
       new Blob([header + rows], { type: 'text/csv' }),
-      `${terrainLabel}_${days}j_${new Date().toISOString().slice(0, 10)}.csv`,
+      `${terrainLabel}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.csv`,
     );
-  }, [readings, terrainLabel, days, pointNameMap]);
+  }, [readings, terrainLabel, days, pointNameMap, isAllHistory]);
 
   // JSON export (structured data, good for integrations)
   const exportTerrainJSON = useCallback(() => {
@@ -175,9 +178,9 @@ export default function Exports() {
     };
     downloadBlob(
       new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
-      `${terrainLabel}_${days}j_${new Date().toISOString().slice(0, 10)}.json`,
+      `${terrainLabel}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.json`,
     );
-  }, [readings, selectedTerrain, selectedTerrainId, terrainLabel, days, summary, points, pointNameMap]);
+  }, [readings, selectedTerrain, selectedTerrainId, terrainLabel, days, summary, points, pointNameMap, isAllHistory]);
 
   // PDF report via browser print dialog
   const exportPDFReport = useCallback(() => {
@@ -503,7 +506,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
       .join('\n');
     downloadBlob(
       new Blob([header + rows], { type: 'text/csv' }),
-      `${terrainLabel}_${pointName}_${days}j_${new Date().toISOString().slice(0, 10)}.csv`,
+      `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.csv`,
     );
   }, [readings, points, terrainLabel, days]);
 
@@ -528,9 +531,9 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     };
     downloadBlob(
       new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
-      `${terrainLabel}_${pointName}_${days}j_${new Date().toISOString().slice(0, 10)}.json`,
+      `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.json`,
     );
-  }, [readings, points, selectedTerrain, selectedTerrainId, terrainLabel, days]);
+  }, [readings, points, selectedTerrain, selectedTerrainId, terrainLabel, days, isAllHistory]);
 
   // Batch export selected points
   const [batchFormat, setBatchFormat] = useState<'excel' | 'csv' | 'json'>('excel');
@@ -616,7 +619,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
       {summary && (
         <div className="grid grid-cols-2 md:grid-cols-5 gap-4 animate-stagger-children">
           <KpiCard label="Mesures" value={summary.readingCount.toLocaleString()} icon={<BarChart3 className="w-4 h-4" />} />
-          <KpiCard label={`Énergie (${days}j)`} value={summary.energy >= 1000 ? `${(summary.energy / 1000).toFixed(1)}` : summary.energy.toFixed(0)} unit={summary.energy >= 1000 ? 'MWh' : 'kWh'} icon={<Zap className="w-4 h-4" />} />
+          <KpiCard label={`Énergie (${isAllHistory ? 'Tout' : `${days}j`})`} value={summary.energy >= 1000 ? `${(summary.energy / 1000).toFixed(1)}` : summary.energy.toFixed(0)} unit={summary.energy >= 1000 ? 'MWh' : 'kWh'} icon={<Zap className="w-4 h-4" />} />
           <KpiCard label="Pic puissance" value={summary.peakPower.toFixed(1)} unit="kW" icon={<Zap className="w-4 h-4" />} />
           <KpiCard label="Coût estimé" value={summary.cost >= 1_000_000 ? `${(summary.cost / 1_000_000).toFixed(1)}M` : `${(summary.cost / 1000).toFixed(0)}k`} unit={currSym} icon={<FileText className="w-4 h-4" />} />
           <KpiCard label="CO₂" value={summary.co2.toFixed(0)} unit="kg" icon={<FileText className="w-4 h-4" />} />
@@ -640,6 +643,7 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
                   <SelectItem value="30">30 jours</SelectItem>
                   <SelectItem value="90">90 jours</SelectItem>
                   <SelectItem value="365">1 an</SelectItem>
+                  <SelectItem value="9999">Tout l'historique</SelectItem>
                 </SelectContent>
               </Select>
             </div>
