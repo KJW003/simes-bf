@@ -46,9 +46,25 @@ export default function Exports() {
   // Summary stats
   const summary = useMemo(() => {
     if (!readings.length) return null;
-    const eis = readings.map(r => r.energy_total != null ? Number(r.energy_total) : (r.energy_import != null ? Number(r.energy_import) : NaN)).filter(v => !isNaN(v));
-    const powers = readings.map(r => r.active_power_total != null ? Number(r.active_power_total) : NaN).filter(v => !isNaN(v));
-    const energy = eis.length >= 2 ? Math.max(...eis) - Math.min(...eis) : 0;
+    // Energy is summed PER POINT: (max − min) of each meter's cumulative counter,
+    // then added up. Grouping by point avoids mixing different meters' odometers
+    // (the old global max−min across all points produced a meaningless figure).
+    const byPoint = new Map<string, { min: number; max: number }>();
+    const powers: number[] = [];
+    for (const r of readings) {
+      const ei = r.energy_total != null ? Number(r.energy_total)
+        : (r.energy_import != null ? Number(r.energy_import) : NaN);
+      if (!isNaN(ei)) {
+        const pid = String(r.point_id);
+        const e = byPoint.get(pid);
+        if (!e) byPoint.set(pid, { min: ei, max: ei });
+        else { if (ei < e.min) e.min = ei; if (ei > e.max) e.max = ei; }
+      }
+      const pw = r.active_power_total != null ? Number(r.active_power_total) : NaN;
+      if (!isNaN(pw)) powers.push(pw);
+    }
+    let energy = 0;
+    for (const { min, max } of byPoint.values()) energy += Math.max(0, max - min);
     return {
       readingCount: readings.length,
       energy,
@@ -114,78 +130,38 @@ export default function Exports() {
     return m;
   }, [points]);
 
-  const CSV_METRIC_COLS = [
-    'active_power_total', 'active_power_a', 'active_power_b', 'active_power_c',
-    'reactive_power_total', 'apparent_power_total',
-    'voltage_a', 'voltage_b', 'voltage_c', 'voltage_ab', 'voltage_bc', 'voltage_ca',
-    'current_a', 'current_b', 'current_c', 'current_sum',
-    'power_factor_total', 'power_factor_a', 'power_factor_b', 'power_factor_c',
-    'energy_import', 'energy_export', 'energy_total',
-    'frequency',
-    'thdi_a', 'thdi_b', 'thdi_c', 'thdu_a', 'thdu_b', 'thdu_c',
-    'voltage_unbalance', 'current_unbalance',
-    'temp_a', 'temp_b', 'temp_c', 'temp_n',
-  ];
+  // Shared: download a whole-terrain export (all points) from the streaming backend.
+  const downloadTerrainExport = useCallback(async (format: 'csv' | 'json'): Promise<boolean> => {
+    if (!selectedTerrainId) return false;
+    const url = `/reports/terrain/${selectedTerrainId}/${format}?days=${days}`;
+    try {
+      const response = await fetch(api.baseURL + url, {
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({}));
+        toast.error(`Échec de l'export : ${(error as any).error || 'Erreur inconnue'}`);
+        return false;
+      }
+      const blob = await response.blob();
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = downloadUrl;
+      a.download = `${terrainLabel}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.${format}`;
+      document.body.appendChild(a);
+      a.click();
+      window.URL.revokeObjectURL(downloadUrl);
+      document.body.removeChild(a);
+      return true;
+    } catch {
+      toast.error('Échec de l\'export. Veuillez réessayer.');
+      return false;
+    }
+  }, [selectedTerrainId, days, isAllHistory, terrainLabel]);
 
-  // Helper: download blob
-  const downloadBlob = (blob: Blob, filename: string) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Terrain-level CSV export (all readings)
-  const exportTerrainCSV = useCallback(() => {
-    if (!readings.length) return;
-    const columns = ['time', 'point_name', ...CSV_METRIC_COLS];
-    const header = columns.join(',') + '\n';
-    const rows = [...readings]
-      .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
-      .map(r => {
-        const vals: (string | number | unknown)[] = [
-          r.time ?? '',
-          `"${pointNameMap.get(String(r.point_id)) ?? r.point_id}"`,
-          ...CSV_METRIC_COLS.map(c => r[c] ?? ''),
-        ];
-        return vals.join(',');
-      })
-      .join('\n');
-    downloadBlob(
-      new Blob([header + rows], { type: 'text/csv' }),
-      `${terrainLabel}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.csv`,
-    );
-  }, [readings, terrainLabel, days, pointNameMap, isAllHistory]);
-
-  // JSON export (structured data, good for integrations)
-  const exportTerrainJSON = useCallback(() => {
-    if (!readings.length) return;
-    const sorted = [...readings].sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime());
-    const payload = {
-      terrain: selectedTerrain?.name ?? selectedTerrainId,
-      export_date: new Date().toISOString(),
-      period_days: days,
-      summary: summary ? {
-        reading_count: summary.readingCount,
-        energy_kwh: summary.energy,
-        peak_power_kw: summary.peakPower,
-        avg_power_kw: summary.avgPower,
-        cost: summary.cost,
-        co2_kg: summary.co2,
-      } : null,
-      points: points.map(p => ({ name: p.name, category: p.measure_category, zone: p.zone_name })),
-      readings: sorted.map(r => {
-        const { point_id, ...rest } = r as Record<string, unknown>;
-        return { ...rest, point_name: pointNameMap.get(String(point_id)) ?? point_id };
-      }),
-    };
-    downloadBlob(
-      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
-      `${terrainLabel}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.json`,
-    );
-  }, [readings, selectedTerrain, selectedTerrainId, terrainLabel, days, summary, points, pointNameMap, isAllHistory]);
+  // Terrain-level CSV / JSON export (streamed from backend, all points, full range, no cap)
+  const exportTerrainCSV = useCallback(() => { void downloadTerrainExport('csv'); }, [downloadTerrainExport]);
+  const exportTerrainJSON = useCallback(() => { void downloadTerrainExport('json'); }, [downloadTerrainExport]);
 
   // PDF report via browser print dialog
   const exportPDFReport = useCallback(() => {
@@ -546,11 +522,11 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
         description="Exportez les données énergétiques de vos points de mesure"
         actions={
           <div className="flex items-center gap-2 flex-wrap">
-            <Button variant="outline" size="sm" onClick={exportTerrainCSV} disabled={!readings.length}>
+            <Button variant="outline" size="sm" onClick={exportTerrainCSV} disabled={!selectedTerrainId}>
               <Download className="w-4 h-4 mr-1" />
               CSV
             </Button>
-            <Button variant="outline" size="sm" onClick={exportTerrainJSON} disabled={!readings.length}>
+            <Button variant="outline" size="sm" onClick={exportTerrainJSON} disabled={!selectedTerrainId}>
               <FileJson className="w-4 h-4 mr-1" />
               JSON
             </Button>
