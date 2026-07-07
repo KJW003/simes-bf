@@ -492,6 +492,20 @@ async function* iterPointReadingBatches(pointId, fromTime, maxRows, isAborted) {
   }
 }
 
+// Verify the requesting user's org owns this terrain (platform_super_admin bypasses).
+async function userCanAccessTerrain(req, terrainId) {
+  if (!terrainId) return false;
+  if (req.userRole === 'platform_super_admin') return true;
+  const { rows } = await corePool.query(
+    `SELECT 1 FROM terrains t
+       JOIN sites s ON s.id = t.site_id
+       JOIN users u ON u.organization_id = s.organization_id
+      WHERE t.id = $1 AND u.id = $2 LIMIT 1`,
+    [terrainId, req.userId]
+  );
+  return rows.length > 0;
+}
+
 // ─── Point Report Export (Excel) ────────────────────────────
 // GET /reports/point/:pointId/excel
 // Exports all acrel_readings for a measurement point to Excel
@@ -703,6 +717,125 @@ router.get("/reports/point/:pointId/json", async (req, res) => {
     res.end();
   } catch (e) {
     log.error({ err: e.message }, "[telemetry/reports/point/json]");
+    if (!res.headersSent) res.status(500).json({ ok: false, error: 'Internal server error' });
+    else { try { res.destroy(); } catch { /* noop */ } }
+  }
+});
+
+// ─── Terrain Report Export (CSV) ────────────────────────────
+// GET /reports/terrain/:terrainId/csv — streams every active point's readings
+// (rows grouped by point, tagged with point_name), full range, no cap.
+router.get("/reports/terrain/:terrainId/csv", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    if (!(await userCanAccessTerrain(req, terrainId))) {
+      return res.status(403).json({ ok: false, error: "Forbidden: no access to this terrain" });
+    }
+    const days = parseInt(req.query.days) || 30;
+    const maxRowsPerPoint = req.query.limit ? Math.max(parseInt(req.query.limit) || 0, 0) : Infinity;
+    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const ptsRes = await corePool.query(
+      `SELECT id, name FROM measurement_points WHERE terrain_id = $1 AND status = 'active' ORDER BY name`,
+      [terrainId]
+    );
+    if (!ptsRes.rows.length) return res.status(404).json({ ok: false, error: "No active measurement points for this terrain" });
+
+    let aborted = false;
+    req.on("close", () => { aborted = true; });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition",
+      `attachment; filename="simes-terrain-${terrainId}-${new Date().toISOString().slice(0, 10)}.csv"`);
+
+    const esc = (v) => {
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+    res.write(["time", "point_name", ...ACREL_METRIC_COLS].join(",") + "\n");
+
+    for (const pt of ptsRes.rows) {
+      if (aborted) break;
+      for await (const rows of iterPointReadingBatches(pt.id, fromTime, maxRowsPerPoint, () => aborted)) {
+        let chunk = "";
+        for (const row of rows) {
+          const cells = [
+            row.time ? new Date(row.time).toISOString() : "",
+            pt.name,
+            ...ACREL_METRIC_COLS.map(c => {
+              const v = row[c];
+              if (v == null) return "";
+              const n = Number(v);
+              return Number.isFinite(n) ? n : "";
+            }),
+          ];
+          chunk += cells.map(esc).join(",") + "\n";
+        }
+        if (chunk && !res.write(chunk)) await new Promise(resolve => res.once("drain", resolve));
+      }
+    }
+    res.end();
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/reports/terrain/csv]");
+    if (!res.headersSent) res.status(500).json({ ok: false, error: 'Internal server error' });
+    else { try { res.destroy(); } catch { /* noop */ } }
+  }
+});
+
+// ─── Terrain Report Export (JSON) ───────────────────────────
+// GET /reports/terrain/:terrainId/json — envelope + readings[] (tagged with point_name), full range, no cap.
+router.get("/reports/terrain/:terrainId/json", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    if (!(await userCanAccessTerrain(req, terrainId))) {
+      return res.status(403).json({ ok: false, error: "Forbidden: no access to this terrain" });
+    }
+    const days = parseInt(req.query.days) || 30;
+    const maxRowsPerPoint = req.query.limit ? Math.max(parseInt(req.query.limit) || 0, 0) : Infinity;
+    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const ptsRes = await corePool.query(
+      `SELECT id, name, measure_category, zone_id FROM measurement_points WHERE terrain_id = $1 AND status = 'active' ORDER BY name`,
+      [terrainId]
+    );
+    if (!ptsRes.rows.length) return res.status(404).json({ ok: false, error: "No active measurement points for this terrain" });
+
+    let aborted = false;
+    req.on("close", () => { aborted = true; });
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition",
+      `attachment; filename="simes-terrain-${terrainId}-${new Date().toISOString().slice(0, 10)}.json"`);
+
+    res.write("{");
+    res.write(`${JSON.stringify("terrain_id")}:${JSON.stringify(terrainId)},`);
+    res.write(`${JSON.stringify("export_date")}:${JSON.stringify(new Date().toISOString())},`);
+    res.write(`${JSON.stringify("days")}:${JSON.stringify(days)},`);
+    res.write(`${JSON.stringify("points")}:${JSON.stringify(ptsRes.rows.map(p => ({ id: p.id, name: p.name, category: p.measure_category, zone_id: p.zone_id })))},`);
+    res.write('"readings":[');
+
+    let first = true;
+    for (const pt of ptsRes.rows) {
+      if (aborted) break;
+      for await (const rows of iterPointReadingBatches(pt.id, fromTime, maxRowsPerPoint, () => aborted)) {
+        let chunk = "";
+        for (const row of rows) {
+          const obj = { time: row.time ? new Date(row.time).toISOString() : null, point_name: pt.name };
+          for (const c of ACREL_METRIC_COLS) {
+            const v = row[c];
+            obj[c] = (v == null) ? null : (Number.isFinite(Number(v)) ? Number(v) : null);
+          }
+          chunk += (first ? "" : ",") + JSON.stringify(obj);
+          first = false;
+        }
+        if (chunk && !res.write(chunk)) await new Promise(resolve => res.once("drain", resolve));
+      }
+    }
+    res.write("]}");
+    res.end();
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/reports/terrain/json]");
     if (!res.headersSent) res.status(500).json({ ok: false, error: 'Internal server error' });
     else { try { res.destroy(); } catch { /* noop */ } }
   }
