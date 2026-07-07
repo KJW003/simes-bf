@@ -464,6 +464,34 @@ router.get("/terrains/:terrainId/overview", async (req, res) => {
   }
 });
 
+// ─── Shared streaming helper for point exports ──────────────
+// Async generator: yields batches of a point's readings via keyset pagination.
+// (point_id, time) is unique, so paging on `time` never skips or duplicates rows
+// (unlike OFFSET on a live table). No total cap unless maxRows is finite.
+async function* iterPointReadingBatches(pointId, fromTime, maxRows, isAborted) {
+  const BATCH = 5000;
+  let cursor = fromTime;
+  let firstBatch = true;
+  let fetched = 0;
+  while (!isAborted() && fetched < maxRows) {
+    const remaining = maxRows === Infinity ? BATCH : Math.min(BATCH, maxRows - fetched);
+    const batch = await telemetryPool.query(
+      `SELECT ${ACREL_COLS_SQL}, time
+       FROM acrel_readings
+       WHERE point_id = $1 AND time ${firstBatch ? ">=" : ">"} $2
+       ORDER BY time ASC
+       LIMIT $3`,
+      [pointId, cursor, remaining]
+    );
+    if (!batch.rows.length) break;
+    yield batch.rows;
+    fetched += batch.rows.length;
+    cursor = batch.rows[batch.rows.length - 1].time;
+    firstBatch = false;
+    if (batch.rows.length < remaining) break;
+  }
+}
+
 // ─── Point Report Export (Excel) ────────────────────────────
 // GET /reports/point/:pointId/excel
 // Exports all acrel_readings for a measurement point to Excel
@@ -542,37 +570,20 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
     headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF4472C4" } };
     headerRow.commit();
 
-    // Fetch in batches via keyset pagination. (point_id, time) is unique, so paging
-    // on `time` never skips or duplicates rows (unlike OFFSET on a live table).
-    const BATCH = 5000;
-    let cursor = fromTime;
-    let firstBatch = true;
-    let fetched = 0;
-    while (!aborted && fetched < maxRows) {
-      const remaining = maxRows === Infinity ? BATCH : Math.min(BATCH, maxRows - fetched);
-      const batch = await telemetryPool.query(
-        `SELECT ${ACREL_COLS_SQL}, time
-         FROM acrel_readings
-         WHERE point_id = $1 AND time ${firstBatch ? ">=" : ">"} $2
-         ORDER BY time ASC
-         LIMIT $3`,
-        [pointId, cursor, remaining]
-      );
-      if (!batch.rows.length) break;
-      for (const row of batch.rows) {
+    // Fetch + write in batches (bounded memory) via the shared keyset paginator.
+    for await (const rows of iterPointReadingBatches(pointId, fromTime, maxRows, () => aborted)) {
+      for (const row of rows) {
         const values = [
           row.time ? new Date(row.time).toISOString() : "",
           ...ACREL_METRIC_COLS.map(col => {
-            const n = Number(row[col]);
+            const v = row[col];
+            if (v == null) return null;            // keep real NULLs distinct from 0
+            const n = Number(v);
             return Number.isFinite(n) ? n : null;
           }),
         ];
         sheet.addRow(values).commit();
       }
-      fetched += batch.rows.length;
-      cursor = batch.rows[batch.rows.length - 1].time;
-      firstBatch = false;
-      if (batch.rows.length < remaining) break;
     }
 
     sheet.commit();
@@ -585,6 +596,115 @@ router.get("/reports/point/:pointId/excel", async (req, res) => {
       // Headers already sent mid-stream — cannot send JSON, just terminate
       try { res.destroy(); } catch { /* noop */ }
     }
+  }
+});
+
+// ─── Point Report Export (CSV) ──────────────────────────────
+// GET /reports/point/:pointId/csv — streams this point's readings, full range, no cap
+router.get("/reports/point/:pointId/csv", async (req, res) => {
+  try {
+    const { pointId } = req.params;
+    const days = parseInt(req.query.days) || 30;
+    const maxRows = req.query.limit ? Math.max(parseInt(req.query.limit) || 0, 0) : Infinity;
+    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const ptRes = await corePool.query(
+      `SELECT id, name FROM measurement_points WHERE id = $1`, [pointId]);
+    if (!ptRes.rows.length) return res.status(404).json({ ok: false, error: "measurement_point not found" });
+    const point = ptRes.rows[0];
+
+    let aborted = false;
+    req.on("close", () => { aborted = true; });
+
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition",
+      `attachment; filename="simes-point-${point.id}-${new Date().toISOString().slice(0, 10)}.csv"`);
+
+    const esc = (v) => {
+      if (v === null || v === undefined) return "";
+      const s = String(v);
+      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    };
+
+    res.write(["time", ...ACREL_METRIC_COLS].join(",") + "\n");
+
+    for await (const rows of iterPointReadingBatches(pointId, fromTime, maxRows, () => aborted)) {
+      let chunk = "";
+      for (const row of rows) {
+        const cells = [
+          row.time ? new Date(row.time).toISOString() : "",
+          ...ACREL_METRIC_COLS.map(c => {
+            const v = row[c];
+            if (v == null) return "";              // NULL → empty cell, not 0
+            const n = Number(v);
+            return Number.isFinite(n) ? n : "";
+          }),
+        ];
+        chunk += cells.map(esc).join(",") + "\n";
+      }
+      if (chunk && !res.write(chunk)) {
+        await new Promise(resolve => res.once("drain", resolve)); // respect backpressure
+      }
+    }
+    res.end();
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/reports/point/csv]");
+    if (!res.headersSent) res.status(500).json({ ok: false, error: 'Internal server error' });
+    else { try { res.destroy(); } catch { /* noop */ } }
+  }
+});
+
+// ─── Point Report Export (JSON) ─────────────────────────────
+// GET /reports/point/:pointId/json — streams a JSON envelope + readings array, full range, no cap
+router.get("/reports/point/:pointId/json", async (req, res) => {
+  try {
+    const { pointId } = req.params;
+    const days = parseInt(req.query.days) || 30;
+    const maxRows = req.query.limit ? Math.max(parseInt(req.query.limit) || 0, 0) : Infinity;
+    const fromTime = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+
+    const ptRes = await corePool.query(
+      `SELECT id, name, measure_category, terrain_id FROM measurement_points WHERE id = $1`, [pointId]);
+    if (!ptRes.rows.length) return res.status(404).json({ ok: false, error: "measurement_point not found" });
+    const point = ptRes.rows[0];
+
+    let aborted = false;
+    req.on("close", () => { aborted = true; });
+
+    res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.setHeader("Content-Disposition",
+      `attachment; filename="simes-point-${point.id}-${new Date().toISOString().slice(0, 10)}.json"`);
+
+    const envelope = {
+      point_id: point.id, point: point.name, category: point.measure_category,
+      terrain_id: point.terrain_id, export_date: new Date().toISOString(), days,
+    };
+    res.write("{");
+    for (const [k, v] of Object.entries(envelope)) res.write(`${JSON.stringify(k)}:${JSON.stringify(v)},`);
+    res.write('"readings":[');
+
+    let first = true;
+    for await (const rows of iterPointReadingBatches(pointId, fromTime, maxRows, () => aborted)) {
+      let chunk = "";
+      for (const row of rows) {
+        const obj = { time: row.time ? new Date(row.time).toISOString() : null };
+        for (const c of ACREL_METRIC_COLS) {
+          const v = row[c];
+          obj[c] = (v == null) ? null : (Number.isFinite(Number(v)) ? Number(v) : null);
+        }
+        chunk += (first ? "" : ",") + JSON.stringify(obj);
+        first = false;
+      }
+      if (chunk && !res.write(chunk)) {
+        await new Promise(resolve => res.once("drain", resolve)); // respect backpressure
+      }
+    }
+    res.write("]}");
+    res.end();
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/reports/point/json]");
+    if (!res.headersSent) res.status(500).json({ ok: false, error: 'Internal server error' });
+    else { try { res.destroy(); } catch { /* noop */ } }
   }
 });
 
