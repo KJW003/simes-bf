@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog';
-import { useTerrainOverview, useReadings } from '@/hooks/useApi';
+import { useTerrainOverview, useDownsampledReadings } from '@/hooks/useApi';
 import api from '@/lib/api';
 import { adaptiveBucketMs, computeTimeWindow, downsampleByStep } from '@/lib/time-window';
 import {
@@ -178,11 +178,11 @@ export default function PointDetails() {
   const window = useMemo(() => computeTimeWindow(range, customDate), [range, customDate]);
 
   const { data: overviewData, isLoading: loadOv } = useTerrainOverview(selectedTerrainId);
-  const { data: readingsData, isLoading: loadR } = useReadings(selectedTerrainId, {
+  const { data: readingsData, isLoading: loadR } = useDownsampledReadings(selectedTerrainId, {
     from: window.from,
     to: window.to,
     point_id: pointId,
-    limit: range === '24h' ? 120000 : range === '7d' ? 260000 : 450000,
+    bucket_ms: adaptiveBucketMs(window.durationMs),
     cols: 'active_power_total,active_power_a,active_power_b,active_power_c,reactive_power_total,reactive_power_a,reactive_power_b,reactive_power_c,apparent_power_total,apparent_power_a,apparent_power_b,apparent_power_c,voltage_a,voltage_b,voltage_c,voltage_ab,voltage_bc,voltage_ca,current_a,current_b,current_c,power_factor_total,power_factor_a,power_factor_b,power_factor_c,thdi_a,thdi_b,thdi_c,thdu_a,thdu_b,thdu_c,energy_total',
   });
 
