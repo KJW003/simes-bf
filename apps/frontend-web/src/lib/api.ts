@@ -428,6 +428,21 @@ export const api = {
     }>(`/terrains/${terrainId}/readings${q ? `?${q}` : ''}`);
   },
 
+  getDownsampledReadings: (terrainId: string, params: { from?: string; to?: string; bucket_ms: number; point_id?: string; cols?: string }) => {
+    const qs = new URLSearchParams();
+    if (params.from) qs.set('from', params.from);
+    if (params.to) qs.set('to', params.to);
+    if (params.point_id) qs.set('point_id', params.point_id);
+    if (params.cols) qs.set('cols', params.cols);
+    qs.set('bucket_ms', String(params.bucket_ms));
+    return request<{
+      ok: boolean;
+      terrain_id: string;
+      count: number;
+      readings: Array<Record<string, unknown>>;
+    }>(`/terrains/${terrainId}/readings/downsampled?${qs.toString()}`);
+  },
+
   getChartData: (terrainId: string, params: { from?: string; to?: string; bucket: '15m' | 'daily'; point_id?: string }) => {
     const qs = new URLSearchParams();
     qs.set('bucket', params.bucket);

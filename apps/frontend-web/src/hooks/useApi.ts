@@ -386,6 +386,19 @@ export function useReadings(terrainId: string | null, params?: { from?: string; 
   });
 }
 
+/** Server-side time-bucket averaged readings — same shape as useReadings, far fewer rows. */
+export function useDownsampledReadings(terrainId: string | null, params: { from?: string; to?: string; bucket_ms: number; point_id?: string; cols?: string }) {
+  return useQuery<ReadingsData, Error, ReadingsData>({
+    queryKey: ['readings-downsampled', terrainId, params],
+    queryFn: () => api.getDownsampledReadings(terrainId!, params),
+    enabled: !!terrainId,
+    staleTime: 5 * 60_000,
+    gcTime: 30 * 60_000,
+    placeholderData: keepPreviousData,
+    retry: 1,
+  });
+}
+
 // ─── Pre-aggregated chart data (15m / daily buckets) ───────
 
 export interface ChartDataResult {

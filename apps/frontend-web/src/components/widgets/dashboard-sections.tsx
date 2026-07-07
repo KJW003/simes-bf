@@ -14,7 +14,7 @@ import {
   DollarSign, AlertTriangle, Bell,
   Settings2, CheckCircle2, Plus, X, ChevronLeft, ChevronRight,
 } from 'lucide-react';
-import { useDashboard, useReadings, useChartData, useEnergyHistory, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
+import { useDashboard, useReadings, useDownsampledReadings, useChartData, useEnergyHistory, useTerrainOverview, useIncidentStats, usePowerPeaks, useAnomalies, stableFrom, stableNow } from '@/hooks/useApi';
 import { useAlarmEngine, loadRules, saveRules, type AlarmCondition, type AlarmRule } from '@/hooks/useAlarmEngine';
 import { adaptiveBucketMs, downsampleByStep } from '@/lib/time-window';
 import { computeTimeWindow } from '@/lib/time-window';
@@ -232,9 +232,6 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
     return computeTimeWindow(period, '', shiftedNow);
   }, [period, customDate, offsetDays]);
 
-  // Raise limits to keep full selected windows even with many points.
-  const limit = window.durationMs <= 2 * 86400_000 ? 120000 : window.durationMs <= 7 * 86400_000 ? 260000 : 450000;
-
   const selectedPreset = useMemo(
     () => METRIC_PRESETS.find((p) => p.value === metricPreset) ?? METRIC_PRESETS[0],
     [metricPreset],
@@ -242,7 +239,10 @@ export const UnifiedLoadCurve = React.memo(function UnifiedLoadCurve({ terrainId
   const cols = useMemo(() => Array.from(new Set(selectedPreset.metrics)).join(','), [selectedPreset]);
 
   const { data: overviewData } = useTerrainOverview(terrainId);
-  const { data, isLoading } = useReadings(terrainId, { from: window.from, to: window.to, cols, limit });
+  // Server-side downsampling: one averaged point per (point, bucket) — whole window, no row cap.
+  const { data, isLoading } = useDownsampledReadings(terrainId, {
+    from: window.from, to: window.to, cols, bucket_ms: adaptiveBucketMs(window.durationMs),
+  });
 
   const points = (overviewData?.points ?? []) as Array<Record<string, any>>;
   const readings = (data?.readings ?? []) as Array<Record<string, any>>;
