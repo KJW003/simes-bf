@@ -59,44 +59,49 @@ export default function Exports() {
     };
   }, [readings, prefs.tariffRate, prefs.co2Factor]);
 
-  const handleExportExcel = async (pointId: string) => {
+  // Shared: download one point's export from the backend streaming endpoint.
+  // Backend streams the full range (no row cap). Returns false on error / no data.
+  const downloadPointExport = useCallback(async (pointId: string, format: 'excel' | 'csv' | 'json'): Promise<boolean> => {
+    const ext = format === 'excel' ? 'xlsx' : format;
+    const point = points.find(p => String(p.id) === pointId);
+    const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
+    const url = `/reports/point/${pointId}/${format}?days=${days}`;
     try {
-      setExportingId(pointId);
-      // No row cap: the backend streams the full range for this point (days = 9999 → all history)
-      const url = `/reports/point/${pointId}/excel?days=${days}`;
-
       const response = await fetch(api.baseURL + url, {
-        headers: {
-          'Authorization': `Bearer ${localStorage.getItem('auth_token')}`,
-        },
+        headers: { 'Authorization': `Bearer ${localStorage.getItem('auth_token')}` },
       });
-
       if (!response.ok) {
         const error = await response.json().catch(() => ({}));
-        toast.error(`Échec de l'export: ${(error as any).error || 'Erreur inconnue'}`);
-        return;
+        toast.error(`Échec de l'export (${pointName}) : ${(error as any).error || 'Erreur inconnue'}`);
+        return false;
       }
-
+      // Excel "no data" path returns a JSON message instead of a spreadsheet
       const ct = response.headers.get('content-type') ?? '';
-      if (!ct.includes('spreadsheet')) {
+      if (format === 'excel' && !ct.includes('spreadsheet')) {
         const body = await response.json().catch(() => null);
-        toast.error((body as any)?.message ?? 'Aucune donnée à exporter pour ce point.');
-        return;
+        toast.error((body as any)?.message ?? `Aucune donnée à exporter (${pointName}).`);
+        return false;
       }
-
-      const point = points.find(p => String(p.id) === pointId);
-      const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
       const blob = await response.blob();
       const downloadUrl = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = downloadUrl;
-      a.download = `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.xlsx`;
+      a.download = `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.${ext}`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(downloadUrl);
       document.body.removeChild(a);
+      return true;
     } catch {
-      toast.error('Échec de l\'export. Veuillez réessayer.');
+      toast.error(`Échec de l'export (${pointName}). Veuillez réessayer.`);
+      return false;
+    }
+  }, [points, days, isAllHistory, terrainLabel]);
+
+  const handleExportExcel = async (pointId: string) => {
+    setExportingId(pointId);
+    try {
+      await downloadPointExport(pointId, 'excel');
     } finally {
       setExportingId(null);
     }
@@ -492,57 +497,19 @@ ${dailyRows ? `<h2>Puissance moyenne journalière</h2>
     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
   }, [terrainLabel, imgDays, imgExactDate, imgChartType, imgPoints, pointNameMap, exportLegendNames, currentChartOpt, points.length, selectedTerrain?.name]);
 
-  // ── Per-point CSV export ──
-  const handleExportPointCSV = useCallback((pointId: string) => {
-    const ptReadings = readings.filter(r => String(r.point_id) === pointId);
-    if (!ptReadings.length) return;
-    const point = points.find(p => String(p.id) === pointId);
-    const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
-    const columns = ['time', ...CSV_METRIC_COLS];
-    const header = columns.join(',') + '\n';
-    const rows = [...ptReadings]
-      .sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime())
-      .map(r => columns.map(c => r[c] ?? '').join(','))
-      .join('\n');
-    downloadBlob(
-      new Blob([header + rows], { type: 'text/csv' }),
-      `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.csv`,
-    );
-  }, [readings, points, terrainLabel, days]);
-
-  // ── Per-point JSON export ──
-  const handleExportPointJSON = useCallback((pointId: string) => {
-    const ptReadings = readings.filter(r => String(r.point_id) === pointId);
-    if (!ptReadings.length) return;
-    const point = points.find(p => String(p.id) === pointId);
-    const pointName = point ? sanitize(String(point.name)) : `point-${pointId}`;
-    const sorted = [...ptReadings].sort((a, b) => new Date(String(a.time)).getTime() - new Date(String(b.time)).getTime());
-    const payload = {
-      terrain: selectedTerrain?.name ?? selectedTerrainId,
-      point: point?.name ?? pointId,
-      category: point?.measure_category ?? null,
-      zone: point?.zone_name ?? null,
-      export_date: new Date().toISOString(),
-      period_days: days,
-      readings: sorted.map(r => {
-        const { point_id, ...rest } = r as Record<string, unknown>;
-        return rest;
-      }),
-    };
-    downloadBlob(
-      new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' }),
-      `${terrainLabel}_${pointName}_${isAllHistory ? 'all' : `${days}j`}_${new Date().toISOString().slice(0, 10)}.json`,
-    );
-  }, [readings, points, selectedTerrain, selectedTerrainId, terrainLabel, days, isAllHistory]);
+  // ── Per-point CSV / JSON export (streamed from backend, full range, no cap) ──
+  const handleExportPointCSV = useCallback((pointId: string) => downloadPointExport(pointId, 'csv'), [downloadPointExport]);
+  const handleExportPointJSON = useCallback((pointId: string) => downloadPointExport(pointId, 'json'), [downloadPointExport]);
 
   // Batch export selected points
   const [batchFormat, setBatchFormat] = useState<'excel' | 'csv' | 'json'>('excel');
   const handleBatchExport = async () => {
     setBatchExporting(true);
+    // Sequential + small gap: each export is a backend round-trip, so downloads are
+    // spaced out and the browser no longer silently blocks "too many downloads".
     for (const pointId of selectedPoints) {
-      if (batchFormat === 'csv') handleExportPointCSV(pointId);
-      else if (batchFormat === 'json') handleExportPointJSON(pointId);
-      else await handleExportExcel(pointId);
+      await downloadPointExport(pointId, batchFormat);
+      await new Promise(resolve => setTimeout(resolve, 300));
     }
     setBatchExporting(false);
   };
