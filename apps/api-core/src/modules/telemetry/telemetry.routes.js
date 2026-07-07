@@ -115,6 +115,13 @@ function parseCols(colsParam) {
   return requested.length ? requested.join(', ') : ACREL_COLS_SQL;
 }
 
+/** Parse ?cols= param → validated ARRAY of columns (defaults to active power). */
+function parseColsList(colsParam) {
+  if (!colsParam) return ['active_power_total'];
+  const requested = String(colsParam).split(',').map(c => c.trim().toLowerCase()).filter(c => ALLOWED_COLS.has(c));
+  return requested.length ? requested : ['active_power_total'];
+}
+
 // ─────────────────────────────────────────────────────────────
 // GET /terrains/:terrainId/readings
 // Raw time-series readings with optional filters
@@ -161,6 +168,60 @@ router.get("/terrains/:terrainId/readings", async (req, res) => {
     }
   } catch (e) {
     log.error({ err: e.message }, "[telemetry/readings]");
+    res.status(500).json({ ok: false, error: 'Internal server error' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// GET /terrains/:terrainId/readings/downsampled
+// Server-side time_bucket averaging: same row shape as /readings
+// (point_id, time, <cols>) but ONE row per (point, bucket) instead of
+// raw rows — lets charts load a whole window cheaply, no row cap, all metrics.
+// Query: ?from=ISO&to=ISO&bucket_ms=<int>&point_id=uuid&cols=a,b,c
+// ─────────────────────────────────────────────────────────────
+router.get("/terrains/:terrainId/readings/downsampled", async (req, res) => {
+  try {
+    const { terrainId } = req.params;
+    const now = new Date();
+    const defaultFrom = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const from = req.query.from || defaultFrom.toISOString();
+    const to = req.query.to || now.toISOString();
+    const pointId = req.query.point_id || null;
+
+    // Bucket size in seconds, from the client's adaptiveBucketMs. Clamp 60s..24h.
+    const rawMs = parseInt(req.query.bucket_ms);
+    const bucketSec = Math.min(Math.max(Number.isFinite(rawMs) ? Math.round(rawMs / 1000) : 900, 60), 86400);
+
+    const cols = parseColsList(req.query.cols);
+    const avgSelect = cols.map(c => `AVG(${c}) AS ${c}`).join(", ");
+
+    const params = [terrainId, from, to];
+    const where = [`terrain_id = $1`, `time >= $2`, `time <= $3`];
+    if (pointId) { params.push(pointId); where.push(`point_id = $${params.length}`); }
+    params.push(bucketSec);
+    const bIdx = params.length;
+
+    // Bucket aligned to the Unix epoch so it matches the client's Math.floor(t/bucketMs)*bucketMs.
+    const bucketExpr = `time_bucket(($${bIdx}::int * INTERVAL '1 second'), time, TIMESTAMPTZ 'epoch')`;
+    const sql = `
+      SELECT point_id, ${bucketExpr} AS time, ${avgSelect}
+      FROM acrel_readings
+      WHERE ${where.join(" AND ")}
+      GROUP BY point_id, ${bucketExpr}
+      ORDER BY 2 ASC, 1 ASC
+    `;
+
+    const client = await telemetryPool.connect();
+    try {
+      await client.query("SET statement_timeout = '45s'");
+      const r = await client.query(sql, params);
+      res.json({ ok: true, terrain_id: terrainId, bucket_seconds: bucketSec, count: r.rows.length, readings: r.rows });
+    } finally {
+      await client.query("RESET statement_timeout");
+      client.release();
+    }
+  } catch (e) {
+    log.error({ err: e.message }, "[telemetry/readings/downsampled]");
     res.status(500).json({ ok: false, error: 'Internal server error' });
   }
 });
