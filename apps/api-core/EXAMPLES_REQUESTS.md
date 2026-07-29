@@ -9,7 +9,7 @@ Content-Type: application/json
 
 {
   "email": "admin@simes.bf",
-  "password": "admin1234"
+  "password": "<admin-password>"
 }
 ```
 

@@ -179,9 +179,9 @@ pgAdmin 4 is included in the deployment for graphical database administration:
 http://localhost:5050  (after ./deploy.sh)
 ```
 
-**Default credentials** (from `.env`):
-- Email: `${PGADMIN_EMAIL}` (defaults to `admin@simes.local`)
-- Password: `${PGADMIN_PASSWORD}` (defaults to `admin1234`)
+**Credentials** (from the production secret store or local `.env`):
+- Email: `${PGADMIN_EMAIL}`
+- Password: `${PGADMIN_PASSWORD}`
 
 ### Quick setup
 
@@ -196,7 +196,7 @@ After deployment, the `deploy.sh` script prints database connection details. To 
    - **Port**: `5432`
    - **Database**: `simes_core`
    - **Username**: `simes`
-   - **Password**: `${CORE_DB_PASSWORD}` (from `.env` output)
+   - **Password**: `${CORE_DB_PASSWORD}` (read securely from `.env`)
    - Click **Save**
 
 5. Repeat for Telemetry DB:

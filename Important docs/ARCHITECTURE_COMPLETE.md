@@ -297,7 +297,7 @@ helmet()
 - JWT HS256, 24h expiration
 - Bcrypt (salt 12)
 - 5 tentatives max avant verrouillage
-- Admin par défaut : `admin@simes.bf` / `admin1234`
+- Compte administrateur initial : provisionné séparément, sans mot de passe documenté
 
 **60+ endpoints** organisés par module :
 
