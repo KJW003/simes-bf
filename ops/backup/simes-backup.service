@@ -1,0 +1,29 @@
+[Unit]
+Description=SIMES verified production backup
+Documentation=file:///home/simes/simes-bf/ops/README.md
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+UMask=0077
+ExecStart=/usr/local/sbin/simes-backup
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+TimeoutStartSec=3h
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+ReadWritePaths=/var/backups/simes /srv/simes-backup-export /var/lib/simes-ops /run/lock
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Run the SIMES verified backup every day
+
+[Timer]
+OnCalendar=*-*-* 05:30:00 UTC
+RandomizedDelaySec=10m
+Persistent=true
+AccuracySec=1m
+Unit=simes-backup.service
+
+[Install]
+WantedBy=timers.target
