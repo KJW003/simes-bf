@@ -21,6 +21,7 @@ BACKUP_USER="simes-backup"
 CHROOT_DIR="/srv/simes-backup-export"
 ARCHIVE_DIR="$CHROOT_DIR/archives"
 SSHD_DROPIN="/etc/ssh/sshd_config.d/60-simes-backup.conf"
+AUTHORIZED_KEYS_DIR="/etc/ssh/authorized_keys"
 SSHD_BACKUP=""
 SSHD_INSTALLED=false
 
@@ -59,9 +60,9 @@ fi
 
 install -d -o root -g root -m 0755 "$CHROOT_DIR"
 install -d -o root -g "$BACKUP_USER" -m 0750 "$ARCHIVE_DIR"
-install -d -o root -g root -m 0700 "/home/$BACKUP_USER/.ssh"
+install -d -o root -g root -m 0755 "$AUTHORIZED_KEYS_DIR"
 
-authorized_keys="/home/$BACKUP_USER/.ssh/authorized_keys"
+authorized_keys="$AUTHORIZED_KEYS_DIR/$BACKUP_USER"
 {
   printf 'restrict '
   cat "$PUBLIC_KEY_FILE"
@@ -96,6 +97,7 @@ fi
 cat > "$SSHD_DROPIN" <<EOF
 Match User $BACKUP_USER
     AuthenticationMethods publickey
+    AuthorizedKeysFile $AUTHORIZED_KEYS_DIR/%u
     PasswordAuthentication no
     KbdInteractiveAuthentication no
     ChrootDirectory $CHROOT_DIR

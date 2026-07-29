@@ -25,7 +25,8 @@ The Windows pull task uses a dedicated Ed25519 key and a chrooted, read-only
 SFTP account. It cannot execute commands, upload files, open a shell, or read
 anything outside the encrypted backup export. Verified local copies are retained
 for 90 days. The task also uses a pinned OpenSSH `known_hosts` file and refuses
-unknown or changed server host keys.
+unknown or changed server host keys. The authorized public key is held root-only
+under `/etc/ssh/authorized_keys`; the account cannot replace it.
 
 Useful commands:
 
