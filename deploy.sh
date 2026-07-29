@@ -80,6 +80,10 @@ compose() {
   docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" "$@"
 }
 
+repo_git() {
+  git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" "$@"
+}
+
 # ── Production safety checks ────────────────────────────────
 if [ -n "${DOCKER_HOST:-}" ] &&
   [ "$DOCKER_HOST" != "unix:///var/run/docker.sock" ]; then
@@ -116,7 +120,7 @@ if command -v systemctl >/dev/null 2>&1 &&
   error "Docker Snap daemon is active. Refusing deployment against an ambiguous daemon."
 fi
 
-if [ -n "$(git -C "$SCRIPT_DIR" status --porcelain)" ]; then
+if [ -n "$(repo_git status --porcelain)" ]; then
   error "Repository has uncommitted changes. Commit or discard them before deployment."
 fi
 
@@ -223,9 +227,9 @@ if [ "$CORE_EXISTS" = true ]; then
 
   cp "$COMPOSE_FILE" "$BACKUP_WORK_DIR/docker-compose.yml"
   cp "$ENV_FILE" "$BACKUP_WORK_DIR/docker.env"
-  git -C "$SCRIPT_DIR" archive --format=tar.gz \
+  repo_git archive --format=tar.gz \
     --output="$BACKUP_WORK_DIR/repository-head.tar.gz" HEAD
-  git -C "$SCRIPT_DIR" rev-parse HEAD > "$BACKUP_WORK_DIR/git-commit.txt"
+  repo_git rev-parse HEAD > "$BACKUP_WORK_DIR/git-commit.txt"
   docker ps --no-trunc --format \
     '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}' \
     > "$BACKUP_WORK_DIR/containers-before.txt"

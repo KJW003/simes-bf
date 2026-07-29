@@ -108,6 +108,10 @@ STATUS_DIR=$(require_absolute_safe_path SIMES_OPS_STATUS_DIR "$STATUS_DIR")
 require_positive_integer SIMES_LOCAL_RETENTION_DAYS "$LOCAL_RETENTION_DAYS"
 require_positive_integer SIMES_OFFSITE_RETENTION_DAYS "$OFFSITE_RETENTION_DAYS"
 
+repo_git() {
+  git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" "$@"
+}
+
 case "$BACKUP_ROOT" in
   "$REPO_DIR"|"$REPO_DIR"/*) fail "Backup root must be outside the repository." ;;
 esac
@@ -119,7 +123,7 @@ esac
 [ -f "$ENV_FILE" ] || fail "Docker environment file is missing: $ENV_FILE"
 [ -r "$RECIPIENT_CERT" ] || fail "Backup recipient certificate is missing: $RECIPIENT_CERT"
 [ -d "$DEPENDENCY_SNAPSHOT" ] || fail "pg_dirtyread dependency snapshot is missing: $DEPENDENCY_SNAPSHOT"
-[ -z "$(git -C "$REPO_DIR" status --porcelain)" ] ||
+[ -z "$(repo_git status --porcelain)" ] ||
   fail "Production repository is dirty; the backup would not contain an exact source tree."
 
 compose() {
@@ -335,10 +339,10 @@ archive_volume portainer_data portainer-data-crash-consistent.tar.gz
 cp "$COMPOSE_FILE" "$work_dir/config/docker-compose.yml"
 cp "$ENV_FILE" "$work_dir/config/docker.env"
 cp "$REPO_DIR/deploy.sh" "$work_dir/config/deploy.sh"
-git -C "$REPO_DIR" archive --format=tar.gz \
+repo_git archive --format=tar.gz \
   --output="$work_dir/config/repository-head.tar.gz" HEAD
-git -C "$REPO_DIR" rev-parse HEAD > "$work_dir/inventory/git-commit.txt"
-git -C "$REPO_DIR" status --short --branch > "$work_dir/inventory/git-status.txt"
+repo_git rev-parse HEAD > "$work_dir/inventory/git-commit.txt"
+repo_git status --short --branch > "$work_dir/inventory/git-status.txt"
 docker ps --no-trunc --format \
   '{{.ID}}|{{.Names}}|{{.Image}}|{{.Status}}' > "$work_dir/inventory/containers.txt"
 docker volume ls --format '{{.Name}}|{{.Driver}}' > "$work_dir/inventory/volumes.txt"
@@ -349,7 +353,7 @@ SIMES-BF automated daily backup
 Created UTC: $(date -u '+%Y-%m-%dT%H:%M:%SZ')
 Source host: $(hostname -f)
 Source repository: $REPO_DIR
-Source commit: $(git -C "$REPO_DIR" rev-parse HEAD)
+Source commit: $(repo_git rev-parse HEAD)
 
 Consistency:
 - Core and Telemetry: validated PostgreSQL custom-format logical dumps.
