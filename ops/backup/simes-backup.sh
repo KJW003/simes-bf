@@ -320,7 +320,9 @@ archive_volume() {
     --name "$helper_name" \
     --network none \
     --read-only \
+    --user 0:0 \
     --cap-drop ALL \
+    --cap-add DAC_READ_SEARCH \
     --security-opt no-new-privileges \
     --pids-limit 64 \
     -v "$volume:/source:ro" \
