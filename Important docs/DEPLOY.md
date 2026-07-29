@@ -1,5 +1,24 @@
 # SIMES – VPS Deployment Guide
 
+## Production VPS (source of truth)
+
+| Item | Current value |
+|---|---|
+| Host | Hostinger VPS `76.13.44.23` |
+| Repository | `/home/simes/simes-bf` |
+| Compose file | `/home/simes/simes-bf/infra/docker/docker-compose.yml` |
+| Docker engine | Docker CE managed by `docker.service` |
+| Docker data root | `/var/lib/docker` |
+| Production branch (2026-07-29) | `deploy/fix-exports-plus-perf-dashboard` |
+| Production commit (2026-07-29) | `f9d9f896` |
+
+Docker installed through Snap was removed on 2026-07-29. Do not reinstall it:
+SIMES must use the system Docker daemon only. Before any deployment, verify that
+`docker info --format '{{.DockerRootDir}}'` returns `/var/lib/docker`.
+
+The paths below use the real production location. `/opt/simes` is not used on
+the current VPS.
+
 ## Prerequisites
 
 | Requirement | Minimum |
@@ -17,8 +36,8 @@
 
 ```bash
 ssh your-user@your-vps
-git clone <repo-url> /opt/simes
-cd /opt/simes
+git clone <repo-url> /home/simes/simes-bf
+cd /home/simes/simes-bf
 ```
 
 ## 2. Configure environment
@@ -227,11 +246,31 @@ docker exec simes-telemetry-db pg_dump -U simes simes_telemetry > backup_telemet
 ## 12. Update deployment
 
 ```bash
-cd /opt/simes
-git pull
+cd /home/simes/simes-bf
+git status --short --branch
+git fetch origin
+# Select and review the exact branch/commit approved for production.
+git switch <approved-production-branch>
+git pull --ff-only
 cd infra/docker
 docker compose up -d --build
 ```
+
+Do not use `docker compose down`, remove Docker networks, or prune all builder
+data as part of a routine update. Those operations create avoidable downtime
+and previously left Traefik detached from `simes-edge`.
+
+After every update, verify the proxy as well as the application containers:
+
+```bash
+docker compose ps
+docker inspect simes-traefik --format '{{json .NetworkSettings.Networks}}'
+curl -fsS http://localhost/api/health
+curl -fsSI http://localhost/login
+```
+
+Traefik must be running and attached to `simes-edge`. A healthy backend with a
+stopped or detached Traefik results in an HTTP 504 for users.
 
 ---
 
