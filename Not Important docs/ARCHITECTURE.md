@@ -276,7 +276,7 @@ helmet() → CORS → rate-limit (200 req/min) → JSON parser → JWT auth → 
 - JWT HS256, expiration 24h
 - Mot de passe : bcrypt (salt 12)
 - 5 tentatives max avant verrouillage
-- Admin par défaut : `admin@simes.bf` / `admin1234`
+- Compte administrateur initial : provisionné séparément, sans mot de passe documenté
 
 ### Routes principales (~60+ endpoints)
 

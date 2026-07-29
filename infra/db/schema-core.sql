@@ -252,7 +252,7 @@ CREATE INDEX IF NOT EXISTS users_org_idx ON users (organization_id);
 CREATE INDEX IF NOT EXISTS users_role_idx ON users (role);
 
 -- ─── 14) Seed : default admin ───────────────────────────────
--- admin@simes.bf / admin1234
+-- Development bootstrap account; rotate its password before any deployment.
 INSERT INTO users (email, password_hash, name, role, organization_id)
 VALUES (
   'admin@simes.bf',

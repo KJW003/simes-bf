@@ -13,7 +13,7 @@ http://localhost:5050
 
 **Identifiants par défaut :**
 - Email: `admin@simes.local`
-- Mot de passe: `admin1234`
+- Mot de passe : valeur de `${PGADMIN_PASSWORD}` dans le stockage de secrets
 
 (À modifier dans `infra/docker/.env` avant le déploiement)
 

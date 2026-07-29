@@ -10,7 +10,7 @@
 - **IP publique** : `[`[76.13.44.23](mailto:root@76.13.44.23)`]`
 - **Plan VPS** : **2 vCPU / 8 GB RAM** ✅
 - **OS** : Ubuntu Server (version : `[...]`)
-- **Accès** : SSH “[root@76.13.44.23](mailto:root@76.13.44.23) / S3HiiV'-znZo7;;'yD9( “
+- **Accès** : SSH `root@76.13.44.23` (secret conservé hors du dépôt)
 
 ---
 
@@ -24,16 +24,16 @@
 - **root**
     - Rôle : administration (à éviter pour les opérations quotidiennes)
     - Accès : SSH / Cockpit (root refusé au début, puis Cockpit OK via user)
-- **user principal (admin)** : `[simes / simes]`
+- **user principal (admin)** : `simes` (secret conservé hors du dépôt)
 
 ### Accès Cockpit
 
-- User utilisé pour Cockpit : `[simes / simes]`
+- User utilisé pour Cockpit : `simes` (secret conservé hors du dépôt)
 - Url : 76.13.44.23:9090
 
 ### Accès Portainer
 
-- User utilisé pour Portainer : `[admin  admin1234567]`
+- User utilisé pour Portainer : `admin` (secret conservé hors du dépôt)
 - Url : 76.13.44.23:9443
 
 ---
