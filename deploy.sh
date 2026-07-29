@@ -59,6 +59,51 @@ set -a
 source "$ENV_FILE"
 set +a
 
+# ── Production safety checks ────────────────────────────────
+DOCKER_ROOT=$(docker info --format '{{.DockerRootDir}}' 2>/dev/null || true)
+if [ -z "$DOCKER_ROOT" ]; then
+  error "Docker daemon is unavailable."
+fi
+if [ "$DOCKER_ROOT" != "/var/lib/docker" ]; then
+  error "Unexpected Docker data root: $DOCKER_ROOT (expected /var/lib/docker). Refusing deployment."
+fi
+
+docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" config --quiet
+ok "Docker daemon and Compose configuration verified."
+
+# ── Pre-deployment database backup ──────────────────────────
+# Existing databases are dumped before any application container is changed.
+# On a first installation the containers do not exist yet, so this is skipped.
+BACKUP_ROOT="${SIMES_BACKUP_DIR:-/var/backups/simes}"
+BACKUP_STAMP=$(date -u '+%Y%m%dT%H%M%SZ')
+BACKUP_DIR="$BACKUP_ROOT/pre-deploy-$BACKUP_STAMP"
+BACKUP_CREATED=false
+
+backup_database() {
+  local container="$1" user="$2" database="$3" output="$4"
+  if docker inspect --format='{{.State.Running}}' "$container" 2>/dev/null | grep -q true; then
+    if [ "$BACKUP_CREATED" = false ]; then
+      mkdir -p "$BACKUP_DIR"
+      chmod 700 "$BACKUP_DIR"
+      BACKUP_CREATED=true
+    fi
+    info "Backing up $database..."
+    docker exec "$container" pg_dump -Fc -U "$user" "$database" > "$BACKUP_DIR/$output"
+    test -s "$BACKUP_DIR/$output" || error "Backup is empty: $BACKUP_DIR/$output"
+  fi
+}
+
+if [ "$DB_ONLY" = false ]; then
+  backup_database simes-core-db "${CORE_DB_USER}" "${CORE_DB_NAME}" core.dump
+  backup_database simes-telemetry-db "${TELEMETRY_DB_USER}" "${TELEMETRY_DB_NAME}" telemetry.dump
+  if [ "$BACKUP_CREATED" = true ]; then
+    (cd "$BACKUP_DIR" && sha256sum ./*.dump > SHA256SUMS)
+    ok "Database backups verified in $BACKUP_DIR"
+  else
+    warn "No running database containers found; treating this as a first installation."
+  fi
+fi
+
 # ── Docker compose up ────────────────────────────────────────
 if [ "$DB_ONLY" = false ]; then
   info "Starting SIMES stack..."
@@ -70,18 +115,9 @@ if [ "$DB_ONLY" = false ]; then
 
   cd "$COMPOSE_DIR"
 
-  # Stop previous containers and remove orphans
-  docker compose -f docker-compose.yml down --remove-orphans 2>/dev/null || true
-
-  # Remove old project-prefixed networks that conflict with named networks
-  docker network rm docker_edge docker_internal 2>/dev/null || true
-
-  # Prune corrupted BuildKit layer cache (prevents "parent snapshot does not exist" errors)
-  if [ "$NO_BUILD" = false ]; then
-    docker builder prune --all -f 2>/dev/null || true
-  fi
-
-  docker compose -f docker-compose.yml up -d --force-recreate $BUILD_FLAG
+  # Reconcile in place. Do not stop the whole stack or remove shared networks:
+  # Traefik must stay attached to simes-edge throughout a routine deployment.
+  docker compose -f docker-compose.yml up -d $BUILD_FLAG
   ok "Containers started."
 fi
 
@@ -192,31 +228,34 @@ fi
 
 # ── Post-deploy: repair aggregations (--repair-agg) ─────────
 if [ "$REPAIR_AGG" = true ]; then
+  if [ -z "${SIMES_ADMIN_TOKEN:-}" ]; then
+    error "--repair-agg requires SIMES_ADMIN_TOKEN; no unauthenticated admin call was made."
+  fi
   info "Triggering aggregation repair via API..."
   REPAIR_FROM=$(date -d '60 days ago' '+%Y-%m-%dT00:00:00Z' 2>/dev/null || date -v-60d '+%Y-%m-%dT00:00:00Z' 2>/dev/null || echo "2025-01-01T00:00:00Z")
   REPAIR_TO=$(date '+%Y-%m-%dT23:59:59Z')
   REPAIR_RESP=$(curl -sf -X POST http://localhost/api/admin/pipeline/repair-aggregations \
+    -H "Authorization: Bearer $SIMES_ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"from\":\"$REPAIR_FROM\",\"to\":\"$REPAIR_TO\"}" 2>&1) || true
-  if [ -n "$REPAIR_RESP" ]; then
-    ok "Aggregation repair response: $REPAIR_RESP"
-  else
-    warn "Could not trigger aggregation repair (API may not be ready)"
-  fi
+    -d "{\"from\":\"$REPAIR_FROM\",\"to\":\"$REPAIR_TO\"}")
+  ok "Aggregation repair accepted: $REPAIR_RESP"
 fi
 
 # ── Post-deploy: retry failed jobs in all queues ─────────────
-if [ "$API_OK" = true ]; then
+if [ "$API_OK" = true ] && [ -n "${SIMES_ADMIN_TOKEN:-}" ]; then
   info "Checking for failed jobs in queues..."
   for QUEUE in telemetry ai reports; do
     RETRY_RESP=$(curl -sf -X POST http://localhost/api/admin/pipeline/retry-failed-jobs \
+      -H "Authorization: Bearer $SIMES_ADMIN_TOKEN" \
       -H "Content-Type: application/json" \
-      -d "{\"queue\":\"$QUEUE\",\"limit\":500}" 2>&1) || true
+      -d "{\"queue\":\"$QUEUE\",\"limit\":500}")
     RETRIED=$(echo "$RETRY_RESP" | grep -o '"retried":[0-9]*' | grep -o '[0-9]*' || echo "0")
     if [ "$RETRIED" != "0" ] && [ -n "$RETRIED" ]; then
       ok "Retried $RETRIED failed jobs in $QUEUE queue"
     fi
   done
+elif [ "$API_OK" = true ]; then
+  warn "SIMES_ADMIN_TOKEN is not set; skipping failed-job retries."
 fi
 
 # ── Post-deploy: pipeline health check (--check-pipeline) ───
@@ -245,22 +284,4 @@ info "  pgAdmin    → http://localhost:5050"
 info "  Portainer  → https://localhost:9443"
 info "  Traefik    → http://SERVER_IP:8080/dashboard/ (admin panel)"
 echo ""
-info "Default credentials:"
-info "  App        → admin@simes.bf / admin1234"
-info "  pgAdmin    → ${PGADMIN_EMAIL} / ${PGADMIN_PASSWORD}"
-echo ""
-info "Database connection info (configure in pgAdmin):"
-info "  Core DB:"
-info "    Hostname: core-db"
-info "    Port: 5432"
-info "    DB: ${CORE_DB_NAME}"
-info "    User: ${CORE_DB_USER}"
-info "    Password: ${CORE_DB_PASSWORD}"
-echo ""
-info "  Telemetry DB (TimescaleDB):"
-info "    Hostname: telemetry-db"
-info "    Port: 5432"
-info "    DB: ${TELEMETRY_DB_NAME}"
-info "    User: ${TELEMETRY_DB_USER}"
-info "    Password: ${TELEMETRY_DB_PASSWORD}"
-echo ""
+info "Credentials and database passwords are intentionally not printed."
