@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_DIR="${SIMES_REPO_DIR:-/home/simes/simes-bf}"
+DEPLOY_SCRIPT="$REPO_DIR/deploy.sh"
+
+if [ ! -x "$DEPLOY_SCRIPT" ]; then
+  echo "SIMES deploy script is missing or not executable: $DEPLOY_SCRIPT" >&2
+  exit 1
+fi
+
+cd "$REPO_DIR"
+exec "$DEPLOY_SCRIPT" "$@"
