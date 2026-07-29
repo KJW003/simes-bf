@@ -109,7 +109,8 @@ require_positive_integer SIMES_LOCAL_RETENTION_DAYS "$LOCAL_RETENTION_DAYS"
 require_positive_integer SIMES_OFFSITE_RETENTION_DAYS "$OFFSITE_RETENTION_DAYS"
 
 repo_git() {
-  git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" "$@"
+  GIT_OPTIONAL_LOCKS=0 \
+    git -c safe.directory="$REPO_DIR" -C "$REPO_DIR" "$@"
 }
 
 case "$BACKUP_ROOT" in

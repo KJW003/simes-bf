@@ -81,7 +81,8 @@ compose() {
 }
 
 repo_git() {
-  git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" "$@"
+  GIT_OPTIONAL_LOCKS=0 \
+    git -c safe.directory="$SCRIPT_DIR" -C "$SCRIPT_DIR" "$@"
 }
 
 # ── Production safety checks ────────────────────────────────
