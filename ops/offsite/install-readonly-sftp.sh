@@ -68,7 +68,7 @@ authorized_keys="$AUTHORIZED_KEYS_DIR/$BACKUP_USER"
   cat "$PUBLIC_KEY_FILE"
 } > "$authorized_keys"
 chown root:root "$authorized_keys"
-chmod 0600 "$authorized_keys"
+chmod 0644 "$authorized_keys"
 
 rollback_sshd_dropin() {
   local status=$?
