@@ -442,6 +442,16 @@ if [ "$TRAEFIK_RUNTIME_HASH" != "$TRAEFIK_DESIRED_HASH" ]; then
 fi
 ok "Traefik network and Compose hash verified."
 
+TRAEFIK_PORTS=$(docker inspect \
+  --format='{{json .HostConfig.PortBindings}}' simes-traefik)
+if echo "$TRAEFIK_PORTS" | grep -q '"8080/tcp"'; then
+  error "Traefik dashboard port 8080 is still published."
+fi
+if ss -H -lnt '( sport = :8080 )' | grep -q .; then
+  error "A process is still listening on TCP port 8080."
+fi
+ok "Traefik insecure dashboard port 8080 is closed."
+
 wait_for_http_200 "UI login" "http://localhost/login"
 wait_for_http_200 "API health" "http://localhost/api/health"
 wait_for_http_200 "Ingestion health" "http://localhost/ingest/health"
