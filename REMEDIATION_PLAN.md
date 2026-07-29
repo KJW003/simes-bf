@@ -7,7 +7,7 @@
 
 ## Ordre d’exécution convenu
 
-- **Préparation ops :** sécuriser le déploiement → automatiser les sauvegardes et la copie hors VPS → tester les branches existantes contre des bases restaurées.
+- **Préparation ops :** ~~sécuriser le déploiement~~ → ~~automatiser les sauvegardes et la copie hors VPS~~ → tester les branches existantes contre des bases restaurées.
 - **Vague 0 (gains sûrs) :** AM-1 → P1-1 (active les tests de facturation) → W-1/W-2/W-3 (retirer les widgets fictifs) → W-5 + sous-titre de W-4.
 - **Vague 1 (fuites inter-organisations) :** SEC-2 (PV) → SEC-3 (Solaire) → SEC-4 (`site_access`) → P0-3 (`test-listener`).
 - **Vague 2 (facturation) :** P0-1 (garde reset, corrige aussi AM-5) → P0-2 (historique contrats).
@@ -15,7 +15,7 @@
 - **Vague 4 (ML/anomalies) :** AM-4 → W-6 → W-8 → W-9 → AM-6/7/8.
 - **Vague 5 (UI et finitions) :** UI-4/5/6 → UI-1/2/3 → UI-7 + P2-5/6/7 → P1-4/AM-14/SEC-6/7/P3 → P0-4/P0-5 (ops).
 
-## Déjà fait — non déployé sauf mention contraire
+## Déjà fait — statut de déploiement précisé ci-dessous
 
 ### `fix/exports-streaming` (5 commits)
 
@@ -39,14 +39,21 @@
 - Garde-fous contre Docker Snap, daemon/socket Docker inattendu, dépôt sale et options inconnues.
 - Migrations, healthchecks, probes HTTP, rattachement Traefik et hash Compose bloquants.
 - P1-4 : opérations administratives explicites, authentifiées et non masquées.
-- **Syntaxe, scénarios d’arrêt et chemin nominal simulé vérifiés ; jamais exécuté ni déployé en production.**
+- Sauvegardes quotidiennes vérifiées, rétention 14/30/90 jours et copie hors VPS chiffrée.
+- Supervision systemd indépendante avec alertes dédupliquées dans `incidents`.
+- **Installé en production au commit `c54a527`; le wrapper et ses garde-fous sont testés,
+  mais aucun déploiement applicatif complet n'a encore été exécuté avec ce script.**
 
 ### Opérations VPS du 2026-07-29
 
 - Docker Snap supprimé, son unité neutralisée, un seul daemon système conservé.
-- Traefik recréé proprement via Compose et vérifié sur `simes-edge`.
+- Traefik recréé proprement via Compose et vérifié sur `simes-edge` ; dashboard désactivé
+  et TCP 8080 fermé, sans activation de HTTPS.
 - MinIO remis `healthy`.
-- Sauvegarde complète restaurée dans des conteneurs isolés et copiée hors VPS.
+- Sauvegarde automatisée complète restaurée dans des conteneurs isolés, chiffrée et copiée
+  hors VPS ; tâche Windows quotidienne testée.
+- Supervision toutes les cinq minutes active ; fraîcheur en maintenance planifiée tant que
+  les équipements restent éteints.
 - Ces opérations n’ont pas déployé de nouveau code applicatif.
 
 ## Décisions client
@@ -62,7 +69,9 @@
 - **P0-1 — DIFFÉRÉ.** Sur-comptage de facturation lors d’un reset compteur : `MAX-MIN` par fenêtre dans `apps/worker-jobs/src/ai.worker.js:147` et `:182`, avec la même racine dans le worker d’agrégation et le dashboard « energy today » (`apps/api-core/src/modules/telemetry/telemetry.routes.js:359`). `GREATEST(MAX-MIN, 0)` ne protège pas d’un reset puisque `MAX-MIN` reste positif. Le vrai correctif doit sommer les hausses entre relevés consécutifs et ignorer les sauts négatifs. Déclencheurs ADW3000 : remplacement, reset usine ou reconfiguration CT/PT. Vérifier d’abord `acrel_agg_15m` pour des `energy_total_delta` aberrants.
 - **P0-2.** Contrats non historisés : `UNIQUE(terrain_id)` et `ON CONFLICT DO UPDATE` écrasent l’ancien contrat (`schema-core.sql:151`, `tariffs.routes.js:109`) ; la facturation lit le contrat courant (`ai.worker.js:93`). Ajouter `valid_from`/`valid_to` et lire le contrat valable à la date facturée.
 - **P0-3.** Route debug `test-listener` sans authentification en production (`app.js:109`). La désactiver par environnement ou l’authentifier.
-- **P0-4.** Dashboard Traefik non sécurisé et absence de TLS (`docker-compose.yml:150-165`). Retirer `api.insecure`, fermer le port 8080 et activer Let’s Encrypt.
+- **P0-4 — PARTIELLEMENT FAIT EN PRODUCTION.** Dashboard et API Traefik désactivés,
+  `api.insecure` retiré et TCP 8080 fermé. **Reste :** activer TLS/Let’s Encrypt lorsque
+  le domaine et le chemin HTTPS auront été validés.
 - **P0-5.** Secrets faibles par défaut (`ml-service/main.py:23-37`, fallbacks et JWT de développement). Supprimer `fix_admin_hash.sql`, puis purger les secrets historiques de Git avec une procédure dédiée.
 
 ## P1 — Élevé
@@ -70,7 +79,9 @@
 - **P1-1.** Les tests de sécurité facturation ne s’exécutent jamais : le script `test` d’`api-core` scanne `src/`, alors que les tests sont dans `test/`. Élargir le glob.
 - **P1-2.** `EnergyAudit.tsx:35` sans limite explicite aboutit au plafond silencieux de 5 000 ; la complétude (`:69`) suppose une cadence fixe de 15 minutes. Utiliser une API agrégée et calculer la cadence réelle.
 - **P1-3.** `PowerQuality.tsx:49`, vue « 30 jours », est plafonnée à 25 000 lignes. Utiliser une API agrégée/downsamplée ou signaler clairement la troncature.
-- **P1-4 — FAIT sur `ops/safe-deployment`, non déployé.** `deploy.sh` appelait les routes admin sans jeton et masquait les échecs. Les appels sont désormais sur flags explicites, authentifiés et bloquants.
+- **P1-4 — FAIT ET INSTALLÉ.** `deploy.sh` appelait les routes admin sans jeton et
+  masquait les échecs. Les appels sont désormais sur flags explicites, authentifiés et
+  bloquants. Le script est installé, mais ces opérations admin n'ont pas été lancées.
 
 ## P2 — Moyen
 

@@ -41,8 +41,8 @@ Les accès réels ne doivent pas être remis dans Git. Leur rotation reste une o
 
 ## 3. ⚠️ État de production et travail non déployé
 
-Le VPS est propre sur la branche `hotfix/minio-healthcheck-prod`, commit
-`d64b760f900b11a8bb046810d601aa5042aa82eb`, avec un worktree propre au
+Le VPS est propre sur la branche `ops/safe-deployment`, commit
+`c54a52761f840c3d1b951b26c4cd439c09bd4af3`, avec un worktree propre au
 2026-07-29.
 
 Les corrections applicatives ci-dessous restent **locales, non poussées et non déployées** :
@@ -56,9 +56,15 @@ copie de la vraie base ni en production.
 Les opérations VPS effectuées le 2026-07-29 ne constituent pas un déploiement applicatif :
 
 - Docker Snap supprimé et neutralisé ;
-- Traefik recréé proprement via Compose ;
+- outils de déploiement sécurisé, sauvegarde et supervision installés ;
+- Traefik recréé proprement via Compose, dashboard désactivé et port 8080 fermé ;
 - MinIO remis healthy ;
-- sauvegarde complète créée, restaurée dans des conteneurs isolés et copiée hors VPS.
+- sauvegarde complète créée, restaurée dans des conteneurs isolés et copiée hors VPS ;
+- timers de sauvegarde et de supervision activés.
+
+Le code applicatif de `frontend-web`, `api-core`, `ingestion-service`, `worker-jobs` et
+`ml-service` n'a pas été reconstruit ni redéployé. Le nouveau `deploy.sh` est installé mais
+n'a pas encore servi à un déploiement applicatif réel.
 
 ---
 
@@ -113,26 +119,28 @@ Objectif :
 - vérifier Traefik, `simes-edge`, UI, API, ingestion, pgAdmin, MinIO et les healthchecks ;
 - ne lancer les opérations admin que sur flag explicite avec `SIMES_ADMIN_TOKEN`.
 
-Cette branche n'est **pas déployée**.
+Cette branche est poussée et installée sur le VPS au commit
+`c54a52761f840c3d1b951b26c4cd439c09bd4af3`.
 
-Vérifications locales effectuées :
+Vérifications effectuées :
 
 - `bash -n` ;
 - aide et rejet des options inconnues ;
 - arrêts contrôlés pour `.env` absent, socket Docker inattendu, Docker Snap détecté,
   dépôt sale, jeton admin absent, volumes DB orphelins et mauvais projet Compose ;
 - chemin nominal simulé de bout en bout : dumps validés, checksums, renommage du répertoire
-  `.partial`, migrations et probes. Aucun Docker réel ni VPS n'a été appelé.
+  `.partial`, migrations et probes ;
+- wrapper `/usr/local/sbin/simes-deploy` installé et testé sur l'aide et une option invalide ;
+- le chemin complet de déploiement applicatif avec migrations n'a pas encore été exécuté
+  en production.
 
 ---
 
 ## 5. Ordre de travail restant
 
-1. **Faire relire puis pousser `ops/safe-deployment`**, sans l'exécuter en production.
-2. **Automatiser les sauvegardes** quotidiennes, la rétention et une copie hors VPS.
-3. **Tester les branches exports/performance contre des bases restaurées isolées.**
-4. Définir l'ordre de merge, puis déployer un correctif à la fois avec validation explicite.
-5. Reprendre les vagues du `REMEDIATION_PLAN.md`.
+1. **Tester les branches exports/performance contre des bases restaurées isolées.**
+2. Définir l'ordre de merge, puis déployer un correctif à la fois avec validation explicite.
+3. Reprendre les vagues du `REMEDIATION_PLAN.md`.
 
 Décisions client à respecter :
 
@@ -170,7 +178,8 @@ L'état manuel n'existe plus.
 
 Le 2026-07-29 :
 
-1. un Traefik temporaire a été créé sur `simes-edge` et a servi UI/API/ingestion en `200` ;
+1. un Traefik candidat a été créé sans dashboard sur `simes-edge` et a servi
+   UI/API/ingestion en `200` ;
 2. seul `simes-traefik` a été recréé avec :
 
 ```bash
@@ -178,10 +187,9 @@ cd /home/simes/simes-bf/infra/docker
 docker compose up -d --no-deps --force-recreate --pull never traefik
 ```
 
-3. le nouvel ID est `1cfc5c51c35505668fb02c0abc4eaa6207fe251c711e6c097eb55a30941928bc` ;
-4. son hash runtime correspond au hash Compose
-   `2528ebf016a2dcb4878e70e71d22cd92a89d6231cc974cea5f4caec028d74fb7` ;
-5. il est directement sur `simes-edge`, avec `restart: unless-stopped` ;
+3. le nouvel ID est `d134d271e54d1f19d7e93b2a504ea117b926ede80d1f346dec551d3f0d23daa4` ;
+4. il est directement sur `simes-edge`, avec `restart: unless-stopped` ;
+5. le dashboard et l'API Traefik sont désactivés, et seul `80:80` est publié ;
 6. aucun autre conteneur n'a été recréé et aucune donnée n'a changé.
 
 Probes validées :
@@ -189,8 +197,14 @@ Probes validées :
 - `/login` → `200` ;
 - `/api/health` → `200` ;
 - `/ingest/health` → `200` ;
-- Traefik API → `200` ;
+- TCP 8080 → fermé ;
+- TCP 443 → fermé, inchangé : HTTPS n'a volontairement pas été activé ;
 - pgAdmin, Portainer, MinIO, ML → `200`.
+
+Depuis le poste Windows utilisé le 2026-07-29, les requêtes HTTP directes vers l'IP publique
+reçoivent une page `FortiGuard Intrusion Prevention - Access Blocked`. Le VPS répond pourtant
+`200` avec le même en-tête `Host`, son firewall est ouvert et Traefik route correctement :
+ce `403` vient du filtre réseau FortiGuard externe au VPS, pas de SIMES.
 
 ### 6.3 Sauvegardes de sécurité disponibles
 
@@ -212,14 +226,32 @@ Snapshots supplémentaires :
 
 Ils existent sur le VPS et hors VPS, avec SHA-256 validés et ACL locales restreintes.
 
+Sauvegarde automatisée validée :
+
+- archive VPS :
+  `/var/backups/simes/daily/daily-20260729T165034Z.tar.gz` ;
+- export chiffré :
+  `/srv/simes-backup-export/archives/daily-20260729T165034Z.tar.gz.cms` ;
+- SHA-256 export :
+  `a06d6d981f9deeb3db2d55667e91834f5d7203986fe49e5c8253b36d6350ccd9` ;
+- copie hors VPS :
+  `D:\Documents\IC\IC3\PING\simes-bf-backups\automated` ;
+- dumps Core et Telemetry restaurés sans réseau et comparés aux comptes/timestamps de
+  production ;
+- export hors VPS déchiffré et archive tar vérifiée, puis copie déchiffrée temporaire supprimée.
+
+`simes-backup.timer` s'exécute chaque jour vers `05:30 UTC`, avec un délai aléatoire maximal
+de dix minutes. Rétention : 14 jours sur le VPS, 30 jours dans l'export chiffré, 90 jours
+sur le poste hors VPS.
+
 ### 6.4 Règles de déploiement
 
 Ne jamais exécuter un déploiement depuis un worktree sale.
 
-La branche `ops/safe-deployment` rend le chemin normal incrémental :
+La branche `ops/safe-deployment` est installée. Le point d'entrée opérateur est :
 
 ```bash
-./deploy.sh
+sudo simes-deploy
 ```
 
 Par défaut :
@@ -242,13 +274,48 @@ Flags à impact explicite :
 
 Les deux derniers exigent `SIMES_ADMIN_TOKEN`.
 
-Tant que cette branche n'est pas fusionnée et déployée, vérifier le script présent sur le VPS
-avant de l'utiliser.
+Le script refuse notamment un autre daemon Docker, Docker Snap, un dépôt sale, un backup
+invalide, une migration en échec ou une probe post-déploiement en échec.
 
 ### 6.5 MinIO
 
 Le `healthcheck` MinIO a été corrigé sur `hotfix/minio-healthcheck-prod`.
 Au 2026-07-29, `simes-minio` est `healthy` et répond `200` depuis le réseau interne.
+
+### 6.6 Supervision et alertes
+
+`simes-ops-monitor.timer` s'exécute toutes les cinq minutes, indépendamment de BullMQ.
+Il vérifie :
+
+- l'unique daemon Docker système, `/var/lib/docker` et la barrière anti-Snap ;
+- les conteneurs requis, UI, API, ingestion et la fermeture de TCP 8080 ;
+- l'âge de la dernière sauvegarde ;
+- la fraîcheur des mesures quand elle est activée.
+
+Les alertes sont dédupliquées dans la table `incidents` et journalisées par systemd.
+Le self-test a créé puis résolu `ops_monitor_self_test`. L'audit final indique
+`infrastructure_issues=0`, `backup_issue=none` et aucun incident `ops_%` ouvert.
+
+Les équipements étant volontairement éteints depuis le 27 juillet,
+`SIMES_FRESHNESS_ENABLED=false` reste configuré dans `/etc/simes/monitor.env`.
+Cela ne supprime ni ne modifie les incidents historiques du worker
+`stale_device_monitor`, qui reste un mécanisme applicatif séparé.
+À leur remise en marche, passer cette valeur à `true`, puis lancer :
+
+```bash
+sudo systemctl start simes-ops-monitor.service
+```
+
+### 6.7 Copie hors VPS
+
+Le compte `simes-backup` est limité à une clé dédiée, chrooté dans
+`/srv/simes-backup-export`, forcé sur `internal-sftp -R` et sans shell, mot de passe,
+forwarding ni upload. Les tests ont confirmé le refus d'un upload et d'une commande shell.
+
+La tâche Windows `SIMES-BF Offsite Backup Pull` s'exécute chaque jour à `06:15 UTC`,
+avec reprise au prochain démarrage disponible, et vérifie le SHA-256. Elle a été exécutée
+manuellement avec `LastTaskResult=0`. Elle utilise un compte Windows interactif : le poste
+doit être allumé et l'utilisateur connecté ; sinon `StartWhenAvailable` reporte l'exécution.
 
 ---
 
